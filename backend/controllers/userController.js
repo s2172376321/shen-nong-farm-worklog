@@ -10,6 +10,7 @@ const UserController = {
         SELECT 
           id, 
           username, 
+          email,
           name, 
           department, 
           position, 
@@ -34,6 +35,7 @@ const UserController = {
     const { 
       username, 
       password, 
+      email,
       name, 
       department, 
       position, 
@@ -51,6 +53,18 @@ const UserController = {
         return res.status(400).json({ message: '此帳號已被使用' });
       }
 
+      // 如果有提供 email，檢查 email 是否已存在
+      if (email) {
+        const existEmailQuery = await db.query(
+          'SELECT * FROM users WHERE email = $1', 
+          [email]
+        );
+
+        if (existEmailQuery.rows.length > 0) {
+          return res.status(400).json({ message: '此電子郵件已被註冊' });
+        }
+      }
+
       // 密碼雜湊
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(password, salt);
@@ -58,14 +72,15 @@ const UserController = {
       // 插入新使用者
       const insertQuery = `
         INSERT INTO users 
-        (username, password_hash, name, department, position, role) 
-        VALUES ($1, $2, $3, $4, $5, $6) 
-        RETURNING id, username, name, department, position, role
+        (username, email, password_hash, name, department, position, role) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7) 
+        RETURNING id, username, email, name, department, position, role
       `;
       const values = [
         username, 
+        email || null, 
         passwordHash, 
-        name, 
+        name || null, 
         department || null, 
         position || null, 
         role || 'user'
@@ -88,6 +103,7 @@ const UserController = {
     const { userId } = req.params;
     const { 
       username, 
+      email,
       name, 
       department, 
       position, 
@@ -96,22 +112,48 @@ const UserController = {
     } = req.body;
 
     try {
+      // 如果要更新 email，檢查是否與其他使用者重複
+      if (email) {
+        const existEmailQuery = await db.query(
+          'SELECT * FROM users WHERE email = $1 AND id != $2', 
+          [email, userId]
+        );
+
+        if (existEmailQuery.rows.length > 0) {
+          return res.status(400).json({ message: '此電子郵件已被其他使用者使用' });
+        }
+      }
+
+      // 如果要更新 username，檢查是否與其他使用者重複
+      if (username) {
+        const existUsernameQuery = await db.query(
+          'SELECT * FROM users WHERE username = $1 AND id != $2', 
+          [username, userId]
+        );
+
+        if (existUsernameQuery.rows.length > 0) {
+          return res.status(400).json({ message: '此帳號已被其他使用者使用' });
+        }
+      }
+
       const updateQuery = `
         UPDATE users 
         SET 
           username = COALESCE($1, username),
-          name = COALESCE($2, name),
-          department = COALESCE($3, department),
-          position = COALESCE($4, position),
-          role = COALESCE($5, role),
-          is_active = COALESCE($6, is_active),
+          email = COALESCE($2, email),
+          name = COALESCE($3, name),
+          department = COALESCE($4, department),
+          position = COALESCE($5, position),
+          role = COALESCE($6, role),
+          is_active = COALESCE($7, is_active),
           updated_at = CURRENT_TIMESTAMP
-        WHERE id = $7
-        RETURNING id, username, name, department, position, role, is_active
+        WHERE id = $8
+        RETURNING id, username, email, name, department, position, role, is_active
       `;
 
       const values = [
         username, 
+        email,
         name,
         department, 
         position, 
@@ -132,6 +174,23 @@ const UserController = {
       });
     } catch (error) {
       console.error('更新使用者失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+    }
+  },
+
+  // 檢查使用者帳號可用性
+  async checkUsernameAvailability(req, res) {
+    const { username } = req.params;
+    
+    try {
+      const query = 'SELECT COUNT(*) FROM users WHERE username = $1';
+      const result = await db.query(query, [username]);
+      
+      const isAvailable = parseInt(result.rows[0].count) === 0;
+      
+      res.json({ available: isAvailable });
+    } catch (error) {
+      console.error('檢查使用者帳號可用性失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
