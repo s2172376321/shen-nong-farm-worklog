@@ -8,16 +8,26 @@ const googleAuthService = require('../config/googleAuth');
 const AuthController = {
   // 使用者註冊
   register: async (req, res) => {
-    const { username, email, password } = req.body;
+    const { username, email, password, name, department, position } = req.body;
 
     try {
-      // 檢查使用者是否已存在
-      const existUserQuery = await db.query(
+      // 檢查使用者帳號是否已存在
+      const existUserByUsername = await db.query(
+        'SELECT * FROM users WHERE username = $1', 
+        [username]
+      );
+
+      if (existUserByUsername.rows.length > 0) {
+        return res.status(400).json({ message: '此帳號已被使用' });
+      }
+
+      // 檢查電子郵件是否已存在
+      const existUserByEmail = await db.query(
         'SELECT * FROM users WHERE email = $1', 
         [email]
       );
 
-      if (existUserQuery.rows.length > 0) {
+      if (existUserByEmail.rows.length > 0) {
         return res.status(400).json({ message: '此電子郵件已被註冊' });
       }
 
@@ -28,11 +38,19 @@ const AuthController = {
       // 插入新使用者
       const insertQuery = `
         INSERT INTO users 
-        (username, email, password_hash, role) 
-        VALUES ($1, $2, $3, $4) 
+        (username, email, password_hash, name, department, position, role) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7) 
         RETURNING id
       `;
-      const values = [username, email, passwordHash, 'user'];
+      const values = [
+        username, 
+        email, 
+        passwordHash, 
+        name || null,
+        department || null, 
+        position || null,
+        'user'
+      ];
 
       const result = await db.query(insertQuery, values);
 
@@ -103,6 +121,9 @@ const AuthController = {
           id: user.id,
           username: user.username,
           email: user.email,
+          name: user.name,
+          department: user.department,
+          position: user.position,
           role: user.role
         }
       });
@@ -135,8 +156,8 @@ const AuthController = {
       if (!user) {
         const insertQuery = `
           INSERT INTO users 
-          (username, email, google_id, role, profile_image_url) 
-          VALUES ($1, $2, $3, $4, $5) 
+          (username, email, google_id, role, profile_image_url, name) 
+          VALUES ($1, $2, $3, $4, $5, $6) 
           RETURNING id
         `;
         const values = [
@@ -144,7 +165,8 @@ const AuthController = {
           payload.email, 
           payload.googleId, 
           'user',
-          payload.profileImage
+          payload.profileImage,
+          payload.name || null
         ];
 
         const result = await db.query(insertQuery, values);
@@ -152,6 +174,7 @@ const AuthController = {
           id: result.rows[0].id, 
           email: payload.email, 
           username: payload.username,
+          name: payload.name,
           role: 'user',
           profile_image_url: payload.profileImage
         };
@@ -174,6 +197,9 @@ const AuthController = {
           id: user.id,
           username: user.username,
           email: user.email,
+          name: user.name,
+          department: user.department,
+          position: user.position,
           role: user.role,
           profileImage: user.profile_image_url
         }
