@@ -1,0 +1,46 @@
+/* 位置：frontend/src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定義全域樣式 */
+body {
+  @apply bg-gray-900 text-white;
+}
+
+/* 科技感輸入框 */
+input, textarea, select {
+  @apply bg-gray-800 border-gray-700 text-white 
+         focus:ring-2 focus:ring-blue-600 
+         focus:border-transparent 
+         rounded-lg transition-all duration-300;
+}
+
+/* 按鈕樣式 */
+.btn-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-700 
+         transition-colors duration-300 rounded-lg;
+}
+
+.btn-secondary {
+  @apply bg-gray-700 text-white hover:bg-gray-600 
+         transition-colors duration-300 rounded-lg;
+}
+
+/* 卡片樣式 */
+.tech-card {
+  @apply bg-gray-800 border border-gray-700 
+         rounded-xl shadow-2xl p-6 
+         hover:shadow-blue-900/50 
+         transition-all duration-300;
+}
+
+/* 動畫效果 */
+@keyframes pulse-tech {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+.animate-pulse-tech {
+  animation: pulse-tech 2s infinite;
+}
