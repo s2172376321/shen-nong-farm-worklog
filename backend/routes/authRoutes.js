@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const AuthController = require('../controllers/authController');
-const { validateRegistration, validateLogin } = require('../middleware/validationMiddleware');
+const { validateRegistration, validateLogin, validateUsername } = require('../middleware/validationMiddleware');
 const authMiddleware = require('../middleware/authMiddleware');
 
 // 確保所有控制器方法都已定義
@@ -16,6 +16,7 @@ if (!AuthController.login) {
 
 // 使用者註冊路由
 router.post('/register', 
+  validateUsername,  // 新增使用者帳號驗證
   validateRegistration, 
   (req, res) => {
     if (typeof AuthController.register !== 'function') {
