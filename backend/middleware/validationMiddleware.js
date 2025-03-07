@@ -54,6 +54,29 @@ const ValidationMiddleware = {
     next();
   },
 
+  // 帳號驗證
+  validateUsername(req, res, next) {
+    const { username } = req.body;
+
+    // 檢查是否存在
+    if (!username) {
+      return res.status(400).json({ message: '請提供使用者帳號' });
+    }
+
+    // 檢查長度 6-20 字元
+    if (username.length < 6 || username.length > 20) {
+      return res.status(400).json({ message: '使用者帳號長度必須在6-20字元之間' });
+    }
+
+    // 只允許英文、數字、底線
+    const usernameRegex = /^[a-zA-Z0-9_]+$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({ message: '使用者帳號只能包含英文字母、數字和底線' });
+    }
+
+    next();
+  },
+
   // 工作日誌驗證
   validateWorkLog(req, res, next) {
     const { location, crop, startTime, endTime } = req.body;
