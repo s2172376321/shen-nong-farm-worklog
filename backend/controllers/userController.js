@@ -197,18 +197,52 @@ const UserController = {
 
   // 綁定 Google 帳號
   async bindGoogleAccount(req, res) {
-    const userId = req.user.id;
+    const userId = req.user?.id;
     const { googleId, email } = req.body;
 
+    console.log('收到 Google 帳號綁定請求:', {
+      userId,
+      googleId: googleId ? `${googleId.substring(0, 5)}...` : undefined, // 僅記錄部分ID，保護隱私
+      email: email ? `${email.substring(0, 3)}...` : undefined // 僅記錄部分email，保護隱私
+    });
+
+    // 驗證輸入數據和用戶身份
+    if (!userId) {
+      console.error('Google帳號綁定失敗: 用戶未認證');
+      return res.status(401).json({ message: '請先登入後再進行操作' });
+    }
+
+    if (!googleId || !email) {
+      console.error('Google帳號綁定失敗: 參數不完整', { googleId: !!googleId, email: !!email });
+      return res.status(400).json({ message: 'Google ID 和 Email 為必填項目' });
+    }
+
     try {
+      // 先檢查用戶是否存在
+      const userCheckQuery = await db.query(
+        'SELECT id FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userCheckQuery.rows.length === 0) {
+        console.error('Google帳號綁定失敗: 用戶不存在', { userId });
+        return res.status(404).json({ message: '使用者不存在' });
+      }
+
       // 檢查 Google ID 是否已被其他帳號使用
       const existingGoogleQuery = await db.query(
-        'SELECT * FROM users WHERE google_id = $1', 
-        [googleId]
+        'SELECT id, username FROM users WHERE google_id = $1 AND id != $2', 
+        [googleId, userId]
       );
 
       if (existingGoogleQuery.rows.length > 0) {
-        return res.status(400).json({ message: 'Google 帳號已被其他使用者綁定' });
+        console.error('Google帳號綁定失敗: Google ID已被使用', {
+          existingUserId: existingGoogleQuery.rows[0].id
+        });
+        return res.status(400).json({ 
+          message: 'Google 帳號已被其他使用者綁定',
+          conflictUserId: existingGoogleQuery.rows[0].id
+        });
       }
 
       // 更新使用者的 Google 資訊
@@ -219,9 +253,10 @@ const UserController = {
           google_email = $2,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = $3
-        RETURNING id, username, name, google_email
+        RETURNING id, username, name, email, google_id, google_email, role
       `;
 
+      console.log('執行資料庫更新...');
       const result = await db.query(updateQuery, [
         googleId, 
         email, 
@@ -229,16 +264,31 @@ const UserController = {
       ]);
 
       if (result.rows.length === 0) {
-        return res.status(404).json({ message: '使用者不存在' });
+        console.error('Google帳號綁定失敗: 資料庫更新未返回結果');
+        return res.status(500).json({ message: '資料庫更新失敗' });
       }
 
+      console.log('Google帳號綁定成功', { userId });
       res.json({
         message: 'Google 帳號綁定成功',
-        user: result.rows[0]
+        user: {
+          ...result.rows[0],
+          google_id: result.rows[0].google_id ? true : false // 僅返回是否已綁定，不返回實際ID
+        }
       });
     } catch (error) {
       console.error('綁定 Google 帳號失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      
+      // 檢查資料庫錯誤
+      if (error.code) {
+        console.error('資料庫錯誤代碼:', error.code);
+      }
+      
+      // 提供更友好的錯誤訊息
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
     }
   },
 
