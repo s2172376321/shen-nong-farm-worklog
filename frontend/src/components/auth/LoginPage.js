@@ -1,5 +1,6 @@
 // 位置：frontend/src/components/auth/LoginPage.js
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button, Input, Card } from '../ui';
 import { useAuth } from '../../context/AuthContext';
 import { GoogleLoginButton } from './GoogleLogin';
@@ -9,46 +10,29 @@ const LoginPage = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { login, redirectBasedOnRole } = useAuth();
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError(null);
+    if (isLoading) return;
+    
     setIsLoading(true);
+    setError(null);
     
     try {
-      console.log('嘗試登入用戶:', email);
-      
-      // 執行登入但不依賴內部重定向
       const user = await login(email, password);
-      console.log('登入成功:', user);
       
-      // 使用共享的重定向邏輯
-      redirectBasedOnRole(user.role);
+      // 使用 React Router 導航
+      if (user.role === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err) {
       console.error('登入失敗:', err);
-      
-      // 顯示更具體的錯誤訊息
-      if (err.response) {
-        // 伺服器回傳了錯誤
-        const status = err.response.status;
-        const message = err.response.data?.message;
-        
-        if (status === 401) {
-          setError('帳號或密碼錯誤，請重新輸入');
-        } else if (message) {
-          setError(`登入失敗: ${message}`);
-        } else {
-          setError(`登入失敗 (錯誤碼: ${status})`);
-        }
-      } else if (err.request) {
-        // 伺服器沒有回應
-        setError('無法連接到伺服器，請檢查網路連接');
-      } else {
-        // 其他錯誤
-        setError('登入失敗，請稍後再試');
-      }
-      
+      setError(err.response?.data?.message || '登入失敗，請檢查帳號密碼');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -74,8 +58,8 @@ const LoginPage = () => {
               placeholder="電子郵件" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
               disabled={isLoading}
+              required
             />
           </div>
           <div>
@@ -84,8 +68,8 @@ const LoginPage = () => {
               placeholder="密碼" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
               disabled={isLoading}
+              required
             />
           </div>
           <Button 
