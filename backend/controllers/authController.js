@@ -74,7 +74,7 @@ const AuthController = {
     });
 
     try {
-      // 查找使用者
+      // 查找使用者 - 查詢以包含所有欄位
       const userQuery = await db.query(
         'SELECT * FROM users WHERE email = $1', 
         [email]
@@ -115,6 +115,7 @@ const AuthController = {
         { expiresIn: '24h' }
       );
 
+      // 修改返回資訊，加入 google_id 和 google_email
       res.json({
         token,
         user: {
@@ -124,7 +125,9 @@ const AuthController = {
           name: user.name,
           department: user.department,
           position: user.position,
-          role: user.role
+          role: user.role,
+          google_id: user.google_id,
+          google_email: user.google_email
         }
       });
     } catch (error) {
@@ -158,7 +161,7 @@ const AuthController = {
           INSERT INTO users 
           (username, email, google_id, role, profile_image_url, name) 
           VALUES ($1, $2, $3, $4, $5, $6) 
-          RETURNING id
+          RETURNING *
         `;
         const values = [
           payload.username, 
@@ -170,14 +173,17 @@ const AuthController = {
         ];
 
         const result = await db.query(insertQuery, values);
-        user = { 
-          id: result.rows[0].id, 
-          email: payload.email, 
-          username: payload.username,
-          name: payload.name,
-          role: 'user',
-          profile_image_url: payload.profileImage
-        };
+        user = result.rows[0];
+      } else if (!user.google_id) {
+        // 如果使用者存在但尚未綁定Google，更新Google資訊
+        await db.query(
+          'UPDATE users SET google_id = $1, google_email = $2, profile_image_url = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
+          [payload.googleId, payload.email, payload.profileImage, user.id]
+        );
+        
+        // 重新取得完整使用者資訊
+        const refreshQuery = await db.query('SELECT * FROM users WHERE id = $1', [user.id]);
+        user = refreshQuery.rows[0];
       }
 
       // 生成 JWT
@@ -191,6 +197,7 @@ const AuthController = {
         { expiresIn: '24h' }
       );
 
+      // 返回完整使用者資訊，包含 google_id 和 google_email
       res.json({
         token: jwtToken,
         user: {
@@ -201,7 +208,9 @@ const AuthController = {
           department: user.department,
           position: user.position,
           role: user.role,
-          profileImage: user.profile_image_url
+          profileImage: user.profile_image_url,
+          google_id: user.google_id,
+          google_email: user.google_email
         }
       });
     } catch (error) {
