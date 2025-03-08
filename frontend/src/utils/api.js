@@ -202,4 +202,12 @@ export const bindGoogleAccount = async (googleId, email) => {
   }
 };
 
+
+// 解除綁定 Google 帳號
+export const unbindGoogleAccount = async () => {
+  const response = await api.post('/users/unbind-google');
+  return response.data;
+};
+
+
 export default api;
