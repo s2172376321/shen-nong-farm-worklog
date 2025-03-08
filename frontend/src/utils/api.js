@@ -126,4 +126,10 @@ export const bindGoogleAccount = async (googleId, email) => {
   return response.data;
 };
 
+// 檢查使用者帳號可用性
+export const checkUsernameAvailability = async (username) => {
+  const response = await api.get(`/users/check-username/${username}`);
+  return response.data;
+};
+
 export default api;
