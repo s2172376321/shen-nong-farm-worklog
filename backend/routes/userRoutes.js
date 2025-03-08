@@ -1,4 +1,6 @@
 // 位置：backend/routes/userRoutes.js
+// 這個文件應該包含 '/bind-google' 路由
+
 const express = require('express');
 const router = express.Router();
 const UserController = require('../controllers/userController');
@@ -34,10 +36,22 @@ router.delete('/:userId',
   UserController.deleteUser
 );
 
+// 檢查使用者帳號可用性
+router.get('/check-username/:username',
+  UserController.checkUsernameAvailability
+);
+
 // 綁定 Google 帳號（登入使用者）
 router.post('/bind-google', 
   authMiddleware, 
   UserController.bindGoogleAccount
 );
+
+// 解除綁定 Google 帳號（登入使用者）
+router.post('/unbind-google', 
+  authMiddleware, 
+  UserController.unbindGoogleAccount
+);
+
 
 module.exports = router;
