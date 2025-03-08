@@ -1,7 +1,7 @@
 // 位置：frontend/src/components/user/GoogleBind.js
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { bindGoogleAccount } from '../../utils/api';
+import { bindGoogleAccount, unbindGoogleAccount } from '../../utils/api';
 import { Button } from '../ui';
 
 const GoogleBind = () => {
@@ -11,6 +11,7 @@ const GoogleBind = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [scriptLoaded, setScriptLoaded] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
+  const [isConfirmingUnbind, setIsConfirmingUnbind] = useState(false);
 
   // 初始化 Google Identity Services
   const initializeGoogle = useCallback(() => {
@@ -143,6 +144,45 @@ const GoogleBind = () => {
     }
   };
 
+  // 處理解除綁定
+  const handleUnbindGoogle = async () => {
+    if (isLoading) return;
+    
+    if (!isConfirmingUnbind) {
+      setIsConfirmingUnbind(true);
+      return;
+    }
+    
+    setIsLoading(true);
+    setError(null);
+    setSuccess(null);
+    
+    try {
+      const response = await unbindGoogleAccount();
+      
+      // 更新用戶資訊，移除 Google 綁定相關資訊
+      const updatedUser = {
+        ...user,
+        google_id: null,
+        google_email: null
+      };
+      updateUser(updatedUser);
+      
+      setSuccess('Google 帳號已成功解除綁定');
+      setIsConfirmingUnbind(false);
+    } catch (error) {
+      console.error('解除 Google 綁定失敗:', error);
+      setError(error.response?.data?.message || '解除 Google 綁定失敗，請稍後再試');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 取消解除綁定確認
+  const handleCancelUnbind = () => {
+    setIsConfirmingUnbind(false);
+  };
+
   // 載入 Google Identity Services SDK
   useEffect(() => {
     // 避免重複載入
@@ -196,28 +236,79 @@ const GoogleBind = () => {
       )}
       
       {user.google_id ? (
-        <div className="text-green-400 p-3 bg-gray-700 rounded-lg">
-          <div className="flex items-center mb-2">
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              width="20" 
-              height="20" 
-              viewBox="0 0 24 24"
-              className="mr-2"
-            >
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-1 7.28-2.72l-3.57-2.77c-.99.69-2.26 1.1-3.71 1.1-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.66-2.07z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.46 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
-            <span className="font-semibold">已綁定 Google 帳號</span>
-          </div>
-          {user.google_email && (
-            <div className="text-sm text-gray-300 ml-7">
-              {user.google_email}
+        <>
+          <div className="text-green-400 p-3 bg-gray-700 rounded-lg mb-4">
+            <div className="flex items-center mb-2">
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width="20" 
+                height="20" 
+                viewBox="0 0 24 24"
+                className="mr-2"
+              >
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-1 7.28-2.72l-3.57-2.77c-.99.69-2.26 1.1-3.71 1.1-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.66-2.07z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.46 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              <span className="font-semibold">已綁定 Google 帳號</span>
             </div>
+            {user.google_email && (
+              <div className="text-sm text-gray-300 ml-7">
+                {user.google_email}
+              </div>
+            )}
+          </div>
+          
+          {/* 解除綁定按鈕 */}
+          {isConfirmingUnbind ? (
+            <div className="space-y-3">
+              <p className="text-yellow-400 text-sm mb-2">
+                確定要解除 Google 帳號綁定嗎？此操作將會移除您與 Google 帳號的關聯。
+              </p>
+              <div className="flex space-x-3">
+                <Button 
+                  onClick={handleUnbindGoogle}
+                  className="w-1/2 bg-red-600 hover:bg-red-700"
+                  disabled={isLoading}
+                >
+                  {isLoading ? '處理中...' : '確認解除'}
+                </Button>
+                <Button 
+                  onClick={handleCancelUnbind}
+                  variant="secondary"
+                  className="w-1/2"
+                  disabled={isLoading}
+                >
+                  取消
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button 
+              onClick={() => setIsConfirmingUnbind(true)}
+              variant="secondary"
+              className="w-full flex items-center justify-center"
+              disabled={isLoading}
+            >
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width="16" 
+                height="16" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                className="mr-2"
+              >
+                <path d="M18 6L6 18M6 6l12 12"></path>
+              </svg>
+              解除 Google 綁定
+            </Button>
           )}
-        </div>
+        </>
       ) : (
         <Button 
           onClick={handleGoogleBind}
@@ -254,7 +345,9 @@ const GoogleBind = () => {
       )}
       
       <div className="mt-4 text-sm text-gray-400">
-        綁定 Google 帳號後，您可以使用 Google 登入功能快速訪問系統。
+        {user.google_id 
+          ? '已綁定 Google 帳號，您可以使用 Google 快速登入。解除綁定後，您需要使用用戶名和密碼登入。' 
+          : '綁定 Google 帳號後，您可以使用 Google 登入功能快速訪問系統。'}
       </div>
     </div>
   );
