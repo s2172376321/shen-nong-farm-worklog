@@ -23,7 +23,7 @@ export const AuthProvider = ({ children }) => {
         break;
       case 'user':
       default:
-        window.location.href = '/work-log';
+        window.location.href = '/dashboard'; // 改為新的儀表板路徑
         break;
     }
   };
@@ -48,7 +48,13 @@ export const AuthProvider = ({ children }) => {
   // 一般登入
   const login = async (email, password) => {
     try {
+      console.log('執行登入API請求...');
       const response = await loginUser(email, password);
+      console.log('登入API回應:', response);
+      
+      if (!response || !response.token) {
+        throw new Error('登入回應缺少必要資訊');
+      }
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
@@ -56,12 +62,15 @@ export const AuthProvider = ({ children }) => {
 
       setUser(response.user);
       
-      // 根據角色重定向
-      redirectBasedOnRole(response.user.role);
-
+      // 不在函數內立即重定向，而是返回用戶資訊
+      // 讓調用代碼決定是否重定向
       return response.user;
     } catch (error) {
       console.error('登入失敗:', error);
+      // 更詳細的錯誤記錄
+      if (error.response) {
+        console.error('伺服器回應:', error.response.status, error.response.data);
+      }
       throw error;
     }
   };
@@ -69,7 +78,13 @@ export const AuthProvider = ({ children }) => {
   // Google 登入
   const loginWithGoogle = async (googleToken) => {
     try {
+      console.log('執行Google登入API請求...');
       const response = await googleLogin(googleToken);
+      console.log('Google登入API回應:', response);
+      
+      if (!response || !response.token) {
+        throw new Error('Google登入回應缺少必要資訊');
+      }
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
@@ -77,12 +92,13 @@ export const AuthProvider = ({ children }) => {
 
       setUser(response.user);
       
-      // 根據角色重定向
-      redirectBasedOnRole(response.user.role);
-
+      // 不在函數內立即重定向，而是返回用戶資訊
       return response.user;
     } catch (error) {
       console.error('Google 登入失敗:', error);
+      if (error.response) {
+        console.error('伺服器回應:', error.response.status, error.response.data);
+      }
       throw error;
     }
   };
@@ -108,7 +124,8 @@ export const AuthProvider = ({ children }) => {
       login,
       loginWithGoogle,
       logout,
-      updateUser
+      updateUser,
+      redirectBasedOnRole  // 導出重定向函數，讓其他組件可以使用
     }}>
       {children}
     </AuthContext.Provider>
