@@ -8,21 +8,48 @@ const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
-  const { login } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+  const { login, redirectBasedOnRole } = useAuth();
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setError(null);
+    setIsLoading(true);
+    
     try {
-      const user = await login(email, password);
+      console.log('嘗試登入用戶:', email);
       
-      // 根據角色重定向
-      if (user.role === 'admin') {
-        window.location.href = '/admin';
-      } else {
-        window.location.href = '/work-log';
-      }
+      // 執行登入但不依賴內部重定向
+      const user = await login(email, password);
+      console.log('登入成功:', user);
+      
+      // 使用共享的重定向邏輯
+      redirectBasedOnRole(user.role);
     } catch (err) {
-      setError('登入失敗，請檢查帳號密碼');
+      console.error('登入失敗:', err);
+      
+      // 顯示更具體的錯誤訊息
+      if (err.response) {
+        // 伺服器回傳了錯誤
+        const status = err.response.status;
+        const message = err.response.data?.message;
+        
+        if (status === 401) {
+          setError('帳號或密碼錯誤，請重新輸入');
+        } else if (message) {
+          setError(`登入失敗: ${message}`);
+        } else {
+          setError(`登入失敗 (錯誤碼: ${status})`);
+        }
+      } else if (err.request) {
+        // 伺服器沒有回應
+        setError('無法連接到伺服器，請檢查網路連接');
+      } else {
+        // 其他錯誤
+        setError('登入失敗，請稍後再試');
+      }
+      
+      setIsLoading(false);
     }
   };
 
@@ -48,6 +75,7 @@ const LoginPage = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              disabled={isLoading}
             />
           </div>
           <div>
@@ -57,13 +85,23 @@ const LoginPage = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              disabled={isLoading}
             />
           </div>
           <Button 
             type="submit" 
             className="w-full"
+            disabled={isLoading}
           >
-            登入
+            {isLoading ? (
+              <div className="flex items-center justify-center">
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                登入中...
+              </div>
+            ) : '登入'}
           </Button>
         </form>
 
