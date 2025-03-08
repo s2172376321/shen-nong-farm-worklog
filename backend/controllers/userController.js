@@ -292,6 +292,70 @@ const UserController = {
     }
   },
 
+  // 解除綁定 Google 帳號
+  async unbindGoogleAccount(req, res) {
+    const userId = req.user.id;
+
+    console.log('收到解除 Google 帳號綁定請求:', { userId });
+
+    // 驗證用戶身份
+    if (!userId) {
+      console.error('Google帳號解除綁定失敗: 用戶未認證');
+      return res.status(401).json({ message: '請先登入後再進行操作' });
+    }
+
+    try {
+      // 先檢查用戶是否存在
+      const userCheckQuery = await db.query(
+        'SELECT id, google_id FROM users WHERE id = $1',
+        [userId]
+      );
+
+      if (userCheckQuery.rows.length === 0) {
+        console.error('Google帳號解除綁定失敗: 用戶不存在', { userId });
+        return res.status(404).json({ message: '使用者不存在' });
+      }
+
+      // 檢查用戶是否已綁定 Google 帳號
+      if (!userCheckQuery.rows[0].google_id) {
+        console.error('Google帳號解除綁定失敗: 用戶未綁定Google帳號');
+        return res.status(400).json({ message: '此帳號尚未綁定 Google 帳號' });
+      }
+
+      // 更新使用者資訊，清除 Google 綁定資訊
+      const updateQuery = `
+        UPDATE users 
+        SET 
+          google_id = NULL, 
+          google_email = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING id, username, name, email, role
+      `;
+
+      console.log('執行資料庫更新...');
+      const result = await db.query(updateQuery, [userId]);
+
+      if (result.rows.length === 0) {
+        console.error('Google帳號解除綁定失敗: 資料庫更新未返回結果');
+        return res.status(500).json({ message: '資料庫更新失敗' });
+      }
+
+      console.log('Google帳號解除綁定成功', { userId });
+      res.json({
+        message: 'Google 帳號解除綁定成功',
+        user: result.rows[0]
+      });
+    } catch (error) {
+      console.error('解除綁定 Google 帳號失敗:', error);
+      
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
+    }
+  },
+
   // 刪除使用者
   async deleteUser(req, res) {
     const { userId } = req.params;
