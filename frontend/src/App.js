@@ -8,6 +8,8 @@ import RegisterPage from './components/auth/RegisterPage';
 import WorkLogForm from './components/worklog/WorkLogForm';
 import AdminDashboard from './components/admin/AdminDashboard';
 import NoticeBoard from './components/common/NoticeBoard';
+import UserDashboard from './components/user/UserDashboard';
+import ChangePassword from './components/user/ChangePassword';
 
 // 保護路由組件
 const PrivateRoute = ({ element, adminOnly = false }) => {
@@ -18,7 +20,7 @@ const PrivateRoute = ({ element, adminOnly = false }) => {
   }
   
   if (adminOnly && user.role !== 'admin') {
-    return <Navigate to="/work-log" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   
   return element;
@@ -44,14 +46,16 @@ function App() {
         <Route path="/register" element={<RegisterPage />} />
         
         {/* 受保護的路由 */}
+        <Route path="/dashboard" element={<PrivateRoute element={<UserDashboard />} />} />
         <Route path="/work-log" element={<PrivateRoute element={<WorkLogForm />} />} />
         <Route path="/admin" element={<PrivateRoute element={<AdminDashboard />} adminOnly={true} />} />
         <Route path="/notices" element={<PrivateRoute element={<NoticeBoard />} />} />
+        <Route path="/settings" element={<PrivateRoute element={<ChangePassword />} />} />
         
         {/* 預設重定向 */}
         <Route path="/" element={
           user ? (
-            <Navigate to={user.role === 'admin' ? '/admin' : '/work-log'} replace />
+            <Navigate to={user.role === 'admin' ? '/admin' : '/dashboard'} replace />
           ) : (
             <Navigate to="/login" replace />
           )
