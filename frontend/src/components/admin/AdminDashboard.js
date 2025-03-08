@@ -1,11 +1,17 @@
 // 位置：frontend/src/components/admin/AdminDashboard.js
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchDashboardStats } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import UserManagement from './UserManagement';
 import WorkLogReview from './WorkLogReview';
 import NoticeManagement from './NoticeManagement';
+import NoticeBoard from '../common/NoticeBoard';
+import ChangePassword from '../user/ChangePassword';
 
 const AdminDashboard = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState(null);
   const [stats, setStats] = useState({
     totalUsers: 0,
@@ -15,21 +21,37 @@ const AdminDashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // 管理功能區塊
   const sections = [
     {
       title: '使用者管理',
       component: UserManagement,
-      description: '查看、新增和管理系統使用者'
+      description: '查看、新增和管理系統使用者',
+      icon: '👤'
     },
     {
       title: '工作日誌審核',
       component: WorkLogReview,
-      description: '審核和管理員工工作日誌'
+      description: '審核和管理員工工作日誌',
+      icon: '📋'
     },
     {
       title: '公告管理',
       component: NoticeManagement,
-      description: '發布和管理系統公告'
+      description: '發布和管理系統公告',
+      icon: '📢'
+    },
+    {
+      title: '公告欄',
+      component: NoticeBoard,
+      description: '查看所有公告',
+      icon: '📰'
+    },
+    {
+      title: '帳號設定',
+      component: ChangePassword,
+      description: '修改密碼與綁定Google帳號',
+      icon: '⚙️'
     }
   ];
 
@@ -49,62 +71,134 @@ const AdminDashboard = () => {
     loadStats();
   }, []);
 
-  // 如果沒有選擇具體區塊，顯示總覽
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  // 如果沒有選擇具體區塊，顯示儀表板總覽
   if (!activeSection) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6">
-        <div className="container mx-auto">
-          <h1 className="text-3xl font-bold mb-8">管理員儀表板</h1>
+      <div className="min-h-screen bg-gray-900 text-white flex">
+        {/* 側邊導航欄 */}
+        <div className="w-64 bg-gray-800 p-4 min-h-screen">
+          <div className="mb-6">
+            <h2 className="text-xl font-bold text-blue-400">神農山莊</h2>
+            <p className="text-sm text-gray-400">管理員系統</p>
+          </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {sections.map((section, index) => (
-              <div 
-                key={index}
-                className="bg-gray-800 p-6 rounded-lg shadow-md hover:bg-gray-700 transition-all duration-300 cursor-pointer group"
+          {/* 管理員資訊 */}
+          <div className="mb-6 p-3 bg-gray-700 rounded-lg">
+            <div className="font-semibold">{user.username}</div>
+            <div className="text-sm text-gray-400">{user.email}</div>
+            <div className="text-sm text-gray-400">管理員</div>
+          </div>
+          
+          {/* 導航選單 */}
+          <div className="space-y-2">
+            {sections.map((section) => (
+              <button
+                key={section.title}
                 onClick={() => setActiveSection(section)}
+                className="w-full text-left px-4 py-3 rounded-lg flex items-center text-gray-300 hover:bg-gray-700"
               >
-                <h2 className="text-xl font-semibold mb-4 text-blue-400 group-hover:text-blue-300">
-                  {section.title}
-                </h2>
-                <p className="text-gray-400 mb-4">{section.description}</p>
-                <div className="text-right">
-                  <button 
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    進入管理
-                  </button>
-                </div>
-              </div>
+                <span className="mr-3">{section.icon}</span>
+                {section.title}
+              </button>
             ))}
+            
+            {/* 登出按鈕 */}
+            <button
+              onClick={handleLogout}
+              className="w-full text-left px-4 py-3 rounded-lg flex items-center text-red-400 hover:bg-gray-700"
+            >
+              <span className="mr-3">🚪</span>
+              登出
+            </button>
           </div>
+        </div>
 
-          {/* 統計資訊 */}
-          <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h3 className="text-lg font-semibold mb-2">總使用者數</h3>
-              <p className="text-2xl text-blue-400">
-                {isLoading ? 'N/A' : stats.totalUsers}
-              </p>
+        {/* 主要內容區 */}
+        <div className="flex-1 p-6">
+          <div className="container mx-auto">
+            <h1 className="text-3xl font-bold mb-8">管理員儀表板</h1>
+            
+            {/* 統計資訊 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="bg-gray-800 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">總使用者數</h3>
+                <p className="text-2xl text-blue-400">
+                  {isLoading ? 'N/A' : stats.totalUsers}
+                </p>
+              </div>
+              <div className="bg-gray-800 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">待審核工作日誌</h3>
+                <p className="text-2xl text-blue-400">
+                  {isLoading ? 'N/A' : stats.pendingWorkLogs}
+                </p>
+              </div>
+              <div className="bg-gray-800 p-4 rounded-lg">
+                <h3 className="text-lg font-semibold mb-2">未讀公告</h3>
+                <p className="text-2xl text-blue-400">
+                  {isLoading ? 'N/A' : stats.unreadNotices}
+                </p>
+              </div>
             </div>
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h3 className="text-lg font-semibold mb-2">待審核工作日誌</h3>
-              <p className="text-2xl text-blue-400">
-                {isLoading ? 'N/A' : stats.pendingWorkLogs}
-              </p>
+            
+            {/* 管理功能區塊 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {sections.slice(0, 3).map((section, index) => (
+                <div 
+                  key={index}
+                  className="bg-gray-800 p-6 rounded-lg shadow-md hover:bg-gray-700 transition-all duration-300 cursor-pointer group"
+                  onClick={() => setActiveSection(section)}
+                >
+                  <h2 className="text-xl font-semibold mb-4 text-blue-400 group-hover:text-blue-300">
+                    <span className="mr-2">{section.icon}</span>
+                    {section.title}
+                  </h2>
+                  <p className="text-gray-400 mb-4">{section.description}</p>
+                  <div className="text-right">
+                    <button 
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      進入管理
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="bg-gray-800 p-4 rounded-lg">
-              <h3 className="text-lg font-semibold mb-2">未讀公告</h3>
-              <p className="text-2xl text-blue-400">
-                {isLoading ? 'N/A' : stats.unreadNotices}
-              </p>
+
+            {/* 其他功能區塊 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              {sections.slice(3, 5).map((section, index) => (
+                <div 
+                  key={index}
+                  className="bg-gray-800 p-6 rounded-lg shadow-md hover:bg-gray-700 transition-all duration-300 cursor-pointer group"
+                  onClick={() => setActiveSection(section)}
+                >
+                  <h2 className="text-xl font-semibold mb-4 text-blue-400 group-hover:text-blue-300">
+                    <span className="mr-2">{section.icon}</span>
+                    {section.title}
+                  </h2>
+                  <p className="text-gray-400 mb-4">{section.description}</p>
+                  <div className="text-right">
+                    <button 
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      前往
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
+
+            {error && (
+              <div className="bg-red-600 text-white p-3 rounded-lg mt-4">
+                {error}
+              </div>
+            )}
           </div>
-
-          {error && (
-            <div className="bg-red-600 text-white p-3 rounded-lg mt-4">
-              {error}
-            </div>
-          )}
         </div>
       </div>
     );
@@ -113,15 +207,61 @@ const AdminDashboard = () => {
   // 渲染選中的管理頁面
   const ActiveComponent = activeSection.component;
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="container mx-auto p-6">
-        <div className="flex items-center mb-6">
-          <button 
+    <div className="min-h-screen bg-gray-900 text-white flex">
+      {/* 側邊導航欄 */}
+      <div className="w-64 bg-gray-800 p-4 min-h-screen">
+        <div className="mb-6">
+          <h2 className="text-xl font-bold text-blue-400">神農山莊</h2>
+          <p className="text-sm text-gray-400">管理員系統</p>
+        </div>
+        
+        {/* 管理員資訊 */}
+        <div className="mb-6 p-3 bg-gray-700 rounded-lg">
+          <div className="font-semibold">{user.username}</div>
+          <div className="text-sm text-gray-400">{user.email}</div>
+          <div className="text-sm text-gray-400">管理員</div>
+        </div>
+        
+        {/* 導航選單 */}
+        <div className="space-y-2">
+          {sections.map((section) => (
+            <button
+              key={section.title}
+              onClick={() => setActiveSection(section)}
+              className={`w-full text-left px-4 py-3 rounded-lg flex items-center ${
+                activeSection.title === section.title 
+                  ? 'bg-blue-600 text-white' 
+                  : 'text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              <span className="mr-3">{section.icon}</span>
+              {section.title}
+            </button>
+          ))}
+          
+          {/* 返回儀表板 */}
+          <button
             onClick={() => setActiveSection(null)}
-            className="mr-4 text-blue-400 hover:text-blue-300"
+            className="w-full text-left px-4 py-3 rounded-lg flex items-center text-gray-300 hover:bg-gray-700"
           >
-            ← 返回儀表板
+            <span className="mr-3">🏠</span>
+            返回儀表板
           </button>
+          
+          {/* 登出按鈕 */}
+          <button
+            onClick={handleLogout}
+            className="w-full text-left px-4 py-3 rounded-lg flex items-center text-red-400 hover:bg-gray-700"
+          >
+            <span className="mr-3">🚪</span>
+            登出
+          </button>
+        </div>
+      </div>
+
+      {/* 主要內容區 */}
+      <div className="flex-1 p-6 overflow-y-auto">
+        <div className="mb-6">
           <h1 className="text-2xl font-bold">{activeSection.title}</h1>
         </div>
         <ActiveComponent />
