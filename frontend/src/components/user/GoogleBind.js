@@ -10,12 +10,13 @@ const GoogleBind = () => {
   const [success, setSuccess] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [scriptLoaded, setScriptLoaded] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null);
 
   // 初始化 Google Identity Services
   const initializeGoogle = useCallback(() => {
     if (window.google && window.google.accounts && !scriptLoaded) {
       setScriptLoaded(true);
-      console.log('Google Identity Services 已載入用於綁定');
+      console.log('Google Identity Services 初始化成功');
     }
   }, [scriptLoaded]);
 
@@ -24,8 +25,11 @@ const GoogleBind = () => {
     setIsLoading(true);
     setError(null);
     setSuccess(null);
+    setDebugInfo(null);
 
     try {
+      console.log('開始Google帳號綁定流程');
+      
       // 檢查 Google Identity Services 是否已載入
       if (!window.google || !window.google.accounts) {
         throw new Error('Google 服務未載入，請刷新頁面後再試');
@@ -37,33 +41,92 @@ const GoogleBind = () => {
         scope: 'email profile',
         callback: async (tokenResponse) => {
           if (tokenResponse.error) {
+            console.error('Google授權錯誤:', tokenResponse);
             setError(tokenResponse.error_description || '無法獲取 Google 帳號資訊');
             setIsLoading(false);
             return;
           }
 
           try {
+            console.log('已獲取 Google 授權，正在獲取用戶資訊');
+            
             // 使用 access token 獲取用戶資訊
-            const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
               headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
             });
 
-            if (!response.ok) {
-              throw new Error('無法獲取 Google 用戶資訊');
+            if (!userInfoResponse.ok) {
+              const errorText = await userInfoResponse.text();
+              console.error('Google用戶資訊獲取失敗:', errorText);
+              throw new Error(`無法獲取 Google 用戶資訊: ${userInfoResponse.status} ${errorText}`);
             }
 
-            const profileData = await response.json();
+            const profileData = await userInfoResponse.json();
+            console.log('已獲取Google用戶資訊', {
+              sub: profileData.sub,
+              email: profileData.email,
+              name: profileData.name
+            });
+            
+            // 記錄綁定前的資訊
+            setDebugInfo({
+              googleId: profileData.sub,
+              email: profileData.email,
+              currentUserId: user?.id
+            });
             
             // 呼叫綁定 API
+            console.log('正在呼叫綁定API...');
             const bindResponse = await bindGoogleAccount(profileData.sub, profileData.email);
+            
+            console.log('綁定API響應成功:', bindResponse);
             
             // 更新用戶資訊
             updateUser(bindResponse.user);
             
             setSuccess('Google 帳號綁定成功');
           } catch (apiError) {
-            console.error('API 或綁定過程錯誤:', apiError);
-            setError(apiError.response?.data?.message || 'Google 帳號綁定失敗');
+            console.error('API或綁定過程錯誤:', apiError);
+            
+            // 詳細記錄錯誤信息
+            let errorMessage = 'Google 帳號綁定失敗';
+            let errorDetails = null;
+            
+            if (apiError.response) {
+              // 服務器回應了錯誤
+              errorMessage = apiError.response.data?.message || errorMessage;
+              console.error('服務器錯誤詳情:', {
+                status: apiError.response.status,
+                statusText: apiError.response.statusText,
+                data: apiError.response.data
+              });
+              
+              errorDetails = {
+                status: apiError.response.status,
+                statusText: apiError.response.statusText,
+                url: apiError.response.config?.url
+              };
+            } else if (apiError.request) {
+              // 請求發送了但沒有收到回應
+              errorMessage = '伺服器無回應，請稍後再試';
+              console.error('請求未收到回應:', apiError.request);
+              
+              errorDetails = {
+                message: '請求未收到回應',
+                requestUrl: apiError.config?.url
+              };
+            } else {
+              // 設置請求時發生了錯誤
+              errorMessage = apiError.message || errorMessage;
+              console.error('請求設置錯誤:', apiError.message);
+              
+              errorDetails = {
+                message: apiError.message
+              };
+            }
+            
+            setError(errorMessage);
+            setDebugInfo(errorDetails);
           } finally {
             setIsLoading(false);
           }
@@ -71,6 +134,7 @@ const GoogleBind = () => {
       });
 
       // 請求 access token
+      console.log('請求Google授權...');
       tokenClient.requestAccessToken();
     } catch (error) {
       console.error('Google 帳號綁定處理失敗:', error);
@@ -83,20 +147,22 @@ const GoogleBind = () => {
   useEffect(() => {
     // 避免重複載入
     if (document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      console.log('Google腳本已存在，初始化中...');
       initializeGoogle();
       return;
     }
 
+    console.log('正在載入Google Identity Services腳本...');
     const script = document.createElement('script');
     script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
     script.onload = () => {
-      console.log('Google Identity Services 已載入');
+      console.log('Google Identity Services 腳本加載成功');
       initializeGoogle();
     };
-    script.onerror = () => {
-      console.error('Google Identity Services 載入失敗');
+    script.onerror = (e) => {
+      console.error('Google Identity Services 腳本載入失敗', e);
       setError('無法載入 Google 服務，請檢查網絡連接');
     };
     document.body.appendChild(script);
@@ -113,7 +179,13 @@ const GoogleBind = () => {
       
       {error && (
         <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          {error}
+          <p className="font-semibold">{error}</p>
+          {debugInfo && (
+            <div className="mt-2 text-xs opacity-75">
+              <p>錯誤詳情：</p>
+              <pre className="overflow-x-auto">{JSON.stringify(debugInfo, null, 2)}</pre>
+            </div>
+          )}
         </div>
       )}
       
