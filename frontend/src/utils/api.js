@@ -205,9 +205,32 @@ export const bindGoogleAccount = async (googleId, email) => {
 
 // 解除綁定 Google 帳號
 export const unbindGoogleAccount = async () => {
-  const response = await api.post('/users/unbind-google');
-  return response.data;
+  try {
+    console.log('正在發送 Google 帳號解除綁定請求');
+    
+    const response = await api.post('/users/unbind-google');
+    
+    console.log('Google 帳號解除綁定成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Google 帳號解除綁定 API 失敗:', error);
+    
+    // 詳細日誌以幫助診斷問題
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    } else {
+      console.error('請求設置出錯:', error.message);
+    }
+    
+    throw error;
+  }
 };
+
 
 
 export default api;
