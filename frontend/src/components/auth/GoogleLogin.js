@@ -1,5 +1,5 @@
 // 位置：frontend/src/components/auth/GoogleLogin.js
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../ui';
 
@@ -8,50 +8,66 @@ export const GoogleLoginButton = () => {
 
   const handleGoogleLogin = async () => {
     try {
-      // 使用 Google 登入 SDK
-      const googleUser = await new Promise((resolve, reject) => {
-        window.gapi.load('auth2', () => {
-          const auth2 = window.gapi.auth2.init({
-            client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
-            scope: 'email profile'
-          });
+      // Google Identity Services 現在由 window.google.accounts.id 提供
+      if (!window.google || !window.google.accounts) {
+        console.error('Google Identity Services 尚未載入');
+        alert('Google 登入服務未能載入，請稍後再試');
+        return;
+      }
 
-          auth2.signIn({
-            scope: 'email profile'
-          }).then(
-            googleUser => resolve(googleUser),
-            error => reject(error)
-          );
-        });
+      // 透過新的方式取得 ID Token
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+        scope: 'email profile',
+        callback: async (response) => {
+          if (response.error) {
+            console.error('Google 登入失敗:', response.error);
+            alert('Google 登入失敗，請稍後再試');
+            return;
+          }
+
+          try {
+            // 將得到的 access_token 傳給後端
+            await loginWithGoogle(response.access_token);
+            
+            // 登入成功後導向主頁 (已更新為儀表板)
+            window.location.href = '/dashboard';
+          } catch (error) {
+            console.error('API 登入失敗:', error);
+            alert('登入處理失敗，請稍後再試');
+          }
+        }
       });
 
-      // 取得 ID Token
-      const idToken = googleUser.getAuthResponse().id_token;
+      // 請求 token
+      client.requestAccessToken();
 
-      // 呼叫登入方法
-      await loginWithGoogle(idToken);
-
-      // 登入成功後導向主頁
-      window.location.href = '/work-log';
     } catch (error) {
-      console.error('Google 登入失敗', error);
-      
-      // 顯示錯誤訊息
+      console.error('Google 登入程序失敗', error);
       alert('Google 登入失敗，請稍後再試');
     }
   };
 
-  // 載入 Google 登入 SDK
-  React.useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/platform.js';
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
-
-    return () => {
-      document.body.removeChild(script);
+  // 載入 Google Identity Services SDK
+  useEffect(() => {
+    const loadGoogleScript = () => {
+      // 檢查是否已載入
+      if (document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+        return;
+      }
+      
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => console.log('Google Identity Services 已載入');
+      script.onerror = () => console.error('Google Identity Services 載入失敗');
+      document.body.appendChild(script);
     };
+
+    loadGoogleScript();
+    
+    // 不需要清理腳本，因為它可能被其他組件使用
   }, []);
 
   return (
