@@ -55,6 +55,51 @@ const DataController = {
     }
   },
 
+  // 取得按區域分組的位置資料
+  getLocationsByArea: async (req, res) => {
+    try {
+      // 嘗試從CSV檔案中讀取資料
+      const filePath = path.resolve(__dirname, '../data/位置區域.csv');
+      let locations;
+
+      try {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        locations = parse(fileContent, {
+          columns: true,
+          skip_empty_lines: true
+        });
+      } catch (fileError) {
+        console.warn(`無法讀取位置資料檔案: ${fileError.message}`);
+        // 使用預設資料
+        locations = defaultLocations;
+      }
+
+      // 按區域名稱分組
+      const groupedLocations = locations.reduce((acc, location) => {
+        const areaName = location['區域名稱'];
+        if (!acc[areaName]) {
+          acc[areaName] = [];
+        }
+        acc[areaName].push({
+          code: location['位置代號'],
+          name: location['位置名稱']
+        });
+        return acc;
+      }, {});
+
+      // 構建最終返回格式
+      const result = Object.keys(groupedLocations).map(areaName => ({
+        areaName,
+        locations: groupedLocations[areaName]
+      }));
+
+      res.json(result);
+    } catch (error) {
+      console.error('獲取分組位置資料失敗:', error);
+      res.status(500).json({ message: '獲取分組位置資料失敗' });
+    }
+  },
+
   // 取得工作類別資料
   getWorkCategories: async (req, res) => {
     try {
