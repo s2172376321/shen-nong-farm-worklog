@@ -1,62 +1,374 @@
 // 位置：frontend/src/components/worklog/WorkLogForm.js
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWorkLog } from '../../hooks/useWorkLog';
-import { Button, Input } from '../ui';
-
-const WORK_CATEGORIES = [
-  '前置整理', '基肥翻土', '灌溉', '防蟲', 
-  '施肥', '除草', '整枝', '種植', 
-  '食農教育', '環境整潔', '擦雞蛋', 
-  '撿雞蛋', '出貨準備', '伙食準備', 
-  '採收', '加工領料', '加工入庫', 
-  '屠宰', '屠宰前置作業'
-];
+import { Button, Input, Card } from '../ui';
+import { useAuth } from '../../context/AuthContext';
+import { fetchLocations, fetchWorkCategories, fetchProducts } from '../../utils/api';
 
 const WorkLogForm = () => {
-  const { submitWorkLog, isLoading, error } = useWorkLog();
+  const { user } = useAuth();
+  const { submitWorkLog, fetchWorkLogs, isLoading, error } = useWorkLog();
+  
+  // 基本表單數據
   const [workLog, setWorkLog] = useState({
-    location: '',
-    crop: '',
+    location_code: '',
+    position_code: '',
+    position_name: '',
+    work_category_code: '',
+    work_category_name: '',
     startTime: '',
     endTime: '',
-    workCategories: [],
     details: '',
-    harvestQuantity: 0
+    harvestQuantity: 0,
+    product_id: '',
+    product_name: '',
+    product_quantity: 0
   });
+  
+  // 相關數據
+  const [areas, setAreas] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [workCategories, setWorkCategories] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [filteredProducts, setFilteredProducts] = useState([]);
+  
+  // 使用者今日已提交的工作時段
+  const [todayWorkLogs, setTodayWorkLogs] = useState([]);
+  
+  // 狀態控制
+  const [selectedArea, setSelectedArea] = useState('');
+  const [showProductSelector, setShowProductSelector] = useState(false);
+  const [showHarvestQuantity, setShowHarvestQuantity] = useState(false);
+  const [selectedProductCategory, setSelectedProductCategory] = useState('');
+  const [remainingHours, setRemainingHours] = useState(8);
 
+  // 載入位置資料
+  useEffect(() => {
+    const loadLocations = async () => {
+      try {
+        const locationData = await fetchLocations();
+        
+        // 整理區域資料
+        const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))];
+        setAreas(uniqueAreas);
+      } catch (err) {
+        console.error('載入位置資料失敗', err);
+      }
+    };
+    
+    loadLocations();
+  }, []);
+
+  // 載入工作類別資料
+  useEffect(() => {
+    const loadWorkCategories = async () => {
+      try {
+        const categoryData = await fetchWorkCategories();
+        setWorkCategories(categoryData);
+      } catch (err) {
+        console.error('載入工作類別資料失敗', err);
+      }
+    };
+    
+    loadWorkCategories();
+  }, []);
+
+  // 載入產品資料
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const productData = await fetchProducts();
+        setProducts(productData);
+      } catch (err) {
+        console.error('載入產品資料失敗', err);
+      }
+    };
+    
+    loadProducts();
+  }, []);
+
+  // 載入使用者今日的工作日誌
+  useEffect(() => {
+    const loadTodayWorkLogs = async () => {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const logs = await fetchWorkLogs({ 
+          startDate: today, 
+          endDate: today 
+        });
+        
+        setTodayWorkLogs(logs);
+        
+        // 計算已完成時數和下一個開始時間
+        calculateRemainingHours(logs);
+        
+        // 如果有日誌，設置下一個開始時間
+        if (logs.length > 0) {
+          // 排序日誌按結束時間
+          const sortedLogs = [...logs].sort((a, b) => {
+            return new Date('2000-01-01T' + a.end_time) - new Date('2000-01-01T' + b.end_time);
+          });
+          
+          const lastLog = sortedLogs[sortedLogs.length - 1];
+          
+          if (lastLog && lastLog.end_time) {
+            // 如果最後一個日誌的結束時間是12:00，則設置下一個開始時間為13:00
+            if (lastLog.end_time === '12:00') {
+              setWorkLog(prev => ({ ...prev, startTime: '13:00' }));
+            } else {
+              setWorkLog(prev => ({ ...prev, startTime: lastLog.end_time }));
+            }
+          }
+        } else {
+          // 如果沒有日誌，設置開始時間為工作日開始時間
+          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+        }
+      } catch (err) {
+        console.error('載入今日工作日誌失敗', err);
+      }
+    };
+    
+    loadTodayWorkLogs();
+  }, [fetchWorkLogs]);
+
+  // 計算剩餘工作時數
+  const calculateRemainingHours = (logs) => {
+    let totalMinutes = 0;
+    
+    logs.forEach(log => {
+      const startTime = log.start_time.split(':');
+      const endTime = log.end_time.split(':');
+      
+      const startMinutes = parseInt(startTime[0]) * 60 + parseInt(startTime[1]);
+      const endMinutes = parseInt(endTime[0]) * 60 + parseInt(endTime[1]);
+      
+      // 排除午休時間
+      if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
+        totalMinutes += (endMinutes - startMinutes - 60);
+      } else {
+        totalMinutes += (endMinutes - startMinutes);
+      }
+    });
+    
+    // 計算剩餘需要工作的分鐘數 (8小時 = 480分鐘)
+    const remainingMinutes = 480 - totalMinutes;
+    setRemainingHours(Math.max(0, remainingMinutes / 60).toFixed(2));
+  };
+
+  // 處理區域選擇
+  const handleAreaChange = (e) => {
+    const selectedArea = e.target.value;
+    setSelectedArea(selectedArea);
+    
+    // 依區域篩選位置
+    const filteredPositions = areas.filter(item => item.區域名稱 === selectedArea);
+    setPositions(filteredPositions);
+    
+    // 清除已選位置
+    setWorkLog(prev => ({ ...prev, position_code: '', position_name: '' }));
+  };
+
+  // 處理位置選擇
+  const handlePositionChange = (e) => {
+    const positionCode = e.target.value;
+    const selectedPosition = positions.find(p => p.位置代號 === positionCode);
+    
+    if (selectedPosition) {
+      setWorkLog(prev => ({
+        ...prev,
+        position_code: positionCode,
+        position_name: selectedPosition.位置名稱,
+        location_code: selectedPosition.區域代號
+      }));
+    }
+  };
+
+  // 處理工作類別選擇
+  const handleWorkCategoryChange = (e) => {
+    const categoryCode = e.target.value;
+    const selectedCategory = workCategories.find(c => c.工作內容代號 === categoryCode);
+    
+    if (selectedCategory) {
+      setWorkLog(prev => ({
+        ...prev,
+        work_category_code: categoryCode,
+        work_category_name: selectedCategory.工作內容名稱
+      }));
+      
+      // 檢查是否需要顯示產品選擇器
+      const costCategory = selectedCategory.成本類別;
+      setShowProductSelector(costCategory === 1 || costCategory === 2);
+      
+      // 檢查是否為採收類別
+      setShowHarvestQuantity(selectedCategory.工作內容名稱 === '採收');
+      
+      // 如果不需要產品選擇器，清除產品相關數據
+      if (!(costCategory === 1 || costCategory === 2)) {
+        setWorkLog(prev => ({
+          ...prev,
+          product_id: '',
+          product_name: '',
+          product_quantity: 0
+        }));
+      }
+    }
+  };
+
+  // 處理產品類別選擇
+  const handleProductCategoryChange = (e) => {
+    const category = e.target.value;
+    setSelectedProductCategory(category);
+    
+    // 依類別篩選產品
+    const filtered = products.filter(p => p.中分類.toString() === category);
+    setFilteredProducts(filtered);
+    
+    // 清除已選產品
+    setWorkLog(prev => ({
+      ...prev,
+      product_id: '',
+      product_name: ''
+    }));
+  };
+
+  // 處理產品選擇
+  const handleProductChange = (e) => {
+    const productId = e.target.value;
+    const selectedProduct = products.find(p => p.商品編號 === productId);
+    
+    if (selectedProduct) {
+      setWorkLog(prev => ({
+        ...prev,
+        product_id: productId,
+        product_name: `${selectedProduct.商品編號} - ${selectedProduct.規格}`
+      }));
+    }
+  };
+
+  // 驗證時間選擇
+  const validateTimeSelection = (startTime, endTime) => {
+    if (!startTime || !endTime) return false;
+    
+    // 檢查是否在工作時間內 (07:30-16:30)
+    const minWorkTime = new Date('2000-01-01T07:30');
+    const maxWorkTime = new Date('2000-01-01T16:30');
+    const lunchStart = new Date('2000-01-01T12:00');
+    const lunchEnd = new Date('2000-01-01T13:00');
+    
+    const start = new Date(`2000-01-01T${startTime}`);
+    const end = new Date(`2000-01-01T${endTime}`);
+    
+    if (start < minWorkTime || end > maxWorkTime || start >= end) {
+      return '時間必須在工作時間(07:30-16:30)內，且結束時間必須晚於開始時間';
+    }
+    
+    // 檢查是否與午休時間重疊
+    if ((start < lunchStart && end > lunchStart) || 
+        (start >= lunchStart && start < lunchEnd)) {
+      return '所選時間不能與午休時間(12:00-13:00)重疊';
+    }
+    
+    // 檢查是否與已提交的時段重疊
+    for (const log of todayWorkLogs) {
+      const logStart = new Date(`2000-01-01T${log.start_time}`);
+      const logEnd = new Date(`2000-01-01T${log.end_time}`);
+      
+      if ((start >= logStart && start < logEnd) || 
+          (end > logStart && end <= logEnd) ||
+          (start <= logStart && end >= logEnd)) {
+        return '所選時間與已提交的時段重疊';
+      }
+    }
+    
+    return true;
+  };
+
+  // 提交表單
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // 時間驗證
+    const timeValidation = validateTimeSelection(workLog.startTime, workLog.endTime);
+    if (timeValidation !== true) {
+      alert(timeValidation);
+      return;
+    }
+    
+    // 採收需要填寫採收數量
+    if (showHarvestQuantity && (!workLog.harvestQuantity || workLog.harvestQuantity <= 0)) {
+      alert('請填寫採收重量');
+      return;
+    }
+    
+    // 產品需要填寫產品和數量
+    if (showProductSelector && (!workLog.product_id || !workLog.product_quantity || workLog.product_quantity <= 0)) {
+      alert('請選擇產品並填寫數量');
+      return;
+    }
+    
     try {
       await submitWorkLog(workLog);
-      // 重置表單或顯示成功訊息
-      setWorkLog({
-        location: '',
-        crop: '',
-        startTime: '',
-        endTime: '',
-        workCategories: [],
-        details: '',
-        harvestQuantity: 0
+      
+      // 重新載入今日日誌
+      const today = new Date().toISOString().split('T')[0];
+      const logs = await fetchWorkLogs({ 
+        startDate: today, 
+        endDate: today 
       });
+      
+      setTodayWorkLogs(logs);
+      calculateRemainingHours(logs);
+      
+      // 重置表單，保留位置和工作類別
+      setWorkLog(prev => ({
+        ...prev,
+        startTime: prev.endTime, // 下一次開始時間為前一次的結束時間
+        endTime: '',
+        harvestQuantity: 0,
+        product_quantity: 0,
+        details: ''
+      }));
+      
+      alert('工作日誌提交成功');
     } catch (err) {
-      // 錯誤處理已在 hook 中處理
       console.error('提交工作日誌失敗', err);
     }
   };
 
-  const handleCategoryToggle = (category) => {
-    setWorkLog(prev => ({
-      ...prev,
-      workCategories: prev.workCategories.includes(category)
-        ? prev.workCategories.filter(c => c !== category)
-        : [...prev.workCategories, category]
-    }));
-  };
-
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-2xl mx-auto bg-gray-800 rounded-lg shadow-md p-8">
+      <div className="max-w-4xl mx-auto">
         <h2 className="text-2xl font-bold mb-6 text-center">工作日誌登錄</h2>
+        
+        {/* 通知區域 */}
+        <Card className="mb-6 p-4 bg-blue-800">
+          <h3 className="text-lg font-semibold mb-2">今日工作進度</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm text-gray-300">已提交時段：</p>
+              {todayWorkLogs.length > 0 ? (
+                <ul className="list-disc list-inside">
+                  {todayWorkLogs.map((log, index) => (
+                    <li key={index} className="text-gray-300">
+                      {log.start_time} - {log.end_time} ({log.work_category_name} @ {log.position_name})
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-400">尚未提交任何工作時段</p>
+              )}
+            </div>
+            <div>
+              <p className="text-sm text-gray-300">今日剩餘工時：</p>
+              <p className="text-2xl font-bold text-yellow-400">{remainingHours} 小時</p>
+              {remainingHours > 0 && (
+                <p className="text-red-400 text-sm mt-2">
+                  請確保每日工作時間達到8小時
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
         
         {error && (
           <div className="bg-red-600 text-white p-4 rounded-lg mb-4">
@@ -64,34 +376,152 @@ const WorkLogForm = () => {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} className="space-y-6 bg-gray-800 p-6 rounded-lg">
+          {/* 位置選擇 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block mb-2">作業地點</label>
-              <Input 
-                value={workLog.location}
-                onChange={(e) => setWorkLog(prev => ({...prev, location: e.target.value}))}
-                placeholder="請輸入作業地點"
-              />
+              <label className="block mb-2">區域</label>
+              <select
+                value={selectedArea}
+                onChange={handleAreaChange}
+                className="w-full bg-gray-700 text-white p-2 rounded-lg"
+                required
+              >
+                <option value="">選擇區域</option>
+                {areas.map(area => (
+                  <option key={area} value={area}>
+                    {area}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="block mb-2">作物名稱</label>
-              <Input 
-                value={workLog.crop}
-                onChange={(e) => setWorkLog(prev => ({...prev, crop: e.target.value}))}
-                placeholder="請輸入作物名稱"
-              />
+              <label className="block mb-2">位置</label>
+              <select
+                value={workLog.position_code}
+                onChange={handlePositionChange}
+                className="w-full bg-gray-700 text-white p-2 rounded-lg"
+                required
+                disabled={!selectedArea}
+              >
+                <option value="">選擇位置</option>
+                {positions.map(pos => (
+                  <option key={pos.位置代號} value={pos.位置代號}>
+                    {pos.位置名稱}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          {/* 工作類別選擇 */}
+          <div>
+            <label className="block mb-2">工作類別</label>
+            <select
+              value={workLog.work_category_code}
+              onChange={handleWorkCategoryChange}
+              className="w-full bg-gray-700 text-white p-2 rounded-lg"
+              required
+            >
+              <option value="">選擇工作類別</option>
+              {workCategories.map(category => (
+                <option key={category.工作內容代號} value={category.工作內容代號}>
+                  {category.工作內容名稱}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 產品選擇（條件性顯示） */}
+          {showProductSelector && (
+            <div className="border border-gray-600 p-4 rounded-lg">
+              <h3 className="text-lg font-semibold mb-2">產品資訊</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-2">產品類別</label>
+                  <select
+                    value={selectedProductCategory}
+                    onChange={handleProductCategoryChange}
+                    className="w-full bg-gray-700 text-white p-2 rounded-lg"
+                    required
+                  >
+                    <option value="">選擇產品類別</option>
+                    <option value="801">葉菜類</option>
+                    <option value="802">水果類</option>
+                    <option value="803">瓜果類</option>
+                    <option value="804">家禽類</option>
+                    <option value="805">魚類</option>
+                    <option value="806">加工品類</option>
+                    <option value="807">葉菜種子種苗</option>
+                    <option value="808">水果種子種苗</option>
+                    <option value="809">肥料</option>
+                    <option value="810">資材</option>
+                    <option value="811">飼料</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-2">產品</label>
+                  <select
+                    value={workLog.product_id}
+                    onChange={handleProductChange}
+                    className="w-full bg-gray-700 text-white p-2 rounded-lg"
+                    required
+                    disabled={!selectedProductCategory}
+                  >
+                    <option value="">選擇產品</option>
+                    {filteredProducts.map(product => (
+                      <option key={product.商品編號} value={product.商品編號}>
+                        {product.規格} ({product.單位})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-2">數量</label>
+                  <Input 
+                    type="number"
+                    value={workLog.product_quantity}
+                    onChange={(e) => setWorkLog(prev => ({...prev, product_quantity: Number(e.target.value)}))}
+                    placeholder="請輸入數量"
+                    min="0"
+                    step="0.01"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 採收重量（條件性顯示） */}
+          {showHarvestQuantity && (
+            <div>
+              <label className="block mb-2">採收重量 (台斤)</label>
+              <Input 
+                type="number"
+                value={workLog.harvestQuantity}
+                onChange={(e) => setWorkLog(prev => ({...prev, harvestQuantity: Number(e.target.value)}))}
+                placeholder="請輸入採收重量"
+                min="0"
+                step="0.01"
+                required
+              />
+            </div>
+          )}
+
+          {/* 時間選擇 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block mb-2">開始時間</label>
               <Input 
                 type="time"
                 value={workLog.startTime}
                 onChange={(e) => setWorkLog(prev => ({...prev, startTime: e.target.value}))}
+                min="07:30"
+                max="16:30"
+                step="60"
+                required
               />
+              <p className="text-xs text-gray-400 mt-1">工作時間: 07:30-16:30</p>
             </div>
             <div>
               <label className="block mb-2">結束時間</label>
@@ -99,37 +529,16 @@ const WorkLogForm = () => {
                 type="time"
                 value={workLog.endTime}
                 onChange={(e) => setWorkLog(prev => ({...prev, endTime: e.target.value}))}
+                min="07:30"
+                max="16:30"
+                step="60"
+                required
               />
+              <p className="text-xs text-gray-400 mt-1">午休時間(12:00-13:00)無法選擇</p>
             </div>
           </div>
 
-          <div>
-            <label className="block mb-2">作業類別</label>
-            <div className="grid grid-cols-4 gap-2">
-              {WORK_CATEGORIES.map(category => (
-                <Button
-                  key={category}
-                  type="button"
-                  onClick={() => handleCategoryToggle(category)}
-                  variant={workLog.workCategories.includes(category) ? 'primary' : 'secondary'}
-                  className="text-xs py-1"
-                >
-                  {category}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block mb-2">採收重量 (台斤)</label>
-            <Input 
-              type="number"
-              value={workLog.harvestQuantity}
-              onChange={(e) => setWorkLog(prev => ({...prev, harvestQuantity: Number(e.target.value)}))}
-              placeholder="請輸入採收重量"
-            />
-          </div>
-
+          {/* 備註 */}
           <div>
             <label className="block mb-2">作業備註</label>
             <textarea 
@@ -137,10 +546,11 @@ const WorkLogForm = () => {
               onChange={(e) => setWorkLog(prev => ({...prev, details: e.target.value}))}
               className="w-full p-2 bg-gray-700 text-white rounded-lg"
               placeholder="請輸入作業細節"
-              rows={4}
+              rows={3}
             />
           </div>
 
+          {/* 提交按鈕 */}
           <Button 
             type="submit" 
             className="w-full"
