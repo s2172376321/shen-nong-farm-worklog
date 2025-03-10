@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { GoogleLoginButton } from './GoogleLogin';
 
 const LoginPage = () => {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -21,7 +21,7 @@ const LoginPage = () => {
     setError(null);
     
     try {
-      const user = await login(email, password);
+      const user = await login(username, password);
       
       // 使用 React Router 導航
       if (user.role === 'admin') {
@@ -54,10 +54,10 @@ const LoginPage = () => {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <Input 
-              type="email" 
-              placeholder="電子郵件" 
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              type="text" 
+              placeholder="帳號" 
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               disabled={isLoading}
               required
             />
