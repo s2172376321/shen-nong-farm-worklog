@@ -54,7 +54,7 @@ api.interceptors.response.use(
   }
 );
 
-// 認證相關 API
+// ----- 認證相關 API -----
 export const loginUser = async (email, password) => {
   try {
     console.log('嘗試登入用戶:', email);
@@ -92,9 +92,24 @@ export const changePassword = async (oldPassword, newPassword) => {
   return response.data;
 };
 
-// 工作日誌 API
+// ----- 工作日誌 API -----
 export const createWorkLog = async (workLogData) => {
-  const response = await api.post('/work-logs', workLogData);
+  const formattedData = {
+    location_code: workLogData.location_code,
+    position_code: workLogData.position_code,
+    position_name: workLogData.position_name,
+    work_category_code: workLogData.work_category_code,
+    work_category_name: workLogData.work_category_name,
+    start_time: workLogData.startTime,
+    end_time: workLogData.endTime,
+    details: workLogData.details,
+    harvest_quantity: workLogData.harvestQuantity || 0,
+    product_id: workLogData.product_id || null,
+    product_name: workLogData.product_name || null,
+    product_quantity: workLogData.product_quantity || 0
+  };
+  
+  const response = await api.post('/work-logs', formattedData);
   return response.data;
 };
 
@@ -103,7 +118,18 @@ export const searchWorkLogs = async (filters) => {
   return response.data;
 };
 
-// 公告 API
+export const reviewWorkLog = async (workLogId, status) => {
+  const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+  return response.data;
+};
+
+// 獲取今日工作時數
+export const fetchTodayHours = async () => {
+  const response = await api.get('/work-logs/today-hours');
+  return response.data;
+};
+
+// ----- 公告 API -----
 export const fetchNotices = async () => {
   const response = await api.get('/notices');
   return response.data;
@@ -114,61 +140,43 @@ export const createNotice = async (noticeData) => {
   return response.data;
 };
 
-// 取得所有使用者
-export const fetchUsers = async () => {
-  const response = await api.get('/users');
-  return response.data;
-};
-
-// 創建新使用者
-export const createUser = async (userData) => {
-  const response = await api.post('/users', userData);
-  return response.data;
-};
-
-// 更新公告
 export const updateNotice = async (noticeId, noticeData) => {
   const response = await api.put(`/notices/${noticeId}`, noticeData);
   return response.data;
 };
 
-// 刪除公告
 export const deleteNotice = async (noticeId) => {
   const response = await api.delete(`/notices/${noticeId}`);
   return response.data;
 };
 
-// 更新使用者
+// ----- 使用者 API -----
+export const fetchUsers = async () => {
+  const response = await api.get('/users');
+  return response.data;
+};
+
+export const createUser = async (userData) => {
+  const response = await api.post('/users', userData);
+  return response.data;
+};
+
 export const updateUser = async (userId, userData) => {
   const response = await api.put(`/users/${userId}`, userData);
   return response.data;
 };
 
-// 刪除使用者
 export const deleteUser = async (userId) => {
   const response = await api.delete(`/users/${userId}`);
   return response.data;
 };
 
-// 审核工作日志
-export const reviewWorkLog = async (workLogId, status) => {
-  const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
-  return response.data;
-};
-
-// 獲取儀表板統計資訊
-export const fetchDashboardStats = async () => {
-  const response = await api.get('/stats/dashboard');
-  return response.data;
-};
-
-// 檢查使用者帳號可用性
 export const checkUsernameAvailability = async (username) => {
   const response = await api.get(`/users/check-username/${username}`);
   return response.data;
 };
 
-// 綁定 Google 帳號 - 保留增強版本
+// ----- Google 帳號綁定 API -----
 export const bindGoogleAccount = async (googleId, email) => {
   try {
     console.log('正在發送 Google 帳號綁定請求:', {
@@ -202,8 +210,6 @@ export const bindGoogleAccount = async (googleId, email) => {
   }
 };
 
-
-// 解除綁定 Google 帳號
 export const unbindGoogleAccount = async () => {
   try {
     console.log('正在發送 Google 帳號解除綁定請求');
@@ -231,6 +237,26 @@ export const unbindGoogleAccount = async () => {
   }
 };
 
+// ----- 資料 API -----
+export const fetchLocations = async () => {
+  const response = await api.get('/data/locations');
+  return response.data;
+};
 
+export const fetchWorkCategories = async () => {
+  const response = await api.get('/data/work-categories');
+  return response.data;
+};
+
+export const fetchProducts = async () => {
+  const response = await api.get('/data/products');
+  return response.data;
+};
+
+// ----- 儀表板 API -----
+export const fetchDashboardStats = async () => {
+  const response = await api.get('/stats/dashboard');
+  return response.data;
+};
 
 export default api;
