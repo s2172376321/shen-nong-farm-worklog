@@ -66,32 +66,32 @@ const AuthController = {
 
   // 使用者登入
   login: async (req, res) => {
-    const { email, password } = req.body;
-
+    const { username, password } = req.body;
+  
     console.log('登入嘗試:', { 
-      email, 
+      username, 
       passwordLength: password ? password.length : 'N/A'
     });
-
+  
     try {
-      // 查找使用者 - 查詢以包含所有欄位
+      // 查找使用者 - 支援使用帳號或電子郵件登入
       const userQuery = await db.query(
-        'SELECT * FROM users WHERE email = $1', 
-        [email]
+        'SELECT * FROM users WHERE username = $1 OR email = $1', 
+        [username]
       );
-
+  
       const user = userQuery.rows[0];
       
       console.log('使用者查詢結果:', { 
         userFound: !!user,
-        userEmail: user ? user.email : null
+        username: user ? user.username : null
       });
-
+  
       if (!user) {
         console.log('使用者不存在');
-        return res.status(401).json({ message: '無效的電子郵件或密碼' });
+        return res.status(401).json({ message: '無效的帳號或密碼' });
       }
-
+  
       // 驗證密碼
       const isMatch = await bcrypt.compare(password, user.password_hash);
       
@@ -99,22 +99,22 @@ const AuthController = {
         isMatch,
         storedHashLength: user.password_hash ? user.password_hash.length : 'N/A'
       });
-
+  
       if (!isMatch) {
-        return res.status(401).json({ message: '無效的電子郵件或密碼' });
+        return res.status(401).json({ message: '無效的帳號或密碼' });
       }
-
+  
       // 生成 JWT
       const token = jwt.sign(
         { 
           id: user.id, 
-          email: user.email, 
+          username: user.username, 
           role: user.role 
         },
-        process.env.JWT_SECRET || 'fallback_secret', // 添加後備 secret
+        process.env.JWT_SECRET || 'fallback_secret', 
         { expiresIn: '24h' }
       );
-
+  
       // 修改返回資訊，加入 google_id 和 google_email
       res.json({
         token,
@@ -138,47 +138,66 @@ const AuthController = {
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
-
-  // Google 登入
+  
+  // Google 登入 - 更新為支援 ID Token
   googleLogin: async (req, res) => {
-    const { token } = req.body;
-
     try {
-      // 驗證 Google Token
-      const payload = await googleAuthService.verifyToken(token);
-
+      // 從請求中取得 ID token 或授權碼
+      const { token, code } = req.body;
+      
+      let userInfo;
+      
+      // 檢查提供的是 ID token 還是授權碼
+      if (token) {
+        console.log('使用 ID token 進行 Google 登入');
+        userInfo = await googleAuthService.verifyToken(token);
+      } else if (code) {
+        console.log('使用授權碼進行 Google 登入');
+        userInfo = await googleAuthService.getUserInfo(code);
+      } else {
+        return res.status(400).json({ message: '缺少 Google 登入憑證' });
+      }
+      
+      console.log('Google 用戶資訊獲取成功:', {
+        email: userInfo.email,
+        name: userInfo.name || '[未提供]'
+      });
+      
       // 檢查或創建使用者
       let userQuery = await db.query(
         'SELECT * FROM users WHERE google_id = $1 OR email = $2', 
-        [payload.googleId, payload.email]
+        [userInfo.googleId, userInfo.email]
       );
 
       let user = userQuery.rows[0];
 
       // 如果使用者不存在，創建新使用者
       if (!user) {
+        console.log('創建新用戶');
         const insertQuery = `
           INSERT INTO users 
-          (username, email, google_id, role, profile_image_url, name) 
-          VALUES ($1, $2, $3, $4, $5, $6) 
+          (username, email, google_id, role, profile_image_url, name, google_email) 
+          VALUES ($1, $2, $3, $4, $5, $6, $7) 
           RETURNING *
         `;
         const values = [
-          payload.username, 
-          payload.email, 
-          payload.googleId, 
+          userInfo.username || userInfo.email.split('@')[0], 
+          userInfo.email, 
+          userInfo.googleId, 
           'user',
-          payload.profileImage,
-          payload.name || null
+          userInfo.profileImage,
+          userInfo.name || null,
+          userInfo.email
         ];
 
         const result = await db.query(insertQuery, values);
         user = result.rows[0];
       } else if (!user.google_id) {
+        console.log('更新現有用戶的 Google 資訊');
         // 如果使用者存在但尚未綁定Google，更新Google資訊
         await db.query(
           'UPDATE users SET google_id = $1, google_email = $2, profile_image_url = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
-          [payload.googleId, payload.email, payload.profileImage, user.id]
+          [userInfo.googleId, userInfo.email, userInfo.profileImage, user.id]
         );
         
         // 重新取得完整使用者資訊
@@ -196,8 +215,10 @@ const AuthController = {
         process.env.JWT_SECRET || 'fallback_secret',
         { expiresIn: '24h' }
       );
+      
+      console.log('登入成功，準備返回用戶資訊');
 
-      // 返回完整使用者資訊，包含 google_id 和 google_email
+      // 返回完整使用者資訊
       res.json({
         token: jwtToken,
         user: {
@@ -217,7 +238,7 @@ const AuthController = {
       console.error('Google 登入失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
-  },
+  },  
 
   // 修改密碼
   changePassword: async (req, res) => {
