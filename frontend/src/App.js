@@ -5,10 +5,13 @@ import { useAuth } from './context/AuthContext';
 
 // 導入頁面組件
 import LoginPage from './components/auth/LoginPage';
+import UserDashboard from './components/user/UserDashboard';
 import WorkLogDashboard from './components/worklog/WorkLogDashboard';
 import AdminDashboard from './components/admin/AdminDashboard';
 import NoticeBoard from './components/common/NoticeBoard';
+import UserSettings from './components/user/UserSettings';
 import PrivateRoute from './components/common/PrivateRoute';
+import GoogleCallback from './components/auth/GoogleCallback'; // 新增 Google 回調頁面
 
 function App() {
   const { user, isLoading } = useAuth();
@@ -28,36 +31,57 @@ function App() {
         {/* 公開路由 */}
         <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage />} />
         
-        {/* 保護路由 - 需要登入 */}
+        {/* Google 登入回調路由 */}
+        <Route path="/auth/google/callback" element={<GoogleCallback />} />
+        
+        {/* 首頁路由 - 根據使用者角色重定向 */}
         <Route path="/" element={
+          user ? (
+            user.role === 'admin' ? 
+              <Navigate to="/admin" /> : 
+              <Navigate to="/dashboard" />
+          ) : (
+            <Navigate to="/login" />
+          )
+        } />
+        
+        {/* 使用者儀表板路由 */}
+        <Route path="/dashboard" element={
           <PrivateRoute>
-            {user.role === 'admin' ? <Navigate to="/admin" /> : <Navigate to="/work-log" />}
+            <UserDashboard />
           </PrivateRoute>
         } />
         
-        {/* 工作日誌路由 - 一般使用者 */}
+        {/* 工作日誌路由 - 需要一般用戶權限 */}
         <Route path="/work-log" element={
           <PrivateRoute>
             <WorkLogDashboard />
           </PrivateRoute>
         } />
         
-        {/* 公告欄路由 */}
+        {/* 使用者設定路由 */}
+        <Route path="/settings" element={
+          <PrivateRoute>
+            <UserSettings />
+          </PrivateRoute>
+        } />
+        
+        {/* 公告欄路由 - 需要登入 */}
         <Route path="/notices" element={
           <PrivateRoute>
             <NoticeBoard />
           </PrivateRoute>
         } />
         
-        {/* 管理員路由 */}
+        {/* 管理員路由 - 需要管理員權限 */}
         <Route path="/admin/*" element={
           <PrivateRoute adminOnly={true}>
             <AdminDashboard />
           </PrivateRoute>
         } />
         
-        {/* 預設路由 - 重定向到根路由 */}
-        <Route path="*" element={<Navigate to="/" />} />
+        {/* 預設路由 - 重定向到登入頁 */}
+        <Route path="*" element={<Navigate to="/login" />} />
       </Routes>
     </Router>
   );
