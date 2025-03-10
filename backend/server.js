@@ -4,10 +4,13 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const http = require('http');
+const WebSocket = require('ws');
 const routes = require('./routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const WS_PORT = process.env.WS_PORT || 3001;
 
 // 解析中間件 - 放在最前面
 app.use(express.json());
@@ -62,9 +65,46 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 啟動伺服器
+// 創建 HTTP 服務器
+const server = http.createServer(app);
+
+// 設置 WebSocket 服務器
+const wss = new WebSocket.Server({ 
+  server: server, 
+  path: '/ws'
+});
+
+// WebSocket 事件處理
+wss.on('connection', (ws) => {
+  console.log('WebSocket 客戶端已連接');
+
+  // 處理接收到的消息
+  ws.on('message', (message) => {
+    console.log('收到消息:', message);
+    
+    // 可以在這裡添加消息處理邏輯
+    // 例如發送回應
+    ws.send(JSON.stringify({ type: 'response', data: '已收到消息' }));
+  });
+
+  // 處理連接關閉
+  ws.on('close', () => {
+    console.log('WebSocket 客戶端已斷開');
+  });
+
+  // 發送歡迎消息
+  ws.send(JSON.stringify({ type: 'welcome', data: '已連接到 WebSocket 服務器' }));
+});
+
+// 啟動 HTTP 服務器
+server.listen(WS_PORT, () => {
+  console.log(`WebSocket 服務器已啟動，監聽端口 ${WS_PORT}`);
+  console.log(`WebSocket 可訪問於: ws://localhost:${WS_PORT}/ws`);
+});
+
+// 啟動 Express 服務器（如果需要分開）
 app.listen(PORT, () => {
-  console.log(`伺服器已啟動，監聽端口 ${PORT}`);
+  console.log(`API 服務器已啟動，監聽端口 ${PORT}`);
   console.log(`API 可訪問於: http://localhost:${PORT}/api`);
 });
 
