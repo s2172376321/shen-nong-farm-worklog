@@ -26,6 +26,7 @@ const PrivateRoute = ({ children, adminOnly = false }) => {
     return <Navigate to="/work-log" replace />;
   }
 
+  // 已登入且權限符合，顯示路由內容
   return children;
 };
 
