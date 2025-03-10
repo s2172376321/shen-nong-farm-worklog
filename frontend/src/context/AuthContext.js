@@ -15,74 +15,103 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
+// 根據角色重定向
+const redirectBasedOnRole = (userRole) => {
+  switch (userRole) {
+    case 'admin':
+      window.location.href = '/admin';
+      break;
+    case 'user':
+    default:
+      window.location.href = '/dashboard';  // 從 /work-log 改為 /dashboard
+      break;
+  }
+};
+
+
+
   // 檢查是否已登入
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-
-    if (token && storedUser) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-      } catch (error) {
-        // 無效的使用者資料
-        logout();
+    const checkAuth = async () => {
+      const token = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+      
+      if (token && storedUser) {
+        try {
+          // 檢查 token 是否仍然有效 (這裡可以加入驗證 token 的邏輯)
+          const parsedUser = JSON.parse(storedUser);
+          setUser(parsedUser);
+        } catch (error) {
+          // token 無效或使用者資料解析錯誤，清除儲存的資訊
+          console.error('使用者資料解析失敗:', error);
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setUser(null);
+        }
+      } else {
+        // 沒有 token 或使用者資料，表示未登入
+        setUser(null);
       }
-    }
-    setIsLoading(false);
+      
+      // 完成載入
+      setIsLoading(false);
+    };
+
+    checkAuth();
   }, []);
 
   // 一般登入
-  const login = async (email, password) => {
+  const login = async (username, password) => {
     try {
-      const response = await loginUser(email, password);
+      console.log('從 AuthContext 嘗試登入:', username);
+      const response = await loginUser(username, password);
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
-
+  
       setUser(response.user);
-      
-      // 返回使用者資訊，讓調用方決定如何導航
       return response.user;
     } catch (error) {
       console.error('登入失敗:', error);
       throw error;
     }
   };
+  
 
   // Google 登入
-  const loginWithGoogle = async (googleToken) => {
+  const loginWithGoogle = async (credential) => {
     try {
-      const response = await googleLogin(googleToken);
+      console.log('發送Google登入請求，憑證長度:', credential?.length);
+      
+      // 明確使用token參數名稱
+      const response = await googleLogin(credential);
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
-
-      setUser(response.user);
       
-      // 返回使用者資訊，讓調用方決定如何導航
+      setUser(response.user);
       return response.user;
     } catch (error) {
       console.error('Google 登入失敗:', error);
       throw error;
     }
   };
+  
 
   // 登出
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
-    window.location.href = '/login'; // 登出時仍使用整頁刷新
+    window.location.href = '/login';
   };
 
-  // 更新使用者資訊 - 確保保留所有現有屬性
+  // 更新使用者資訊const
   const updateUser = (userData) => {
-    const updatedUser = { ...user, ...userData };
-    setUser(updatedUser);
-    localStorage.setItem('user', JSON.stringify(updatedUser));
+    setUser(userData);
+    localStorage.setItem('user', JSON.stringify(userData));
   };
 
   return (
