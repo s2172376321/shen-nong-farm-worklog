@@ -10,6 +10,9 @@ router.use(authMiddleware);
 // 取得位置資料
 router.get('/locations', DataController.getLocations);
 
+// 取得按區域分組的位置資料
+router.get('/locations-by-area', DataController.getLocationsByArea);
+
 // 取得工作類別資料
 router.get('/work-categories', DataController.getWorkCategories);
 
