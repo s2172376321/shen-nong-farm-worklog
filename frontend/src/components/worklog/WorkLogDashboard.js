@@ -1,10 +1,11 @@
 // 位置：frontend/src/components/worklog/WorkLogDashboard.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { searchWorkLogs, fetchLocations, fetchWorkCategories } from '../../utils/api';
+import { searchWorkLogs, fetchLocationsByArea, fetchWorkCategories } from '../../utils/api';
 import { Button, Card, Input } from '../ui';
 import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
+import LocationSelector from '../common/LocationSelector';
 
 const WorkLogDashboard = () => {
   const { user } = useAuth();
@@ -12,13 +13,15 @@ const WorkLogDashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [locations, setLocations] = useState([]);
+  const [areaData, setAreaData] = useState([]);
   const [workCategories, setWorkCategories] = useState([]);
   
   // 過濾條件
   const [filters, setFilters] = useState({
     startDate: new Date().toISOString().split('T')[0], // 今天
-    endDate: new Date().toISOString().split('T')[0]    // 今天
+    endDate: new Date().toISOString().split('T')[0],   // 今天
+    areaName: '',
+    location_code: ''
   });
 
   // 載入工作日誌
@@ -45,19 +48,21 @@ const WorkLogDashboard = () => {
       try {
         // 使用 Promise.allSettled 而非 Promise.all，確保一個請求失敗不會影響另一個
         const [locationsResult, categoriesResult] = await Promise.allSettled([
-          fetchLocations(),
+          fetchLocationsByArea(),
           fetchWorkCategories()
         ]);
         
         // 處理位置數據
         if (locationsResult.status === 'fulfilled') {
-          // 獲取唯一的區域名稱
-          const uniqueAreas = [...new Set(locationsResult.value.map(item => item.區域名稱))];
-          setLocations(uniqueAreas);
+          setAreaData(locationsResult.value);
         } else {
           console.warn('載入位置資料失敗:', locationsResult.reason);
           // 設置默認數據
-          setLocations(['A區', 'B區', 'C區']);
+          setAreaData([
+            { areaName: 'A區', locations: [] },
+            { areaName: 'B區', locations: [] },
+            { areaName: 'C區', locations: [] }
+          ]);
         }
         
         // 處理工作類別數據
@@ -77,7 +82,11 @@ const WorkLogDashboard = () => {
       } catch (err) {
         console.error('載入過濾資料失敗', err);
         // 即使加載失敗，也設置一些默認數據，以便UI可以正常顯示
-        setLocations(['A區', 'B區', 'C區']);
+        setAreaData([
+          { areaName: 'A區', locations: [] },
+          { areaName: 'B區', locations: [] },
+          { areaName: 'C區', locations: [] }
+        ]);
         setWorkCategories([
           { 工作內容代號: '1', 工作內容名稱: '整地' },
           { 工作內容代號: '2', 工作內容名稱: '種植' },
@@ -97,6 +106,15 @@ const WorkLogDashboard = () => {
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
     setFilters(prev => ({ ...prev, [name]: value }));
+  };
+
+  // 處理位置選擇
+  const handleLocationSelect = (locationData) => {
+    setFilters(prev => ({
+      ...prev, 
+      areaName: locationData.areaName,
+      location_code: locationData.locationCode
+    }));
   };
 
   // 刷新工作日誌列表
@@ -149,7 +167,7 @@ const WorkLogDashboard = () => {
         {/* 過濾器 */}
         <Card className="mb-6 p-4">
           <h2 className="text-lg font-semibold mb-4">過濾條件</h2>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block mb-2 text-sm">開始日期</label>
               <Input 
@@ -168,22 +186,12 @@ const WorkLogDashboard = () => {
                 onChange={handleFilterChange}
               />
             </div>
-            <div>
-              <label className="block mb-2 text-sm">工作區域</label>
-              <select
-                name="location_code"
-                value={filters.location_code || ''}
-                onChange={handleFilterChange}
-                className="w-full bg-gray-700 text-white p-2 rounded-lg"
-              >
-                <option value="">所有區域</option>
-                {locations.map(area => (
-                  <option key={area} value={area}>
-                    {area}
-                  </option>
-                ))}
-              </select>
+            
+            {/* 使用新的位置選擇器組件 */}
+            <div className="md:col-span-1">
+              <LocationSelector onLocationSelect={handleLocationSelect} />
             </div>
+            
             <div>
               <label className="block mb-2 text-sm">工作類別</label>
               <select
@@ -226,6 +234,7 @@ const WorkLogDashboard = () => {
                     <th className="p-3 text-left">日期</th>
                     <th className="p-3 text-left">時間</th>
                     <th className="p-3 text-left">工作時長</th>
+                    <th className="p-3 text-left">區域</th>
                     <th className="p-3 text-left">位置</th>
                     <th className="p-3 text-left">工作類別</th>
                     <th className="p-3 text-left">狀態</th>
@@ -257,6 +266,9 @@ const WorkLogDashboard = () => {
                         </td>
                         <td className="p-3">
                           {durationHours} 小時
+                        </td>
+                        <td className="p-3">
+                          {log.area_name || 'N/A'}
                         </td>
                         <td className="p-3">
                           {log.position_name || 'N/A'}
