@@ -29,6 +29,7 @@ const WorkLogDashboard = () => {
         setWorkLogs(data);
         setIsLoading(false);
       } catch (err) {
+        console.error('載入工作日誌失敗:', err);
         setError('載入工作日誌失敗');
         setIsLoading(false);
       }
@@ -40,19 +41,52 @@ const WorkLogDashboard = () => {
   // 載入位置和工作類別資料（用於過濾）
   useEffect(() => {
     const loadFilterData = async () => {
+      setIsLoading(true);
       try {
-        const [locationsData, categoriesData] = await Promise.all([
+        // 使用 Promise.allSettled 而非 Promise.all，確保一個請求失敗不會影響另一個
+        const [locationsResult, categoriesResult] = await Promise.allSettled([
           fetchLocations(),
           fetchWorkCategories()
         ]);
         
-        // 獲取唯一的區域名稱
-        const uniqueAreas = [...new Set(locationsData.map(item => item.區域名稱))];
-        setLocations(uniqueAreas);
+        // 處理位置數據
+        if (locationsResult.status === 'fulfilled') {
+          // 獲取唯一的區域名稱
+          const uniqueAreas = [...new Set(locationsResult.value.map(item => item.區域名稱))];
+          setLocations(uniqueAreas);
+        } else {
+          console.warn('載入位置資料失敗:', locationsResult.reason);
+          // 設置默認數據
+          setLocations(['A區', 'B區', 'C區']);
+        }
         
-        setWorkCategories(categoriesData);
+        // 處理工作類別數據
+        if (categoriesResult.status === 'fulfilled') {
+          setWorkCategories(categoriesResult.value);
+        } else {
+          console.warn('載入工作類別資料失敗:', categoriesResult.reason);
+          // 設置默認數據
+          setWorkCategories([
+            { 工作內容代號: '1', 工作內容名稱: '整地' },
+            { 工作內容代號: '2', 工作內容名稱: '種植' },
+            { 工作內容代號: '3', 工作內容名稱: '施肥' },
+            { 工作內容代號: '4', 工作內容名稱: '澆水' },
+            { 工作內容代號: '5', 工作內容名稱: '收成' }
+          ]);
+        }
       } catch (err) {
         console.error('載入過濾資料失敗', err);
+        // 即使加載失敗，也設置一些默認數據，以便UI可以正常顯示
+        setLocations(['A區', 'B區', 'C區']);
+        setWorkCategories([
+          { 工作內容代號: '1', 工作內容名稱: '整地' },
+          { 工作內容代號: '2', 工作內容名稱: '種植' },
+          { 工作內容代號: '3', 工作內容名稱: '施肥' },
+          { 工作內容代號: '4', 工作內容名稱: '澆水' },
+          { 工作內容代號: '5', 工作內容名稱: '收成' }
+        ]);
+      } finally {
+        setIsLoading(false);
       }
     };
     
@@ -71,9 +105,11 @@ const WorkLogDashboard = () => {
     try {
       const data = await searchWorkLogs(filters);
       setWorkLogs(data);
-      setIsLoading(false);
+      setError(null);
     } catch (err) {
+      console.error('載入工作日誌失敗:', err);
       setError('載入工作日誌失敗');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -198,28 +234,35 @@ const WorkLogDashboard = () => {
                 <tbody>
                   {workLogs.map((log, index) => {
                     // 計算工作時長（小時）
-                    const startParts = log.start_time.split(':');
-                    const endParts = log.end_time.split(':');
-                    const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
-                    const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
-                    const durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                    let durationHours = "N/A";
+                    try {
+                      if (log.start_time && log.end_time) {
+                        const startParts = log.start_time.split(':');
+                        const endParts = log.end_time.split(':');
+                        const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
+                        const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+                        durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                      }
+                    } catch (e) {
+                      console.warn("時間計算錯誤:", e);
+                    }
                     
                     return (
-                      <tr key={log.id} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
+                      <tr key={log.id || index} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
                         <td className="p-3">
-                          {new Date(log.created_at).toLocaleDateString()}
+                          {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-3">
-                          {log.start_time} - {log.end_time}
+                          {log.start_time || 'N/A'} - {log.end_time || 'N/A'}
                         </td>
                         <td className="p-3">
                           {durationHours} 小時
                         </td>
                         <td className="p-3">
-                          {log.position_name}
+                          {log.position_name || 'N/A'}
                         </td>
                         <td className="p-3">
-                          {log.work_category_name}
+                          {log.work_category_name || 'N/A'}
                         </td>
                         <td className="p-3">
                           <span 
