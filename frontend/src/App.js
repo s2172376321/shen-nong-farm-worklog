@@ -1,30 +1,14 @@
+// 位置：frontend/src/App.js
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 
 // 導入頁面組件
 import LoginPage from './components/auth/LoginPage';
-import RegisterPage from './components/auth/RegisterPage';
-import WorkLogForm from './components/worklog/WorkLogForm';
+import WorkLogDashboard from './components/worklog/WorkLogDashboard';
 import AdminDashboard from './components/admin/AdminDashboard';
 import NoticeBoard from './components/common/NoticeBoard';
-import UserDashboard from './components/user/UserDashboard';
-import ChangePassword from './components/user/ChangePassword';
-
-// 保護路由組件
-const PrivateRoute = ({ element, adminOnly = false }) => {
-  const { user } = useAuth();
-  
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-  
-  if (adminOnly && user.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-  
-  return element;
-};
+import PrivateRoute from './components/common/PrivateRoute';
 
 function App() {
   const { user, isLoading } = useAuth();
@@ -41,28 +25,39 @@ function App() {
   return (
     <Router>
       <Routes>
-        {/* 公共路由 */}
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        {/* 公開路由 */}
+        <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage />} />
         
-        {/* 受保護的路由 */}
-        <Route path="/dashboard" element={<PrivateRoute element={<UserDashboard />} />} />
-        <Route path="/work-log" element={<PrivateRoute element={<WorkLogForm />} />} />
-        <Route path="/admin" element={<PrivateRoute element={<AdminDashboard />} adminOnly={true} />} />
-        <Route path="/notices" element={<PrivateRoute element={<NoticeBoard />} />} />
-        <Route path="/settings" element={<PrivateRoute element={<ChangePassword />} />} />
-        
-        {/* 預設重定向 */}
+        {/* 保護路由 - 需要登入 */}
         <Route path="/" element={
-          user ? (
-            <Navigate to={user.role === 'admin' ? '/admin' : '/dashboard'} replace />
-          ) : (
-            <Navigate to="/login" replace />
-          )
+          <PrivateRoute>
+            {user.role === 'admin' ? <Navigate to="/admin" /> : <Navigate to="/work-log" />}
+          </PrivateRoute>
         } />
         
-        {/* 捕捉所有其他路徑，重定向到主頁 */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* 工作日誌路由 - 一般使用者 */}
+        <Route path="/work-log" element={
+          <PrivateRoute>
+            <WorkLogDashboard />
+          </PrivateRoute>
+        } />
+        
+        {/* 公告欄路由 */}
+        <Route path="/notices" element={
+          <PrivateRoute>
+            <NoticeBoard />
+          </PrivateRoute>
+        } />
+        
+        {/* 管理員路由 */}
+        <Route path="/admin/*" element={
+          <PrivateRoute adminOnly={true}>
+            <AdminDashboard />
+          </PrivateRoute>
+        } />
+        
+        {/* 預設路由 - 重定向到根路由 */}
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>
   );
