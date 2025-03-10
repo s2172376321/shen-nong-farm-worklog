@@ -54,12 +54,150 @@ api.interceptors.response.use(
   }
 );
 
+// ----- WebSocket API -----
+// WebSocket 連接類
+export class WebSocketService {
+  constructor() {
+    this.socket = null;
+    this.isConnected = false;
+    this.listeners = {};
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectTimeout = null;
+  }
+
+  // 連接到 WebSocket 伺服器
+  connect() {
+    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      console.log('WebSocket 已連接或正在連接中');
+      return;
+    }
+
+    try {
+      console.log('嘗試連接 WebSocket...');
+      this.socket = new WebSocket('ws://localhost:3001/ws');
+
+      this.socket.onopen = this.onOpen.bind(this);
+      this.socket.onmessage = this.onMessage.bind(this);
+      this.socket.onerror = this.onError.bind(this);
+      this.socket.onclose = this.onClose.bind(this);
+    } catch (error) {
+      console.error('WebSocket 連接錯誤:', error);
+      this.attemptReconnect();
+    }
+  }
+
+  // 連接成功回調
+  onOpen() {
+    console.log('WebSocket 連接成功');
+    this.isConnected = true;
+    this.reconnectAttempts = 0;
+    this.emit('connected');
+  }
+
+  // 收到消息回調
+  onMessage(event) {
+    try {
+      const data = JSON.parse(event.data);
+      console.log('收到 WebSocket 消息:', data);
+      this.emit(data.type, data.data);
+    } catch (error) {
+      console.error('解析 WebSocket 消息錯誤:', error);
+    }
+  }
+
+  // 錯誤回調
+  onError(error) {
+    console.error('WebSocket 錯誤:', error);
+    this.emit('error', error);
+  }
+
+  // 連接關閉回調
+  onClose(event) {
+    console.log('WebSocket 連接關閉:', event);
+    this.isConnected = false;
+    this.emit('disconnected');
+    this.attemptReconnect();
+  }
+
+  // 嘗試重新連接
+  attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('重連次數已達上限，停止重連');
+      return;
+    }
+
+    this.reconnectAttempts++;
+    console.log(`嘗試重連 (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    
+    clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = setTimeout(() => {
+      this.connect();
+    }, 3000); // 3秒後重連
+  }
+
+  // 發送消息
+  send(type, data) {
+    if (!this.isConnected) {
+      console.warn('WebSocket 未連接，無法發送消息');
+      return false;
+    }
+
+    try {
+      const message = JSON.stringify({ type, data });
+      this.socket.send(message);
+      return true;
+    } catch (error) {
+      console.error('發送 WebSocket 消息錯誤:', error);
+      return false;
+    }
+  }
+
+  // 關閉連接
+  disconnect() {
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+      this.isConnected = false;
+    }
+    clearTimeout(this.reconnectTimeout);
+  }
+
+  // 註冊事件監聽
+  on(event, callback) {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    this.listeners[event].push(callback);
+  }
+
+  // 發送事件通知
+  emit(event, data) {
+    if (this.listeners[event]) {
+      this.listeners[event].forEach(callback => {
+        try {
+          callback(data);
+        } catch (error) {
+          console.error(`執行 ${event} 監聽器錯誤:`, error);
+        }
+      });
+    }
+  }
+}
+
+// 創建 WebSocket 服務實例
+export const websocket = new WebSocketService();
+
 // ----- 認證相關 API -----
-export const loginUser = async (email, password) => {
+export const loginUser = async (username, password) => {
   try {
-    console.log('嘗試登入用戶:', email);
-    const response = await api.post('/auth/login', { email, password });
+    console.log('嘗試登入用戶:', username);
+    const response = await api.post('/auth/login', { username, password });
     console.log('登入成功:', response.data);
+    
+    // 登入成功後連接 WebSocket
+    websocket.connect();
+    
     return response.data;
   } catch (error) {
     console.error('登入失敗:', error);
@@ -67,17 +205,39 @@ export const loginUser = async (email, password) => {
   }
 };
 
-export const googleLogin = async (googleToken) => {
+// 位置：frontend/src/utils/api.js 中的 googleLogin 方法
+export const googleLogin = async (credential) => {
   try {
-    console.log('嘗試Google登入');
-    const response = await api.post('/auth/google-login', { token: googleToken });
-    console.log('Google登入成功');
+    console.log('調用 API: 發送Google憑證，長度:', credential?.length);
+    
+    // 使用'token'參數名稱，與後端對應
+    const response = await api.post('/auth/google-login', { token: credential });
+    
+    console.log('Google登入API成功');
+    
+    // 連接WebSocket
+    websocket.connect();
+    
     return response.data;
   } catch (error) {
-    console.error('Google登入失敗:', error);
+    console.error('Google登入API失敗:', error);
+    
+    // 詳細日誌
+    if (error.response) {
+      console.error('伺服器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到伺服器回應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
+    }
+    
     throw error;
   }
 };
+
 
 export const registerUser = async (userData) => {
   const response = await api.post('/auth/register', userData);
@@ -90,6 +250,15 @@ export const changePassword = async (oldPassword, newPassword) => {
     newPassword 
   });
   return response.data;
+};
+
+export const logout = () => {
+  // 登出時斷開 WebSocket 連接
+  websocket.disconnect();
+  
+  // 清除本地存儲的資訊
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
 };
 
 // ----- 工作日誌 API -----
