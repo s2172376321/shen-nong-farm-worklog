@@ -422,6 +422,39 @@ export const fetchProducts = async () => {
   return response.data;
 };
 
+// 獲取按區域分組的位置資料
+export const fetchLocationsByArea = async () => {
+  try {
+    const response = await api.get('/data/locations-by-area');
+    return response.data;
+  } catch (error) {
+    console.error('獲取分組位置資料失敗:', error);
+    
+    // 嘗試使用普通位置API獲取數據，然後在前端分組
+    const locations = await fetchLocations();
+    
+    // 按區域名稱分組
+    const groupedLocations = locations.reduce((acc, location) => {
+      const areaName = location['區域名稱'];
+      if (!acc[areaName]) {
+        acc[areaName] = [];
+      }
+      acc[areaName].push({
+        code: location['位置代號'],
+        name: location['位置名稱']
+      });
+      return acc;
+    }, {});
+
+    // 構建最終返回格式
+    return Object.keys(groupedLocations).map(areaName => ({
+      areaName,
+      locations: groupedLocations[areaName]
+    }));
+  }
+};
+
+
 // ----- 儀表板 API -----
 export const fetchDashboardStats = async () => {
   const response = await api.get('/stats/dashboard');
