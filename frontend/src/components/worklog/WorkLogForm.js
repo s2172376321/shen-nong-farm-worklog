@@ -108,46 +108,46 @@ const WorkLogForm = () => {
     loadProducts();
   }, [loadLocations, loadWorkCategories, loadProducts]);
 
-  // 載入今日工作日誌的副作用
-  useEffect(() => {
-    const loadTodayWorkLogs = async () => {
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        const logs = await fetchWorkLogs({ 
-          startDate: today, 
-          endDate: today 
-        });
-        
-        setTodayWorkLogs(logs);
-        
-        // 計算剩餘工作時數
-        const remaining = calculateRemainingHours(logs);
-        setRemainingHours(remaining);
-        
-        // 設置下一個開始時間
-        if (logs.length > 0) {
-          const sortedLogs = [...logs].sort((a, b) => 
-            new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
-          );
-          
-          const lastLog = sortedLogs[sortedLogs.length - 1];
-          
-          if (lastLog && lastLog.end_time) {
-            // 如果最後一個日誌的結束時間是12:00，則設置下一個開始時間為13:00
-            const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
-            setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-          }
-        } else {
-          // 如果沒有日誌，設置開始時間為工作日開始時間
-          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-        }
-      } catch (err) {
-        console.error('載入今日工作日誌失敗', err);
-      }
-    };
+// 使用 useCallback 包裝載入今日工作日誌的函數
+const loadTodayWorkLogs = useCallback(async () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const logs = await fetchWorkLogs({ 
+      startDate: today, 
+      endDate: today 
+    });
     
-    loadTodayWorkLogs();
-  }, [fetchWorkLogs, calculateRemainingHours]);
+    setTodayWorkLogs(logs);
+    
+    // 計算剩餘工作時數
+    const remaining = calculateRemainingHours(logs);
+    setRemainingHours(remaining);
+    
+    // 設置下一個開始時間的邏輯保持不變
+    if (logs.length > 0) {
+      const sortedLogs = [...logs].sort((a, b) => 
+        new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
+      );
+      
+      const lastLog = sortedLogs[sortedLogs.length - 1];
+      
+      if (lastLog && lastLog.end_time) {
+        const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
+        setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+      }
+    } else {
+      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+    }
+  } catch (err) {
+    console.error('載入今日工作日誌失敗', err);
+  }
+}, []); // 空依賴數組
+
+// 使用 useEffect 載入今日工作日誌
+useEffect(() => {
+  loadTodayWorkLogs();
+}, [loadTodayWorkLogs]);
+
 
   // 處理區域選擇
   const handleAreaChange = (e) => {
