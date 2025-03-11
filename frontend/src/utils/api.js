@@ -736,44 +736,57 @@ export const fetchProducts = async () => {
 
 // 位置資料獲取函數
 export const fetchLocationsByArea = async () => {
-  try {
-    console.log('嘗試獲取位置資料');
-    
-    const response = await throttle(
-      'fetchLocationsByArea', 
-      () => api.get('/data/locations-by-area')
-    );
-    
-    console.log('位置資料響應:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('獲取位置資料失敗:', {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status
-    });
-    
-    // 備用數據
-    const backupLocations = [
-      {
-        areaName: 'A區',
-        locations: [
-          { locationCode: 'A01', locationName: '農場A01' },
-          { locationCode: 'A02', locationName: '農場A02' }
-        ]
-      },
-      {
-        areaName: 'B區',
-        locations: [
-          { locationCode: 'B01', locationName: '農場B01' },
-          { locationCode: 'B02', locationName: '農場B02' }
-        ]
+  // 增加重試邏輯和更好的錯誤處理
+  const maxRetries = 3;
+  let retryCount = 0;
+
+  while (retryCount < maxRetries) {
+    try {
+      // 檢查快取
+      const cachedData = apiCache.get('locationsByArea');
+      if (cachedData) {
+        console.log('使用快取的按區域分組位置數據');
+        return cachedData;
       }
-    ];
-    
-    return backupLocations;
+      
+      // 使用節流控制請求頻率
+      const response = await throttle(
+        'fetchLocationsByArea',
+        () => api.get('/data/locations-by-area'),
+        5000 // 增加節流間隔時間
+      );
+      
+      // 儲存到快取
+      apiCache.set('locationsByArea', response.data, 3600000);
+      
+      return response.data;
+    } catch (error) {
+      retryCount++;
+      
+      if (error.message === 'Request throttled') {
+        console.warn(`位置資料請求被限流,重試 ${retryCount}/${maxRetries}`);
+        
+        // 增加等待時間
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        
+        // 如果是最後一次重試,返回默認數據
+        if (retryCount === maxRetries) {
+          console.warn('多次重試後仍無法獲取位置資料,返回默認數據');
+          return [
+            { areaName: 'A區', locations: [] },
+            { areaName: 'B區', locations: [] },
+            { areaName: 'C區', locations: [] }
+          ];
+        }
+        
+        continue;
+      }
+      
+      throw error;
+    }
   }
 };
+
 
 // 匯出工作日誌
 export const exportWorkLogs = async (filters, format = 'csv') => {
