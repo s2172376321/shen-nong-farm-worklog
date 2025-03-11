@@ -1,48 +1,87 @@
 // 位置：backend/controllers/workLogController.js
 const db = require('../config/database');
+const csvUtils = require('../utils/csvUtils');
+
+// 查詢今日工作時數 - 修正LENGTH函數問題
+async function queryTodayWorkHours(userId, isAdmin) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const todayStr = today.toISOString();
+  const tomorrowStr = tomorrow.toISOString();
+
+  let query = `
+    SELECT 
+      SUM(
+        CASE 
+          WHEN 
+            start_time IS NOT NULL AND 
+            end_time IS NOT NULL 
+          THEN 
+            (
+              (CAST(SUBSTRING(end_time::text FROM 1 FOR 2) AS INTEGER) - 
+               CAST(SUBSTRING(start_time::text FROM 1 FOR 2) AS INTEGER)) +
+              (CAST(SUBSTRING(end_time::text FROM 4 FOR 2) AS NUMERIC) - 
+               CAST(SUBSTRING(start_time::text FROM 4 FOR 2) AS NUMERIC)) / 60.0
+            )
+          ELSE 0 
+        END
+      ) as total_hours
+    FROM work_logs
+    WHERE 
+      created_at >= $1 AND 
+      created_at < $2 AND
+      start_time IS NOT NULL AND 
+      end_time IS NOT NULL
+  `;
+
+  const values = [todayStr, tomorrowStr];
+
+  if (!isAdmin) {
+    query += ` AND user_id = $3`;
+    values.push(userId);
+  }
+
+  const result = await db.query(query, values);
+  const totalHours = result.rows.length > 0 ? 
+    Math.min(parseFloat(result.rows[0].total_hours || 0), 8).toFixed(2) : 
+    '0.00';
+
+  return totalHours;
+}
 
 const WorkLogController = {
   // 創建工作日誌
   async createWorkLog(req, res) {
     const { 
-      location_code, 
-      position_code, 
-      position_name,
-      work_category_code, 
-      work_category_name,
-      start_time, 
-      end_time, 
+      location, 
+      crop, 
+      startTime, 
+      endTime, 
+      workCategories, 
       details, 
-      harvest_quantity = 0,
-      product_id = null,
-      product_name = null,
-      product_quantity = 0
+      harvestQuantity 
     } = req.body;
 
     try {
       const query = `
         INSERT INTO work_logs 
-        (user_id, location_code, position_code, position_name, 
-        work_category_code, work_category_name, start_time, end_time, 
-        details, harvest_quantity, product_id, product_name, product_quantity)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        (user_id, location, crop, start_time, end_time, work_categories, details, harvest_quantity)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
       `;
 
       const values = [
         req.user.id,  // 從認證中間件取得使用者ID
-        location_code,
-        position_code,
-        position_name,
-        work_category_code,
-        work_category_name,
-        start_time,
-        end_time,
+        location,
+        crop,
+        startTime,
+        endTime,
+        workCategories,
         details,
-        harvest_quantity,
-        product_id,
-        product_name,
-        product_quantity
+        harvestQuantity
       ];
 
       const result = await db.query(query, values);
@@ -57,40 +96,78 @@ const WorkLogController = {
     }
   },
 
-  // 查詢工作日誌 - 更新以支援更多篩選條件
+  // 查詢工作日誌
   async searchWorkLogs(req, res) {
-    const { startDate, endDate, location_code, work_category_code } = req.query;
+    const { location, crop, startDate, endDate, format } = req.query;
 
     try {
       let query = `
-        SELECT * FROM work_logs 
-        WHERE user_id = $1
+        SELECT wl.*, u.username 
+        FROM work_logs wl
+        JOIN users u ON wl.user_id = u.id
+        WHERE 1=1
       `;
-      const values = [req.user.id];
-      let paramIndex = 2;
+      const values = [];
+      let paramIndex = 1;
 
-      if (location_code) {
-        query += ` AND location_code = $${paramIndex}`;
-        values.push(location_code);
+      // 如果不是管理員，只能查看自己的工作日誌
+      if (req.user.role !== 'admin') {
+        query += ` AND wl.user_id = $${paramIndex}`;
+        values.push(req.user.id);
         paramIndex++;
       }
 
-      if (work_category_code) {
-        query += ` AND work_category_code = $${paramIndex}`;
-        values.push(work_category_code);
+      if (location) {
+        query += ` AND wl.location ILIKE $${paramIndex}`;
+        values.push(`%${location}%`);
+        paramIndex++;
+      }
+
+      if (crop) {
+        query += ` AND wl.crop ILIKE $${paramIndex}`;
+        values.push(`%${crop}%`);
         paramIndex++;
       }
 
       if (startDate && endDate) {
-        // 如果有提供日期範圍，則使用日期篩選
-        query += ` AND DATE(created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        query += ` AND wl.created_at BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
         values.push(startDate, endDate);
+        paramIndex += 2;
       }
 
-      query += ' ORDER BY created_at DESC';
+      query += ' ORDER BY wl.created_at DESC';
 
       const result = await db.query(query, values);
       
+      // 如果請求 CSV 格式
+      if (format === 'csv') {
+        const headers = ['id', 'username', 'location', 'crop', 'start_time', 'end_time', 
+                        'work_categories', 'details', 'harvest_quantity', 'status', 'created_at'];
+        
+        // 處理資料為 CSV 格式
+        const csvData = result.rows.map(row => ({
+          id: row.id,
+          username: row.username,
+          location: row.location,
+          crop: row.crop,
+          start_time: row.start_time,
+          end_time: row.end_time,
+          work_categories: Array.isArray(row.work_categories) ? row.work_categories.join('; ') : row.work_categories,
+          details: row.details,
+          harvest_quantity: row.harvest_quantity,
+          status: row.status,
+          created_at: csvUtils.formatDate(row.created_at)
+        }));
+        
+        const csv = csvUtils.convertToCSV(csvData, headers);
+        
+        // 設置 CSV 標頭
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="work_logs.csv"');
+        return res.send(csv);
+      }
+      
+      // 否則返回 JSON
       res.json(result.rows);
     } catch (error) {
       console.error('查詢工作日誌失敗:', error);
@@ -126,51 +203,51 @@ const WorkLogController = {
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
+  
+  // 匯出工作日誌
+  async exportWorkLogs(req, res) {
+    const { startDate, endDate, format = 'csv' } = req.query;
 
-  // 取得今日工作總時數
-  async getTodayTotalHours(req, res) {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      
-      const query = `
-        SELECT start_time, end_time
-        FROM work_logs
-        WHERE user_id = $1 AND DATE(created_at) = $2
-      `;
-      
-      const values = [req.user.id, today];
-      
-      const result = await db.query(query, values);
-      
-      // 計算總工作時數（排除午休時間）
-      let totalMinutes = 0;
-      
-      result.rows.forEach(log => {
-        const startTime = log.start_time.split(':');
-        const endTime = log.end_time.split(':');
-        
-        const startMinutes = parseInt(startTime[0]) * 60 + parseInt(startTime[1]);
-        const endMinutes = parseInt(endTime[0]) * 60 + parseInt(endTime[1]);
-        
-        // 排除午休時間
-        if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
-          totalMinutes += (endMinutes - startMinutes - 60);
-        } else {
-          totalMinutes += (endMinutes - startMinutes);
-        }
-      });
-      
-      // 計算剩餘需要工作的分鐘數 (8小時 = 480分鐘)
-      const remainingMinutes = 480 - totalMinutes;
-      
-      res.json({
-        totalHours: (totalMinutes / 60).toFixed(2),
-        remainingHours: Math.max(0, remainingMinutes / 60).toFixed(2),
-        isComplete: totalMinutes >= 480
-      });
+      const searchParams = {
+        startDate,
+        endDate,
+        format: 'csv'
+      };
+
+      if (req.user.role !== 'admin') {
+        searchParams.userId = req.user.id;
+      }
+
+      const result = await WorkLogController.searchWorkLogs(searchParams);
+      const csv = result.data;
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="work_logs.csv"');
+      res.send(csv);
     } catch (error) {
-      console.error('獲取今日工作時數失敗:', error);
+      console.error('匯出工作日誌失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+    }
+  },
+
+  async getTodayHour(req, res) {
+    try {
+      const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
+      
+      const responseData = {
+        total_hours: totalHours,
+        remaining_hours: (8 - parseFloat(totalHours)).toFixed(2),
+        is_complete: parseFloat(totalHours) >= 8
+      };
+
+      res.json(responseData);
+    } catch (error) {
+      console.error('獲取今日工時失敗:', error);
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
     }
   }
 };
