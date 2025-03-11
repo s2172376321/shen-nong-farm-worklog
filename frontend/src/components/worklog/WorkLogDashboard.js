@@ -257,8 +257,7 @@ const WorkLogDashboard = () => {
                     }
                     
                     return (
-                      <tr key={log.id || index} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
-                        <td className="p-3">
+                      <tr key={log.id ? log.id.toString() : `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>                        <td className="p-3">
                           {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-3">
