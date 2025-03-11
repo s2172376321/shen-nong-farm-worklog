@@ -739,6 +739,7 @@ export const fetchLocationsByArea = async () => {
   // 增加重試邏輯和更好的錯誤處理
   const maxRetries = 3;
   let retryCount = 0;
+  let lastError = null;
 
   while (retryCount < maxRetries) {
     try {
@@ -750,44 +751,36 @@ export const fetchLocationsByArea = async () => {
       }
       
       // 使用節流控制請求頻率
-      const response = await throttle(
-        'fetchLocationsByArea',
-        () => api.get('/data/locations-by-area'),
-        5000 // 增加節流間隔時間
-      );
+      const response = await api.get('/data/locations-by-area');
       
       // 儲存到快取
       apiCache.set('locationsByArea', response.data, 3600000);
       
       return response.data;
     } catch (error) {
+      lastError = error;
       retryCount++;
       
-      if (error.message === 'Request throttled') {
-        console.warn(`位置資料請求被限流,重試 ${retryCount}/${maxRetries}`);
-        
-        // 增加等待時間
-        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-        
-        // 如果是最後一次重試,返回默認數據
-        if (retryCount === maxRetries) {
-          console.warn('多次重試後仍無法獲取位置資料,返回默認數據');
-          return [
-            { areaName: 'A區', locations: [] },
-            { areaName: 'B區', locations: [] },
-            { areaName: 'C區', locations: [] }
-          ];
-        }
-        
+      console.warn(`獲取位置資料失敗(${retryCount}/${maxRetries}):`, error.message);
+      
+      // 增加等待時間
+      await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+      
+      // 如果不是最後一次重試,繼續嘗試
+      if (retryCount < maxRetries) {
         continue;
       }
-      
-      throw error;
     }
   }
+
+  // 所有重試都失敗了，返回默認數據
+  console.error('多次重試後仍無法獲取位置資料,返回默認數據', lastError);
+  return [
+    { areaName: 'A區', locations: [] },
+    { areaName: 'B區', locations: [] },
+    { areaName: 'C區', locations: [] }
+  ];
 };
-
-
 // 匯出工作日誌
 export const exportWorkLogs = async (filters, format = 'csv') => {
   const queryParams = new URLSearchParams({
