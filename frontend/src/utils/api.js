@@ -28,35 +28,52 @@ const apiCache = {
   }
 };
 
-// 創建 axios 實例，修改配置處理CORS問題
+// 創建 axios 實例
 const api = axios.create({
-  // 硬編碼API URL確保正確
-  baseURL: 'http://localhost:3000/api',
-  
-  // 跨域請求時是否攜帶憑證
-  withCredentials: false, // 為解決CORS問題先設為false
-  
-  // 增加超時設置
-  timeout: 10000,
-  
-  // 額外的請求頭
-  headers: {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-  }
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api',
+  withCredentials: true,
+  timeout: 10000
 });
 
 // 節流函數 - 用於限制請求頻率
 const throttleMap = new Map();
-const throttle = (key, fn, delay = 2000) => {
+const throttle = (key, fn, delay = 1000) => {
+  const now = Date.now();
+  
+  // 檢查是否存在並且在冷卻期
   if (throttleMap.has(key)) {
-    return Promise.reject(new Error('Request throttled'));
+    const { timestamp, rejectCount } = throttleMap.get(key);
+    
+    // 如果重複請求超過3次，拒絕請求
+    if (rejectCount >= 3) {
+      console.warn(`${key} 請求已被節流，暫時禁止`);
+      return Promise.reject(new Error('Request throttled'));
+    }
+    
+    // 如果在冷卻期內，增加拒絕計數
+    if (now - timestamp < delay) {
+      throttleMap.set(key, {
+        timestamp,
+        rejectCount: (rejectCount || 0) + 1
+      });
+      return Promise.reject(new Error('Request throttled'));
+    }
   }
 
-  throttleMap.set(key, true);
-  setTimeout(() => throttleMap.delete(key), delay);
-  return fn();
-};
+    // 更新節流映射
+    throttleMap.set(key, {
+      timestamp: now,
+      rejectCount: 0
+    });
+    
+    // 設置延遲清除
+    setTimeout(() => {
+      throttleMap.delete(key);
+    }, delay);
+    
+    return fn();
+  };
+  
 
 // 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
@@ -717,83 +734,44 @@ export const fetchProducts = async () => {
   }
 };
 
-// 獲取按區域分組的位置資料
+// 位置資料獲取函數
 export const fetchLocationsByArea = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('locationsByArea');
-  if (cachedData) {
-    console.log('使用快取的按區域分組位置數據');
-    return cachedData;
-  }
-  
   try {
-    // 使用節流控制請求頻率
+    console.log('嘗試獲取位置資料');
+    
     const response = await throttle(
-      'fetchLocationsByArea',
+      'fetchLocationsByArea', 
       () => api.get('/data/locations-by-area')
     );
     
-    // 儲存到快取 (長時間快取)
-    apiCache.set('locationsByArea', response.data, 3600000); // 快取1小時
-    
+    console.log('位置資料響應:', response.data);
     return response.data;
   } catch (error) {
-    console.error('獲取分組位置資料失敗:', error);
+    console.error('獲取位置資料失敗:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status
+    });
     
-    // 如果是節流錯誤或429錯誤，嘗試使用普通位置API獲取數據，然後在前端分組
-    if (error.message === 'Request throttled' || 
-        (error.response && error.response.status === 429)) {
-      
-      console.warn('嘗試獲取並手動分組位置數據');
-      
-      try {
-        // 嘗試使用已快取的位置數據
-        let locations = apiCache.get('locations');
-        
-        // 如果沒有快取，則獲取新數據（避免再次429）
-        if (!locations) {
-          const locResponse = await api.get('/data/locations', {
-            timeout: 5000 // 縮短超時時間
-          });
-          locations = locResponse.data;
-          apiCache.set('locations', locations, 3600000); // 快取位置數據
-        }
-        
-        // 按區域名稱分組
-        const groupedLocations = locations.reduce((acc, location) => {
-          const areaName = location['區域名稱'] || '未分類區域';
-          if (!acc[areaName]) {
-            acc[areaName] = [];
-          }
-          acc[areaName].push({
-            locationCode: location['位置代號'],
-            locationName: location['位置名稱']
-          });
-          return acc;
-        }, {});
-
-        // 構建最終返回格式
-        const result = Object.keys(groupedLocations).map(areaName => ({
-          areaName,
-          locations: groupedLocations[areaName]
-        }));
-        
-        // 儲存到快取
-        apiCache.set('locationsByArea', result, 3600000); // 快取1小時
-        
-        return result;
-      } catch (innerError) {
-        console.error('前端分組位置數據失敗:', innerError);
-        // 如果所有嘗試都失敗，返回最小數據集
-        return [
-          { areaName: 'A區', locations: [] },
-          { areaName: 'B區', locations: [] },
-          { areaName: 'C區', locations: [] }
-        ];
+    // 備用數據
+    const backupLocations = [
+      {
+        areaName: 'A區',
+        locations: [
+          { locationCode: 'A01', locationName: '農場A01' },
+          { locationCode: 'A02', locationName: '農場A02' }
+        ]
+      },
+      {
+        areaName: 'B區',
+        locations: [
+          { locationCode: 'B01', locationName: '農場B01' },
+          { locationCode: 'B02', locationName: '農場B02' }
+        ]
       }
-    }
+    ];
     
-    throw error;
+    return backupLocations;
   }
 };
 

@@ -7,13 +7,13 @@ const workLogRoutes = require('./workLogRoutes');
 const noticeRoutes = require('./noticeRoutes');
 const userRoutes = require('./userRoutes');
 const statsRoutes = require('./statsRoutes');
-const locationRoutes = require('./locationRoutes'); // 新增的路由
+const dataRoutes = require('./dataRoutes');  // 確保引入 dataRoutes
 
 router.use('/auth', authRoutes);
 router.use('/work-logs', workLogRoutes);
 router.use('/notices', noticeRoutes);
 router.use('/users', userRoutes);
 router.use('/stats', statsRoutes);
-router.use('/locations', locationRoutes); // 新增的路由
+router.use('/data', dataRoutes);  // 添加這一行
 
 module.exports = router;

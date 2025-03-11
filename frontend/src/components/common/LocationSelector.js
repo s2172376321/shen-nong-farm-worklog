@@ -1,26 +1,49 @@
-// 位置：frontend/src/components/common/LocationSelector.js
+// 位置：src/components/common/LocationSelector.js
 import React, { useState, useEffect } from 'react';
 import { fetchLocationsByArea } from '../../utils/api';
+import { Button } from '../ui';
 
-const LocationSelector = ({ onLocationSelect, className = '' }) => {
-  const [areas, setAreas] = useState([]);
-  const [selectedArea, setSelectedArea] = useState('');
+const LocationSelector = ({ 
+  onLocationSelect, 
+  className = '', 
+  disabled = false 
+}) => {
   const [locations, setLocations] = useState([]);
-  const [selectedLocation, setSelectedLocation] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [selectedArea, setSelectedArea] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState(null);
   const [error, setError] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // 載入區域和位置資料
   useEffect(() => {
     const loadData = async () => {
       try {
         setIsLoading(true);
         const data = await fetchLocationsByArea();
-        setAreas(data);
-        setIsLoading(false);
+        setLocations(data);
+        setError(null);
       } catch (err) {
         console.error('載入位置資料失敗', err);
-        setError('無法載入位置資料');
+        setError('無法載入位置資料，請稍後再試');
+        
+        // 使用備用數據
+        const backupLocations = [
+          {
+            areaName: 'A區',
+            locations: [
+              { locationCode: 'A01', locationName: '農場A01' },
+              { locationCode: 'A02', locationName: '農場A02' }
+            ]
+          },
+          {
+            areaName: 'B區',
+            locations: [
+              { locationCode: 'B01', locationName: '農場B01' },
+              { locationCode: 'B02', locationName: '農場B02' }
+            ]
+          }
+        ];
+        setLocations(backupLocations);
+      } finally {
         setIsLoading(false);
       }
     };
@@ -28,82 +51,71 @@ const LocationSelector = ({ onLocationSelect, className = '' }) => {
     loadData();
   }, []);
 
-  // 當選擇區域時，更新位置列表
-  const handleAreaChange = (e) => {
-    const areaName = e.target.value;
-    setSelectedArea(areaName);
-    setSelectedLocation('');
-
-    if (areaName) {
-      const selectedAreaData = areas.find(area => area.areaName === areaName);
-      setLocations(selectedAreaData?.locations || []);
-    } else {
-      setLocations([]);
-    }
+  const handleAreaSelect = (area) => {
+    setSelectedArea(area);
+    setSelectedLocation(null);
   };
 
-  // 當選擇位置時，調用回調函數
-  const handleLocationChange = (e) => {
-    const locationCode = e.target.value;
-    setSelectedLocation(locationCode);
-    
-    if (locationCode) {
-      const selectedLocationData = locations.find(loc => loc.code === locationCode);
-      onLocationSelect && onLocationSelect({
-        areaName: selectedArea,
-        locationCode,
-        locationName: selectedLocationData?.name
-      });
-    }
+  const handleLocationSelect = (location) => {
+    setSelectedLocation(location);
+    onLocationSelect && onLocationSelect(location);
   };
 
   if (isLoading) {
-    return <div className="text-gray-400">載入中...</div>;
+    return (
+      <div className="flex justify-center items-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-blue-500"></div>
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="text-red-500">{error}</div>;
+    return (
+      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+        {error}
+      </div>
+    );
   }
 
   return (
     <div className={`space-y-4 ${className}`}>
       {/* 區域選擇 */}
       <div>
-        <label className="block text-sm font-medium text-gray-200 mb-1">
-          選擇區域
-        </label>
-        <select
-          value={selectedArea}
-          onChange={handleAreaChange}
-          className="w-full bg-gray-700 text-white rounded-md p-2 border border-gray-600 focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">請選擇區域</option>
-          {areas.map(area => (
-            <option key={area.areaName} value={area.areaName}>
+        <h3 className="text-lg font-semibold mb-2">選擇區域</h3>
+        <div className="grid grid-cols-3 gap-2">
+          {locations.map((area) => (
+            <Button
+              key={area.areaName}
+              onClick={() => handleAreaSelect(area)}
+              variant={selectedArea === area ? 'primary' : 'secondary'}
+              className="w-full"
+              disabled={disabled}
+            >
               {area.areaName}
-            </option>
+            </Button>
           ))}
-        </select>
+        </div>
       </div>
 
-      {/* 位置選擇 (只有當區域被選中時才顯示) */}
+      {/* 位置選擇 */}
       {selectedArea && (
         <div>
-          <label className="block text-sm font-medium text-gray-200 mb-1">
-            選擇位置
-          </label>
-          <select
-            value={selectedLocation}
-            onChange={handleLocationChange}
-            className="w-full bg-gray-700 text-white rounded-md p-2 border border-gray-600 focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">請選擇位置</option>
-            {locations.map(location => (
-              <option key={location.code} value={location.code}>
-                {location.name}
-              </option>
+          <h3 className="text-lg font-semibold mb-2">選擇具體位置</h3>
+          <div className="grid grid-cols-3 gap-2">
+            {selectedArea.locations.map((location) => (
+              <Button
+                key={location.locationCode}
+                onClick={() => handleLocationSelect(location)}
+                variant={
+                  selectedLocation === location ? 'primary' : 'secondary'
+                }
+                className="w-full"
+                disabled={disabled}
+              >
+                {location.locationName}
+              </Button>
             ))}
-          </select>
+          </div>
         </div>
       )}
     </div>

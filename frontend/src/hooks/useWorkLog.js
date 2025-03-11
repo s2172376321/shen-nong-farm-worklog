@@ -1,6 +1,6 @@
 // 位置：frontend/src/hooks/useWorkLog.js
 import { useState } from 'react';
-import { createWorkLog, searchWorkLogs } from '../utils/api';
+import { createWorkLog, searchWorkLogs, uploadCSV } from '../utils/api';
 
 export const useWorkLog = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -16,6 +16,21 @@ export const useWorkLog = () => {
       return response;
     } catch (err) {
       setError(err.response?.data?.message || '提交工作日誌失敗');
+      setIsLoading(false);
+      throw err;
+    }
+  };
+
+  const submitCSV = async (csvFile) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await uploadCSV(csvFile);
+      setIsLoading(false);
+      return response;
+    } catch (err) {
+      setError(err.response?.data?.message || 'CSV 檔案上傳失敗');
       setIsLoading(false);
       throw err;
     }
@@ -38,6 +53,7 @@ export const useWorkLog = () => {
 
   return {
     submitWorkLog,
+    submitCSV,
     fetchWorkLogs,
     isLoading,
     error
