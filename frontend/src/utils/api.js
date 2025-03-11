@@ -37,43 +37,61 @@ const api = axios.create({
 
 // 節流函數 - 用於限制請求頻率
 const throttleMap = new Map();
-const throttle = (key, fn, delay = 1000) => {
+const throttle = (key, fn, initialDelay = 1000) => {
   const now = Date.now();
   
-  // 檢查是否存在並且在冷卻期
+  // 檢查是否存在並且在冷卻期內
   if (throttleMap.has(key)) {
-    const { timestamp, rejectCount } = throttleMap.get(key);
+    const { timestamp, rejectCount, delay } = throttleMap.get(key);
     
-    // 如果重複請求超過3次，拒絕請求
-    if (rejectCount >= 3) {
-      console.warn(`${key} 請求已被節流，暫時禁止`);
-      return Promise.reject(new Error('Request throttled'));
-    }
-    
-    // 如果在冷卻期內，增加拒絕計數
+    // 如果在冷卻期內，增加拒絕計數並使用指數退避
     if (now - timestamp < delay) {
+      // 計算下一次退避延遲（指數增長但有上限）
+      const nextDelay = Math.min(delay * 1.5, 30000); // 最大30秒
+      const nextRejectCount = rejectCount + 1;
+      
       throttleMap.set(key, {
         timestamp,
-        rejectCount: (rejectCount || 0) + 1
+        rejectCount: nextRejectCount,
+        delay: nextDelay
       });
+      
+      console.warn(`請求 ${key} 被節流，當前延遲 ${delay}ms，拒絕次數 ${nextRejectCount}`);
       return Promise.reject(new Error('Request throttled'));
     }
   }
 
-    // 更新節流映射
-    throttleMap.set(key, {
-      timestamp: now,
-      rejectCount: 0
-    });
-    
-    // 設置延遲清除
-    setTimeout(() => {
-      throttleMap.delete(key);
-    }, delay);
-    
-    return fn();
-  };
+  // 更新節流映射
+  throttleMap.set(key, {
+    timestamp: now,
+    rejectCount: 0,
+    delay: initialDelay
+  });
   
+  // 設置延遲清除
+  const timeoutId = setTimeout(() => {
+    // 只有在對象仍然存在並且時間戳與當前匹配時才清除
+    const current = throttleMap.get(key);
+    if (current && current.timestamp === now) {
+      throttleMap.delete(key);
+    }
+  }, initialDelay);
+  
+  // 執行函數並處理結果
+  return fn().finally(() => {
+    // 成功時可以提前清除節流
+    clearTimeout(timeoutId);
+    
+    // 檢查是否仍是當前請求
+    const current = throttleMap.get(key);
+    if (current && current.timestamp === now) {
+      // 保留5秒冷卻期，避免極短時間內的重複請求
+      setTimeout(() => {
+        throttleMap.delete(key);
+      }, 5000);
+    }
+  });
+};
 
 // 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
@@ -402,6 +420,7 @@ export const uploadCSV = async (csvFile) => {
   }
 };
 
+// 修改 searchWorkLogs 函數
 export const searchWorkLogs = async (filters) => {
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
@@ -413,25 +432,47 @@ export const searchWorkLogs = async (filters) => {
     return cachedData;
   }
   
-  try {
-    // 使用節流避免頻繁請求
-    const response = await throttle(
-      `searchWorkLogs:${JSON.stringify(filters)}`,
-      () => api.get('/work-logs/search', { params: filters })
-    );
-    
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
-    
-    return response.data;
-  } catch (error) {
-    // 如果是節流錯誤，顯示友好提示
-    if (error.message === 'Request throttled') {
-      console.warn('請求過於頻繁，請稍後再試');
-      return [];
+  let retryCount = 0;
+  const maxRetries = 3;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // 使用節流避免頻繁請求
+      const response = await throttle(
+        `searchWorkLogs:${JSON.stringify(filters)}`,
+        () => api.get('/work-logs/search', { params: filters }),
+        2000 + (retryCount * 1000) // 隨著重試次數增加基本延遲
+      );
+      
+      // 儲存到快取
+      apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+      
+      return response.data;
+    } catch (error) {
+      retryCount++;
+      
+      // 如果是節流錯誤或特定HTTP錯誤，等待後重試
+      if (error.message === 'Request throttled' || 
+          (error.response && (error.response.status === 429 || error.response.status === 503))) {
+        
+        if (retryCount <= maxRetries) {
+          const delay = 2000 * Math.pow(2, retryCount - 1); // 指數退避
+          console.warn(`工作日誌查詢失敗，${delay}ms後重試(${retryCount}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        console.warn('查詢工作日誌達到最大重試次數，返回空數組');
+        return [];
+      }
+      
+      // 其他錯誤直接抛出
+      throw error;
     }
-    throw error;
   }
+  
+  // 這裡不應該到達，但為了安全返回空數組
+  return [];
 };
 
 export const reviewWorkLog = async (workLogId, status) => {
@@ -444,7 +485,7 @@ export const reviewWorkLog = async (workLogId, status) => {
   return response.data;
 };
 
-// 獲取今日工作時數 - 統一使用 getTodayHour (單數形式)
+// 修改 getTodayHour 函數
 export const getTodayHour = async () => {
   // 檢查快取
   const cachedData = apiCache.get('todayHour');
@@ -453,30 +494,68 @@ export const getTodayHour = async () => {
     return cachedData;
   }
   
-  try {
-    // 限制請求頻率
-    const response = await throttle(
-      'getTodayHour',
-      () => api.get('/work-logs/today-hour')
-    );
-    
-    // 儲存到快取 - 工時數據快取時間較短
-    apiCache.set('todayHour', response.data, 30000); // 快取30秒
-    
-    return response.data;
-  } catch (error) {
-    // 如果是節流錯誤或429錯誤，返回默認值
-    if (error.message === 'Request throttled' || 
-        (error.response && error.response.status === 429)) {
-      console.warn('工時請求限制中，返回默認值');
+  let retryCount = 0;
+  const maxRetries = 3;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // 限制請求頻率
+      const response = await throttle(
+        'getTodayHour',
+        () => api.get('/work-logs/today-hour'),
+        2000 * Math.pow(1.5, retryCount) // 隨著重試次數增加延遲
+      );
+      
+      // 檢查響應數據格式
+      const data = response.data;
+      if (!data || typeof data.total_hours === 'undefined') {
+        throw new Error('Invalid response format');
+      }
+      
+      // 儲存到快取 - 工時數據快取時間較短
+      apiCache.set('todayHour', data, 30000); // 快取30秒
+      
+      return data;
+    } catch (error) {
+      retryCount++;
+      
+      // 記錄詳細錯誤信息
+      console.error('獲取今日工時失敗:', {
+        attempt: retryCount,
+        error: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      
+      // 如果是節流錯誤或特定HTTP錯誤，等待後重試
+      if (error.message === 'Request throttled' || 
+          error.message === 'Invalid response format' ||
+          (error.response && (error.response.status === 429 || error.response.status === 503))) {
+        
+        if (retryCount <= maxRetries) {
+          const delay = 2000 * Math.pow(2, retryCount - 1); // 指數退避
+          console.warn(`獲取今日工時失敗，${delay}ms後重試(${retryCount}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      
+      // 返回默認值
+      console.warn('今日工時請求失敗達到最大重試次數，返回默認值');
       return {
         total_hours: "0.00",
         remaining_hours: "8.00",
         is_complete: false
       };
     }
-    throw error;
   }
+  
+  // 這裡不應該到達，但為了安全返回默認值
+  return {
+    total_hours: "0.00",
+    remaining_hours: "8.00",
+    is_complete: false
+  };
 };
 
 // ----- 公告 API -----
@@ -704,6 +783,7 @@ export const fetchWorkCategories = async () => {
   }
 };
 
+// 修改 fetchProducts 函數
 export const fetchProducts = async () => {
   // 檢查快取
   const cachedData = apiCache.get('products');
@@ -712,30 +792,58 @@ export const fetchProducts = async () => {
     return cachedData;
   }
   
-  try {
-    // 使用節流控制請求頻率
-    const response = await throttle(
-      'fetchProducts',
-      () => api.get('/data/products')
-    );
-    
-    // 儲存到快取 (長時間快取)
-    apiCache.set('products', response.data, 3600000); // 快取1小時
-    
-    return response.data;
-  } catch (error) {
-    // 如果是節流錯誤或429錯誤，返回空陣列
-    if (error.message === 'Request throttled' || 
-        (error.response && error.response.status === 429)) {
-      console.warn('產品請求限制中，返回空陣列');
-      return [];
+  let retryCount = 0;
+  const maxRetries = 3;
+  let lastError = null;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      // 使用節流控制請求頻率 + 指數退避
+      const response = await api.get('/data/products', {
+        timeout: 15000 + (retryCount * 5000) // 增加更長的超時時間
+      });
+      
+      // 驗證響應格式
+      if (!response.data || !Array.isArray(response.data)) {
+        throw new Error('Invalid products data format');
+      }
+      
+      // 儲存到快取 (長時間快取)
+      apiCache.set('products', response.data, 3600000); // 快取1小時
+      
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      retryCount++;
+      
+      console.warn(`產品資料請求失敗 (${retryCount}/${maxRetries}):`, error.message);
+      
+      if (retryCount <= maxRetries) {
+        // 使用更長的延遲時間
+        const delay = 3000 * Math.pow(2, retryCount - 1);
+        console.log(`等待 ${delay}ms 後重試...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
     }
-    throw error;
   }
+  
+  // 所有重試都失敗
+  console.error('多次重試後無法獲取產品資料', lastError);
+  
+  // 返回空數組
+  return [];
 };
 
-// 位置資料獲取函數
+// 修改 fetchLocationsByArea 函數
 export const fetchLocationsByArea = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('locationsByArea');
+  if (cachedData) {
+    console.log('使用快取的按區域分組位置數據');
+    return cachedData;
+  }
+  
   // 增加重試邏輯和更好的錯誤處理
   const maxRetries = 3;
   let retryCount = 0;
@@ -743,44 +851,78 @@ export const fetchLocationsByArea = async () => {
 
   while (retryCount < maxRetries) {
     try {
-      // 檢查快取
-      const cachedData = apiCache.get('locationsByArea');
-      if (cachedData) {
-        console.log('使用快取的按區域分組位置數據');
-        return cachedData;
+      console.log(`嘗試獲取位置資料 (${retryCount + 1}/${maxRetries})`);
+      
+      // 增加請求超時
+      const response = await api.get('/data/locations-by-area', {
+        timeout: 10000 + (retryCount * 5000) // 隨著重試次數增加超時時間
+      });
+      
+      if (!response.data || !Array.isArray(response.data)) {
+        throw new Error('Invalid response format');
       }
       
-      // 使用節流控制請求頻率
-      const response = await api.get('/data/locations-by-area');
-      
       // 儲存到快取
-      apiCache.set('locationsByArea', response.data, 3600000);
+      apiCache.set('locationsByArea', response.data, 3600000); // 1小時快取
+      console.log('成功獲取位置資料，共 ' + response.data.length + ' 個區域');
       
       return response.data;
     } catch (error) {
       lastError = error;
       retryCount++;
       
-      console.warn(`獲取位置資料失敗(${retryCount}/${maxRetries}):`, error.message);
+      console.warn(`獲取位置資料失敗 (${retryCount}/${maxRetries}):`, 
+        error.message || '未知錯誤');
+      
+      // 檢查錯誤類型
+      const isNetworkError = !error.response || error.code === 'ECONNABORTED';
+      const isServerError = error.response && error.response.status >= 500;
+      const isRateLimited = error.response && error.response.status === 429;
+      
+      // 對不同類型的錯誤使用不同的退避策略
+      let delay = 1000;
+      if (isRateLimited) {
+        delay = 3000 * Math.pow(2, retryCount - 1); // 較長的指數退避
+      } else if (isServerError) {
+        delay = 2000 * retryCount; // 線性退避
+      } else if (isNetworkError) {
+        delay = 1500 * retryCount; // 較短的線性退避
+      }
+      
+      // 打印退避信息
+      console.log(`等待 ${delay}ms 後進行第 ${retryCount + 1} 次重試`);
       
       // 增加等待時間
-      await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-      
-      // 如果不是最後一次重試,繼續嘗試
-      if (retryCount < maxRetries) {
-        continue;
-      }
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 
   // 所有重試都失敗了，返回默認數據
-  console.error('多次重試後仍無法獲取位置資料,返回默認數據', lastError);
-  return [
+  console.error('多次重試後仍無法獲取位置資料，返回默認數據', lastError);
+  
+  // 使用更詳細的錯誤日誌
+  const errorDetails = {
+    message: lastError?.message || '未知錯誤',
+    status: lastError?.response?.status,
+    statusText: lastError?.response?.statusText,
+    data: lastError?.response?.data,
+    retries: retryCount
+  };
+  console.error('詳細錯誤信息:', JSON.stringify(errorDetails));
+  
+  // 快取默認數據，避免持續重試
+  const defaultData = [
     { areaName: 'A區', locations: [] },
     { areaName: 'B區', locations: [] },
     { areaName: 'C區', locations: [] }
   ];
+  
+  // 使用較短的快取時間，允許稍後重試
+  apiCache.set('locationsByArea', defaultData, 300000); // 5分鐘
+  
+  return defaultData;
 };
+
 // 匯出工作日誌
 export const exportWorkLogs = async (filters, format = 'csv') => {
   const queryParams = new URLSearchParams({
