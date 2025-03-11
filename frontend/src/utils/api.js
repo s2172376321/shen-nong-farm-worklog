@@ -1,6 +1,33 @@
 // 位置：frontend/src/utils/api.js
 import axios from 'axios';
 
+// 快取存儲
+const apiCache = {
+  data: {},
+  set: function(key, value, ttl = 300000) { // 預設快取5分鐘 (300000毫秒)
+    this.data[key] = {
+      value,
+      expiry: Date.now() + ttl
+    };
+  },
+  get: function(key) {
+    const item = this.data[key];
+    if (!item) return null;
+    if (Date.now() > item.expiry) {
+      delete this.data[key];
+      return null;
+    }
+    return item.value;
+  },
+  clear: function(key) {
+    if (key) {
+      delete this.data[key];
+    } else {
+      this.data = {};
+    }
+  }
+};
+
 // 創建 axios 實例，修改配置處理CORS問題
 const api = axios.create({
   // 硬編碼API URL確保正確
@@ -19,6 +46,18 @@ const api = axios.create({
   }
 });
 
+// 節流函數 - 用於限制請求頻率
+const throttleMap = new Map();
+const throttle = (key, fn, delay = 2000) => {
+  if (throttleMap.has(key)) {
+    return Promise.reject(new Error('Request throttled'));
+  }
+
+  throttleMap.set(key, true);
+  setTimeout(() => throttleMap.delete(key), delay);
+  return fn();
+};
+
 // 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
   config => {
@@ -26,6 +65,15 @@ api.interceptors.request.use(
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    
+    // 對於文件上傳請求，不設置 Content-Type，讓瀏覽器自動設置
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
+    
+    // 請求標識符，用於節流
+    config.requestId = `${config.method}:${config.url}:${JSON.stringify(config.params || {})}`;
+    
     console.log('發送API請求:', config.url); // 調試日誌
     return config;
   },
@@ -50,6 +98,12 @@ api.interceptors.response.use(
       data: error.response?.data,
       message: error.message
     });
+    
+    // 特殊處理429錯誤(過多請求)
+    if (error.response && error.response.status === 429) {
+      console.warn('請求頻率過高，使用本地快取或稍後重試');
+    }
+    
     return Promise.reject(error);
   }
 );
@@ -259,6 +313,9 @@ export const logout = () => {
   // 清除本地存儲的資訊
   localStorage.removeItem('token');
   localStorage.removeItem('user');
+  
+  // 清除快取
+  apiCache.clear();
 };
 
 // ----- 工作日誌 API -----
@@ -279,70 +336,233 @@ export const createWorkLog = async (workLogData) => {
   };
   
   const response = await api.post('/work-logs', formattedData);
+  
+  // 創建日誌後清除相關快取
+  apiCache.clear('workLogs');
+  apiCache.clear('workStats');
+  apiCache.clear('todayHour');
+  
   return response.data;
 };
 
+// CSV 上傳工作日誌
+export const uploadCSV = async (csvFile) => {
+  try {
+    console.log('開始上傳 CSV 檔案:', csvFile.name);
+    
+    const formData = new FormData();
+    formData.append('csvFile', csvFile);
+    
+    const response = await api.post('/work-logs/upload-csv', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
+    // 上傳後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear('todayHour');
+    
+    console.log('CSV 上傳成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('CSV 上傳失敗:', error);
+    
+    // 詳細錯誤日誌
+    if (error.response) {
+      console.error('伺服器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到伺服器回應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
+    }
+    
+    throw error;
+  }
+};
+
 export const searchWorkLogs = async (filters) => {
-  const response = await api.get('/work-logs/search', { params: filters });
-  return response.data;
+  // 生成快取鍵
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作日誌數據');
+    return cachedData;
+  }
+  
+  try {
+    // 使用節流避免頻繁請求
+    const response = await throttle(
+      `searchWorkLogs:${JSON.stringify(filters)}`,
+      () => api.get('/work-logs/search', { params: filters })
+    );
+    
+    // 儲存到快取
+    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤，顯示友好提示
+    if (error.message === 'Request throttled') {
+      console.warn('請求過於頻繁，請稍後再試');
+      return [];
+    }
+    throw error;
+  }
 };
 
 export const reviewWorkLog = async (workLogId, status) => {
   const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+  
+  // 審核後清除相關快取
+  apiCache.clear('workLogs');
+  apiCache.clear('workStats');
+  
   return response.data;
 };
 
-// 獲取今日工作時數
-export const fetchTodayHours = async () => {
-  const response = await api.get('/work-logs/today-hours');
-  return response.data;
+// 獲取今日工作時數 - 統一使用 getTodayHour (單數形式)
+export const getTodayHour = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('todayHour');
+  if (cachedData) {
+    console.log('使用快取的今日工時數據');
+    return cachedData;
+  }
+  
+  try {
+    // 限制請求頻率
+    const response = await throttle(
+      'getTodayHour',
+      () => api.get('/work-logs/today-hour')
+    );
+    
+    // 儲存到快取 - 工時數據快取時間較短
+    apiCache.set('todayHour', response.data, 30000); // 快取30秒
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回默認值
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('工時請求限制中，返回默認值');
+      return {
+        total_hours: "0.00",
+        remaining_hours: "8.00",
+        is_complete: false
+      };
+    }
+    throw error;
+  }
 };
 
 // ----- 公告 API -----
 export const fetchNotices = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('notices');
+  if (cachedData) {
+    return cachedData;
+  }
+  
   const response = await api.get('/notices');
+  
+  // 儲存到快取
+  apiCache.set('notices', response.data, 300000); // 快取5分鐘
+  
   return response.data;
 };
 
 export const createNotice = async (noticeData) => {
   const response = await api.post('/notices', noticeData);
+  
+  // 清除公告快取
+  apiCache.clear('notices');
+  
   return response.data;
 };
 
 export const updateNotice = async (noticeId, noticeData) => {
   const response = await api.put(`/notices/${noticeId}`, noticeData);
+  
+  // 清除公告快取
+  apiCache.clear('notices');
+  
   return response.data;
 };
 
 export const deleteNotice = async (noticeId) => {
   const response = await api.delete(`/notices/${noticeId}`);
+  
+  // 清除公告快取
+  apiCache.clear('notices');
+  
   return response.data;
 };
 
 // ----- 使用者 API -----
 export const fetchUsers = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('users');
+  if (cachedData) {
+    return cachedData;
+  }
+  
   const response = await api.get('/users');
+  
+  // 儲存到快取
+  apiCache.set('users', response.data, 300000); // 快取5分鐘
+  
   return response.data;
 };
 
 export const createUser = async (userData) => {
   const response = await api.post('/users', userData);
+  
+  // 清除使用者快取
+  apiCache.clear('users');
+  
   return response.data;
 };
 
 export const updateUser = async (userId, userData) => {
   const response = await api.put(`/users/${userId}`, userData);
+  
+  // 清除使用者快取
+  apiCache.clear('users');
+  
   return response.data;
 };
 
 export const deleteUser = async (userId) => {
   const response = await api.delete(`/users/${userId}`);
+  
+  // 清除使用者快取
+  apiCache.clear('users');
+  
   return response.data;
 };
 
 export const checkUsernameAvailability = async (username) => {
-  const response = await api.get(`/users/check-username/${username}`);
-  return response.data;
+  // 使用節流控制請求頻率
+  try {
+    const response = await throttle(
+      `checkUsername:${username}`,
+      () => api.get(`/users/check-username/${username}`)
+    );
+    return response.data;
+  } catch (error) {
+    if (error.message === 'Request throttled') {
+      console.warn('使用者名稱檢查請求過於頻繁');
+      return { available: true }; // 默認值
+    }
+    throw error;
+  }
 };
 
 // ----- Google 帳號綁定 API -----
@@ -408,57 +628,262 @@ export const unbindGoogleAccount = async () => {
 
 // ----- 資料 API -----
 export const fetchLocations = async () => {
-  const response = await api.get('/data/locations');
-  return response.data;
+  // 檢查快取
+  const cachedData = apiCache.get('locations');
+  if (cachedData) {
+    console.log('使用快取的位置數據');
+    return cachedData;
+  }
+  
+  try {
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      'fetchLocations',
+      () => api.get('/data/locations')
+    );
+    
+    // 儲存到快取 (長時間快取)
+    apiCache.set('locations', response.data, 3600000); // 快取1小時
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回空陣列
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('位置請求限制中，返回空陣列');
+      return [];
+    }
+    throw error;
+  }
 };
 
 export const fetchWorkCategories = async () => {
-  const response = await api.get('/data/work-categories');
-  return response.data;
+  // 檢查快取
+  const cachedData = apiCache.get('workCategories');
+  if (cachedData) {
+    console.log('使用快取的工作類別數據');
+    return cachedData;
+  }
+  
+  try {
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      'fetchWorkCategories',
+      () => api.get('/data/work-categories')
+    );
+    
+    // 儲存到快取 (長時間快取)
+    apiCache.set('workCategories', response.data, 3600000); // 快取1小時
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回空陣列
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('工作類別請求限制中，返回空陣列');
+      return [];
+    }
+    throw error;
+  }
 };
 
 export const fetchProducts = async () => {
-  const response = await api.get('/data/products');
-  return response.data;
+  // 檢查快取
+  const cachedData = apiCache.get('products');
+  if (cachedData) {
+    console.log('使用快取的產品數據');
+    return cachedData;
+  }
+  
+  try {
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      'fetchProducts',
+      () => api.get('/data/products')
+    );
+    
+    // 儲存到快取 (長時間快取)
+    apiCache.set('products', response.data, 3600000); // 快取1小時
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回空陣列
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('產品請求限制中，返回空陣列');
+      return [];
+    }
+    throw error;
+  }
 };
 
 // 獲取按區域分組的位置資料
 export const fetchLocationsByArea = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('locationsByArea');
+  if (cachedData) {
+    console.log('使用快取的按區域分組位置數據');
+    return cachedData;
+  }
+  
   try {
-    const response = await api.get('/data/locations-by-area');
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      'fetchLocationsByArea',
+      () => api.get('/data/locations-by-area')
+    );
+    
+    // 儲存到快取 (長時間快取)
+    apiCache.set('locationsByArea', response.data, 3600000); // 快取1小時
+    
     return response.data;
   } catch (error) {
     console.error('獲取分組位置資料失敗:', error);
     
-    // 嘗試使用普通位置API獲取數據，然後在前端分組
-    const locations = await fetchLocations();
-    
-    // 按區域名稱分組
-    const groupedLocations = locations.reduce((acc, location) => {
-      const areaName = location['區域名稱'];
-      if (!acc[areaName]) {
-        acc[areaName] = [];
-      }
-      acc[areaName].push({
-        code: location['位置代號'],
-        name: location['位置名稱']
-      });
-      return acc;
-    }, {});
+    // 如果是節流錯誤或429錯誤，嘗試使用普通位置API獲取數據，然後在前端分組
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      
+      console.warn('嘗試獲取並手動分組位置數據');
+      
+      try {
+        // 嘗試使用已快取的位置數據
+        let locations = apiCache.get('locations');
+        
+        // 如果沒有快取，則獲取新數據（避免再次429）
+        if (!locations) {
+          const locResponse = await api.get('/data/locations', {
+            timeout: 5000 // 縮短超時時間
+          });
+          locations = locResponse.data;
+          apiCache.set('locations', locations, 3600000); // 快取位置數據
+        }
+        
+        // 按區域名稱分組
+        const groupedLocations = locations.reduce((acc, location) => {
+          const areaName = location['區域名稱'] || '未分類區域';
+          if (!acc[areaName]) {
+            acc[areaName] = [];
+          }
+          acc[areaName].push({
+            locationCode: location['位置代號'],
+            locationName: location['位置名稱']
+          });
+          return acc;
+        }, {});
 
-    // 構建最終返回格式
-    return Object.keys(groupedLocations).map(areaName => ({
-      areaName,
-      locations: groupedLocations[areaName]
-    }));
+        // 構建最終返回格式
+        const result = Object.keys(groupedLocations).map(areaName => ({
+          areaName,
+          locations: groupedLocations[areaName]
+        }));
+        
+        // 儲存到快取
+        apiCache.set('locationsByArea', result, 3600000); // 快取1小時
+        
+        return result;
+      } catch (innerError) {
+        console.error('前端分組位置數據失敗:', innerError);
+        // 如果所有嘗試都失敗，返回最小數據集
+        return [
+          { areaName: 'A區', locations: [] },
+          { areaName: 'B區', locations: [] },
+          { areaName: 'C區', locations: [] }
+        ];
+      }
+    }
+    
+    throw error;
   }
 };
 
+// 匯出工作日誌
+export const exportWorkLogs = async (filters, format = 'csv') => {
+  const queryParams = new URLSearchParams({
+    ...filters,
+    format
+  }).toString();
+  
+  // 使用 window.open 直接下載檔案
+  window.open(`${api.defaults.baseURL}/work-logs/export?${queryParams}`);
+};
+
+// 獲取工作統計資訊
+export const getWorkStats = async (startDate, endDate) => {
+  // 生成快取鍵
+  const cacheKey = `workStats:${startDate || 'all'}:${endDate || 'all'}`;
+  
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作統計數據');
+    return cachedData;
+  }
+  
+  try {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      `getWorkStats:${startDate}:${endDate}`,
+      () => api.get('/work-logs/stats', { params })
+    );
+    
+    // 儲存到快取
+    apiCache.set(cacheKey, response.data, 120000); // 快取2分鐘
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回默認值
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('工作統計請求限制中，返回默認值');
+      return {
+        totalWorkLogs: 0,
+        totalHours: 0,
+        avgHoursPerDay: 0,
+        topCategories: []
+      };
+    }
+    throw error;
+  }
+};
 
 // ----- 儀表板 API -----
 export const fetchDashboardStats = async () => {
-  const response = await api.get('/stats/dashboard');
-  return response.data;
+  // 檢查快取
+  const cachedData = apiCache.get('dashboardStats');
+  if (cachedData) {
+    console.log('使用快取的儀表板統計數據');
+    return cachedData;
+  }
+  
+  try {
+    // 使用節流控制請求頻率
+    const response = await throttle(
+      'fetchDashboardStats',
+      () => api.get('/stats/dashboard')
+    );
+    
+    // 儲存到快取
+    apiCache.set('dashboardStats', response.data, 60000); // 快取1分鐘
+    
+    return response.data;
+  } catch (error) {
+    // 如果是節流錯誤或429錯誤，返回默認值
+    if (error.message === 'Request throttled' || 
+        (error.response && error.response.status === 429)) {
+      console.warn('儀表板統計請求限制中，返回默認值');
+      return {
+        totalUsers: 0,
+        pendingWorkLogs: 0,
+        unreadNotices: 0
+      };
+    }
+    throw error;
+  }
 };
 
 export default api;
