@@ -1,15 +1,20 @@
 // 位置：frontend/src/components/worklog/WorkLogForm.js
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useWorkLog } from '../../hooks/useWorkLog';
 import { Button, Input, Card } from '../ui';
 import { useAuth } from '../../context/AuthContext';
-import { fetchLocations, fetchWorkCategories, fetchProducts } from '../../utils/api';
-import Papa from 'papaparse';
-import { createWorkLog, searchWorkLogs, uploadCSV } from '../utils/api';
+import { 
+  fetchLocationsByArea, 
+  fetchWorkCategories, 
+  fetchProducts, 
+  createWorkLog, 
+  searchWorkLogs, 
+  uploadCSV 
+} from '../../utils/api';
 
 const WorkLogForm = () => {
   const { user } = useAuth();
-  const { submitWorkLog, submitCSV, fetchWorkLogs, isLoading, error } = useWorkLog();
+  const { submitWorkLog, submitCSV, isLoading, error } = useWorkLog();
   
   // 基本表單數據
   const [workLog, setWorkLog] = useState({
@@ -50,7 +55,30 @@ const WorkLogForm = () => {
   const [csvError, setCsvError] = useState(null);
   const [csvSuccess, setCsvSuccess] = useState(null);
 
-  // 修改載入位置資料的方法
+  // 計算剩餘工作時數的函數
+  const calculateRemainingHours = useCallback((logs) => {
+    let totalMinutes = 0;
+    
+    logs.forEach(log => {
+      const startTime = log.start_time.split(':');
+      const endTime = log.end_time.split(':');
+      
+      const startMinutes = parseInt(startTime[0]) * 60 + parseInt(startTime[1]);
+      const endMinutes = parseInt(endTime[0]) * 60 + parseInt(endTime[1]);
+      
+      // 排除午休時間
+      if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
+        totalMinutes += (endMinutes - startMinutes - 60);
+      } else {
+        totalMinutes += (endMinutes - startMinutes);
+      }
+    });
+    
+    const remainingMinutes = 480 - totalMinutes;
+    return Math.max(0, remainingMinutes / 60).toFixed(2);
+  }, []);
+
+  // 載入位置資料的方法
   const loadLocations = useCallback(async () => {
     try {
       const data = await fetchLocationsByArea();
@@ -81,7 +109,70 @@ const WorkLogForm = () => {
     }
   }, []);
 
-  // 修改區域選擇處理函數
+  // 載入工作類別
+  const loadWorkCategories = useCallback(async () => {
+    try {
+      const categoryData = await fetchWorkCategories();
+      setWorkCategories(categoryData);
+    } catch (err) {
+      console.error('載入工作類別資料失敗', err);
+    }
+  }, []);
+
+  // 載入產品資料
+  const loadProducts = useCallback(async () => {
+    try {
+      const productData = await fetchProducts();
+      setProducts(productData);
+    } catch (err) {
+      console.error('載入產品資料失敗', err);
+    }
+  }, []);
+
+  // 載入今日工作日誌
+  const loadTodayWorkLogs = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const logs = await searchWorkLogs({ 
+        startDate: today, 
+        endDate: today 
+      });
+      
+      setTodayWorkLogs(logs);
+      
+      // 計算剩餘工作時數
+      const remaining = calculateRemainingHours(logs);
+      setRemainingHours(remaining);
+      
+      // 設置下一個開始時間
+      if (logs.length > 0) {
+        const sortedLogs = [...logs].sort((a, b) => 
+          new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
+        );
+        
+        const lastLog = sortedLogs[sortedLogs.length - 1];
+        
+        if (lastLog && lastLog.end_time) {
+          const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
+          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+        }
+      } else {
+        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+      }
+    } catch (err) {
+      console.error('載入今日工作日誌失敗', err);
+    }
+  }, [calculateRemainingHours]);
+
+  // 載入初始資料
+  useEffect(() => {
+    loadLocations();
+    loadWorkCategories();
+    loadProducts();
+    loadTodayWorkLogs();
+  }, [loadLocations, loadWorkCategories, loadProducts, loadTodayWorkLogs]);
+
+  // 區域選擇處理函數
   const handleAreaSelect = (e) => {
     const area = e.target.value;
     setSelectedArea(area);
@@ -112,94 +203,6 @@ const WorkLogForm = () => {
       }
     }
   };
-
-  const loadWorkCategories = useCallback(async () => {
-    try {
-      const categoryData = await fetchWorkCategories();
-      setWorkCategories(categoryData);
-    } catch (err) {
-      console.error('載入工作類別資料失敗', err);
-    }
-  }, []);
-
-  const loadProducts = useCallback(async () => {
-    try {
-      const productData = await fetchProducts();
-      setProducts(productData);
-    } catch (err) {
-      console.error('載入產品資料失敗', err);
-    }
-  }, []);
-
-  // 計算剩餘工作時數的記憶化函數
-  const calculateRemainingHours = useCallback((logs) => {
-    let totalMinutes = 0;
-    
-    logs.forEach(log => {
-      const startTime = log.start_time.split(':');
-      const endTime = log.end_time.split(':');
-      
-      const startMinutes = parseInt(startTime[0]) * 60 + parseInt(startTime[1]);
-      const endMinutes = parseInt(endTime[0]) * 60 + parseInt(endTime[1]);
-      
-      // 排除午休時間
-      if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
-        totalMinutes += (endMinutes - startMinutes - 60);
-      } else {
-        totalMinutes += (endMinutes - startMinutes);
-      }
-    });
-    
-    const remainingMinutes = 480 - totalMinutes;
-    return Math.max(0, remainingMinutes / 60).toFixed(2);
-  }, []);
-
-  // 載入資料的副作用
-  useEffect(() => {
-    loadLocations();
-    loadWorkCategories();
-    loadProducts();
-  }, [loadLocations, loadWorkCategories, loadProducts]);
-
-  // 使用 useCallback 包裝載入今日工作日誌的函數
-  const loadTodayWorkLogs = useCallback(async () => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const logs = await fetchWorkLogs({ 
-        startDate: today, 
-        endDate: today 
-      });
-      
-      setTodayWorkLogs(logs);
-      
-      // 計算剩餘工作時數
-      const remaining = calculateRemainingHours(logs);
-      setRemainingHours(remaining);
-      
-      // 設置下一個開始時間的邏輯保持不變
-      if (logs.length > 0) {
-        const sortedLogs = [...logs].sort((a, b) => 
-          new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
-        );
-        
-        const lastLog = sortedLogs[sortedLogs.length - 1];
-        
-        if (lastLog && lastLog.end_time) {
-          const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
-          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-        }
-      } else {
-        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-      }
-    } catch (err) {
-      console.error('載入今日工作日誌失敗', err);
-    }
-  }, [calculateRemainingHours, fetchWorkLogs]); // 添加依賴
-
-  // 使用 useEffect 載入今日工作日誌
-  useEffect(() => {
-    loadTodayWorkLogs();
-  }, [loadTodayWorkLogs]);
 
   // 處理工作類別選擇
   const handleWorkCategoryChange = (e) => {
@@ -285,6 +288,9 @@ const WorkLogForm = () => {
       setCsvSuccess(result.message || '成功上傳 CSV 文件');
       setCsvFile(null);
       setCsvError(null);
+      
+      // 重新載入今日工作日誌
+      loadTodayWorkLogs();
     } catch (err) {
       setCsvError(err.response?.data?.message || 'CSV 上傳失敗');
     }
@@ -352,18 +358,10 @@ const WorkLogForm = () => {
     }
     
     try {
-      await submitWorkLog(workLog);
+      await createWorkLog(workLog);
       
       // 重新載入今日日誌
-      const today = new Date().toISOString().split('T')[0];
-      const logs = await fetchWorkLogs({ 
-        startDate: today, 
-        endDate: today 
-      });
-      
-      setTodayWorkLogs(logs);
-      const remaining = calculateRemainingHours(logs);
-      setRemainingHours(remaining);
+      await loadTodayWorkLogs();
       
       // 重置表單，保留位置和工作類別
       setWorkLog(prev => ({

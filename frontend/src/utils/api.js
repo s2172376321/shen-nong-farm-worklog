@@ -835,7 +835,7 @@ export const fetchProducts = async () => {
   return [];
 };
 
-// 修改 fetchLocationsByArea 函數
+// 修正 fetchLocationsByArea 函數
 export const fetchLocationsByArea = async () => {
   // 檢查快取
   const cachedData = apiCache.get('locationsByArea');
