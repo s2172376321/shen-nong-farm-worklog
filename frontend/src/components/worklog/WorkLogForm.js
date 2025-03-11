@@ -5,6 +5,7 @@ import { Button, Input, Card } from '../ui';
 import { useAuth } from '../../context/AuthContext';
 import { fetchLocations, fetchWorkCategories, fetchProducts } from '../../utils/api';
 import Papa from 'papaparse';
+import { createWorkLog, searchWorkLogs, uploadCSV } from '../utils/api';
 
 const WorkLogForm = () => {
   const { user } = useAuth();
@@ -28,7 +29,7 @@ const WorkLogForm = () => {
   
   // 相關數據
   const [areas, setAreas] = useState([]);
-  const [positions, setPositions] = useState([]);
+  const [locationsByArea, setLocationsByArea] = useState({}); // 儲存每個區域下的位置清單
   const [workCategories, setWorkCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
@@ -49,16 +50,68 @@ const WorkLogForm = () => {
   const [csvError, setCsvError] = useState(null);
   const [csvSuccess, setCsvSuccess] = useState(null);
 
-  // 使用 useCallback 和 useMemo 優化效能和避免不必要的重渲染
+  // 修改載入位置資料的方法
   const loadLocations = useCallback(async () => {
     try {
-      const locationData = await fetchLocations();
-      const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))];
-      setAreas(uniqueAreas);
+      const data = await fetchLocationsByArea();
+      if (data && Array.isArray(data)) {
+        setAreas(data.map(item => item.areaName));
+        
+        // 建立區域-位置對應表
+        const locationMap = {};
+        data.forEach(area => {
+          locationMap[area.areaName] = area.locations || [];
+        });
+        setLocationsByArea(locationMap);
+      }
     } catch (err) {
       console.error('載入位置資料失敗', err);
+      // 設置默認值以避免UI錯誤
+      setAreas(['小空地', '大空地', '河床邊']);
+      setLocationsByArea({
+        '小空地': [
+          { locationCode: '01', locationName: '小空地01' },
+          { locationCode: '02', locationName: '小空地02' }
+        ],
+        '大空地': [
+          { locationCode: '01', locationName: '大空地01' }
+        ],
+        '河床邊': []
+      });
     }
   }, []);
+
+  // 修改區域選擇處理函數
+  const handleAreaSelect = (e) => {
+    const area = e.target.value;
+    setSelectedArea(area);
+    
+    // 清除已選位置數據
+    setWorkLog(prev => ({ 
+      ...prev, 
+      location_code: '',
+      position_code: '',
+      position_name: ''
+    }));
+  };
+  
+  // 處理位置選擇
+  const handlePositionChange = (e) => {
+    const positionCode = e.target.value;
+    
+    if (selectedArea && locationsByArea[selectedArea]) {
+      const selectedPosition = locationsByArea[selectedArea].find(p => p.locationCode === positionCode);
+      
+      if (selectedPosition) {
+        setWorkLog(prev => ({
+          ...prev,
+          position_code: positionCode,
+          position_name: selectedPosition.locationName,
+          location_code: selectedArea // 使用區域作為位置代碼
+        }));
+      }
+    }
+  };
 
   const loadWorkCategories = useCallback(async () => {
     try {
@@ -108,74 +161,45 @@ const WorkLogForm = () => {
     loadProducts();
   }, [loadLocations, loadWorkCategories, loadProducts]);
 
-// 使用 useCallback 包裝載入今日工作日誌的函數
-const loadTodayWorkLogs = useCallback(async () => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const logs = await fetchWorkLogs({ 
-      startDate: today, 
-      endDate: today 
-    });
-    
-    setTodayWorkLogs(logs);
-    
-    // 計算剩餘工作時數
-    const remaining = calculateRemainingHours(logs);
-    setRemainingHours(remaining);
-    
-    // 設置下一個開始時間的邏輯保持不變
-    if (logs.length > 0) {
-      const sortedLogs = [...logs].sort((a, b) => 
-        new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
-      );
+  // 使用 useCallback 包裝載入今日工作日誌的函數
+  const loadTodayWorkLogs = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const logs = await fetchWorkLogs({ 
+        startDate: today, 
+        endDate: today 
+      });
       
-      const lastLog = sortedLogs[sortedLogs.length - 1];
+      setTodayWorkLogs(logs);
       
-      if (lastLog && lastLog.end_time) {
-        const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
-        setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+      // 計算剩餘工作時數
+      const remaining = calculateRemainingHours(logs);
+      setRemainingHours(remaining);
+      
+      // 設置下一個開始時間的邏輯保持不變
+      if (logs.length > 0) {
+        const sortedLogs = [...logs].sort((a, b) => 
+          new Date(`2000-01-01T${a.end_time}`) - new Date(`2000-01-01T${b.end_time}`)
+        );
+        
+        const lastLog = sortedLogs[sortedLogs.length - 1];
+        
+        if (lastLog && lastLog.end_time) {
+          const nextStartTime = lastLog.end_time === '12:00' ? '13:00' : lastLog.end_time;
+          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+        }
+      } else {
+        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
       }
-    } else {
-      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+    } catch (err) {
+      console.error('載入今日工作日誌失敗', err);
     }
-  } catch (err) {
-    console.error('載入今日工作日誌失敗', err);
-  }
-}, []); // 空依賴數組
+  }, [calculateRemainingHours, fetchWorkLogs]); // 添加依賴
 
-// 使用 useEffect 載入今日工作日誌
-useEffect(() => {
-  loadTodayWorkLogs();
-}, [loadTodayWorkLogs]);
-
-
-  // 處理區域選擇
-  const handleAreaChange = (e) => {
-    const selectedArea = e.target.value;
-    setSelectedArea(selectedArea);
-    
-    // 依區域篩選位置
-    const filteredPositions = areas.filter(item => item.區域名稱 === selectedArea);
-    setPositions(filteredPositions);
-    
-    // 清除已選位置
-    setWorkLog(prev => ({ ...prev, position_code: '', position_name: '' }));
-  };
-
-  // 處理位置選擇
-  const handlePositionChange = (e) => {
-    const positionCode = e.target.value;
-    const selectedPosition = positions.find(p => p.位置代號 === positionCode);
-    
-    if (selectedPosition) {
-      setWorkLog(prev => ({
-        ...prev,
-        position_code: positionCode,
-        position_name: selectedPosition.位置名稱,
-        location_code: selectedPosition.區域代號
-      }));
-    }
-  };
+  // 使用 useEffect 載入今日工作日誌
+  useEffect(() => {
+    loadTodayWorkLogs();
+  }, [loadTodayWorkLogs]);
 
   // 處理工作類別選擇
   const handleWorkCategoryChange = (e) => {
@@ -457,13 +481,13 @@ useEffect(() => {
               </div>
             )}
 
-            {/* 位置選擇 */}
+            {/* 兩極位置選擇 - 區域和位置選擇 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block mb-2">區域</label>
                 <select
                   value={selectedArea}
-                  onChange={handleAreaChange}
+                  onChange={handleAreaSelect}
                   className="w-full bg-gray-700 text-white p-2 rounded-lg"
                   required
                 >
@@ -485,9 +509,10 @@ useEffect(() => {
                   disabled={!selectedArea}
                 >
                   <option value="">選擇位置</option>
-                  {positions.map(pos => (
-                    <option key={pos.位置代號} value={pos.位置代號}>
-                      {pos.位置名稱}
+                  {selectedArea && locationsByArea[selectedArea] && 
+                    locationsByArea[selectedArea].map(location => (
+                    <option key={location.locationCode} value={location.locationCode}>
+                      {location.locationName}
                     </option>
                   ))}
                 </select>
