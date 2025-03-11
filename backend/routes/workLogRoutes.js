@@ -8,6 +8,7 @@ const { validateWorkLog } = require('../middleware/validationMiddleware');
 // 創建工作日誌
 router.post('/', 
   authMiddleware, 
+  validateWorkLog, 
   WorkLogController.createWorkLog
 );
 
@@ -17,17 +18,17 @@ router.get('/search',
   WorkLogController.searchWorkLogs
 );
 
-// 獲取今日工作總時數
-router.get('/today-hours',
-  authMiddleware,
-  WorkLogController.getTodayTotalHours
-);
-
 // 管理員覆核工作日誌
 router.patch('/:workLogId/review', 
   authMiddleware, 
   authMiddleware.adminOnly, 
   WorkLogController.reviewWorkLog
+);
+
+// 獲取今日工時
+router.get('/today-hour', 
+  authMiddleware, 
+  WorkLogController.getTodayHour
 );
 
 module.exports = router;
