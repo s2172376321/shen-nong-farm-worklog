@@ -1,7 +1,6 @@
-// 位置：frontend/src/components/worklog/WorkLogStats.js
 import React, { useState, useEffect } from 'react';
 import { Card } from '../ui';
-import { fetchTodayHours } from '../../utils/api';
+import { getTodayHour } from '../../utils/api';
 
 const WorkLogStats = () => {
   const [stats, setStats] = useState({
@@ -15,18 +14,22 @@ const WorkLogStats = () => {
   useEffect(() => {
     const loadStats = async () => {
       try {
-        const data = await fetchTodayHours();
-        setStats(data);
+        const data = await getTodayHour();
+        setStats({
+          totalHours: parseFloat(data.total_hours),
+          remainingHours: parseFloat(data.remaining_hours),
+          isComplete: data.is_complete
+        });
         setIsLoading(false);
       } catch (err) {
-        setError('載入工作統計資訊失敗');
+        console.error('載入工作統計資訊失敗:', err);
+        setError(`載入工作統計資訊失敗: ${err.response?.data?.message || '請稍後再試'}`);
         setIsLoading(false);
       }
     };
 
     loadStats();
     
-    // 每5分鐘重新載入一次統計資料
     const interval = setInterval(loadStats, 5 * 60 * 1000);
     
     return () => clearInterval(interval);
