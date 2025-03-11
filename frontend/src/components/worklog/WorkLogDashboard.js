@@ -27,13 +27,16 @@ const WorkLogDashboard = () => {
   // 載入工作日誌
   useEffect(() => {
     const loadWorkLogs = async () => {
+      setIsLoading(true);
       try {
         const data = await searchWorkLogs(filters);
         setWorkLogs(data);
-        setIsLoading(false);
+        setError(null);
       } catch (err) {
         console.error('載入工作日誌失敗:', err);
-        setError('載入工作日誌失敗');
+        setError('載入工作日誌失敗，請稍後再試');
+        setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
+      } finally {
         setIsLoading(false);
       }
     };
@@ -45,18 +48,14 @@ const WorkLogDashboard = () => {
   useEffect(() => {
     const loadFilterData = async () => {
       setIsLoading(true);
+      
+      // 單獨處理每個API呼叫，確保一個失敗不會影響另一個
       try {
-        // 使用 Promise.allSettled 而非 Promise.all，確保一個請求失敗不會影響另一個
-        const [locationsResult, categoriesResult] = await Promise.allSettled([
-          fetchLocationsByArea(),
-          fetchWorkCategories()
-        ]);
-        
-        // 處理位置數據
-        if (locationsResult.status === 'fulfilled') {
-          setAreaData(locationsResult.value);
-        } else {
-          console.warn('載入位置資料失敗:', locationsResult.reason);
+        try {
+          const locationData = await fetchLocationsByArea();
+          setAreaData(locationData);
+        } catch (locError) {
+          console.error('載入位置資料失敗:', locError);
           // 設置默認數據
           setAreaData([
             { areaName: 'A區', locations: [] },
@@ -65,11 +64,11 @@ const WorkLogDashboard = () => {
           ]);
         }
         
-        // 處理工作類別數據
-        if (categoriesResult.status === 'fulfilled') {
-          setWorkCategories(categoriesResult.value);
-        } else {
-          console.warn('載入工作類別資料失敗:', categoriesResult.reason);
+        try {
+          const categoryData = await fetchWorkCategories();
+          setWorkCategories(categoryData);
+        } catch (catError) {
+          console.error('載入工作類別資料失敗:', catError);
           // 設置默認數據
           setWorkCategories([
             { 工作內容代號: '1', 工作內容名稱: '整地' },
@@ -81,19 +80,24 @@ const WorkLogDashboard = () => {
         }
       } catch (err) {
         console.error('載入過濾資料失敗', err);
-        // 即使加載失敗，也設置一些默認數據，以便UI可以正常顯示
-        setAreaData([
-          { areaName: 'A區', locations: [] },
-          { areaName: 'B區', locations: [] },
-          { areaName: 'C區', locations: [] }
-        ]);
-        setWorkCategories([
-          { 工作內容代號: '1', 工作內容名稱: '整地' },
-          { 工作內容代號: '2', 工作內容名稱: '種植' },
-          { 工作內容代號: '3', 工作內容名稱: '施肥' },
-          { 工作內容代號: '4', 工作內容名稱: '澆水' },
-          { 工作內容代號: '5', 工作內容名稱: '收成' }
-        ]);
+        // 即使整個 try-catch 區塊失敗，也確保有默認數據
+        if (areaData.length === 0) {
+          setAreaData([
+            { areaName: 'A區', locations: [] },
+            { areaName: 'B區', locations: [] },
+            { areaName: 'C區', locations: [] }
+          ]);
+        }
+        
+        if (workCategories.length === 0) {
+          setWorkCategories([
+            { 工作內容代號: '1', 工作內容名稱: '整地' },
+            { 工作內容代號: '2', 工作內容名稱: '種植' },
+            { 工作內容代號: '3', 工作內容名稱: '施肥' },
+            { 工作內容代號: '4', 工作內容名稱: '澆水' },
+            { 工作內容代號: '5', 工作內容名稱: '收成' }
+          ]);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -110,10 +114,12 @@ const WorkLogDashboard = () => {
 
   // 處理位置選擇
   const handleLocationSelect = (locationData) => {
+    if (!locationData) return;
+    
     setFilters(prev => ({
       ...prev, 
-      areaName: locationData.areaName,
-      location_code: locationData.locationCode
+      areaName: locationData.areaName || '',
+      location_code: locationData.locationCode || ''
     }));
   };
 
@@ -125,8 +131,9 @@ const WorkLogDashboard = () => {
       setWorkLogs(data);
       setError(null);
     } catch (err) {
-      console.error('載入工作日誌失敗:', err);
-      setError('載入工作日誌失敗');
+      console.error('刷新工作日誌失敗:', err);
+      setError('刷新工作日誌失敗，請稍後再試');
+      // 保留原有數據，不進行清空
     } finally {
       setIsLoading(false);
     }
@@ -189,7 +196,10 @@ const WorkLogDashboard = () => {
             
             {/* 使用新的位置選擇器組件 */}
             <div className="md:col-span-1">
-              <LocationSelector onLocationSelect={handleLocationSelect} />
+              <LocationSelector 
+                onLocationSelect={handleLocationSelect} 
+                areaData={areaData}
+              />
             </div>
             
             <div>
@@ -209,6 +219,14 @@ const WorkLogDashboard = () => {
               </select>
             </div>
           </div>
+          <div className="mt-4 flex justify-end">
+            <Button 
+              onClick={refreshWorkLogs}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              重新整理
+            </Button>
+          </div>
         </Card>
 
         {/* 工作日誌列表 */}
@@ -220,7 +238,10 @@ const WorkLogDashboard = () => {
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
             </div>
           ) : error ? (
-            <div className="p-8 text-center text-red-400">{error}</div>
+            <div className="p-8 text-center">
+              <p className="text-red-400 mb-4">{error}</p>
+              <Button onClick={refreshWorkLogs}>重試</Button>
+            </div>
           ) : workLogs.length === 0 ? (
             <div className="p-8 text-center text-gray-400">
               <p>沒有找到符合條件的工作日誌</p>
@@ -248,16 +269,23 @@ const WorkLogDashboard = () => {
                       if (log.start_time && log.end_time) {
                         const startParts = log.start_time.split(':');
                         const endParts = log.end_time.split(':');
-                        const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
-                        const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
-                        durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                        
+                        if (startParts.length === 2 && endParts.length === 2) {
+                          const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
+                          const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+                          
+                          if (!isNaN(startMinutes) && !isNaN(endMinutes) && endMinutes >= startMinutes) {
+                            durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                          }
+                        }
                       }
                     } catch (e) {
                       console.warn("時間計算錯誤:", e);
                     }
                     
                     return (
-                      <tr key={log.id ? log.id.toString() : `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>                        <td className="p-3">
+                      <tr key={log.id ? log.id.toString() : `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
+                        <td className="p-3">
                           {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
                         </td>
                         <td className="p-3">
