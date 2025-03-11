@@ -98,38 +98,37 @@ export const useWorkLog = () => {
     }
   }, []);
 
-// 獲取工作日誌
-const fetchWorkLogs = useCallback(async (filters) => {
-  setIsLoading(true);
-  setError(null);
+  // 獲取工作日誌
+  const fetchWorkLogs = useCallback(async (filters) => {
+    setIsLoading(true);
+    setError(null);
 
-  // 為篩選器創建一個唯一的快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+    // 為篩選器創建一個唯一的快取鍵
+    const cacheKey = `workLogs:${JSON.stringify(filters)}`;
 
-  try {
-    const response = await throttleManager.throttle(
-      cacheKey, 
-      () => searchWorkLogs(filters),
-      5000 // 5秒內只允許一次相同請求
-    );
-    
-    setIsLoading(false);
-    return response;
-  } catch (err) {
-    // 特殊處理節流錯誤
-    if (err.message === 'Request throttled') {
-      console.warn('工作日誌請求過於頻繁');
-      setError('請稍後再試');
-    } else {
-      const errorMessage = err.response?.data?.message || '查詢工作日誌失敗';
-      setError(errorMessage);
+    try {
+      const response = await throttleManager.throttle(
+        cacheKey, 
+        () => searchWorkLogs(filters),
+        5000 // 5秒內只允許一次相同請求
+      );
+      
+      setIsLoading(false);
+      return response;
+    } catch (err) {
+      // 特殊處理節流錯誤
+      if (err.message === 'Request throttled') {
+        console.warn('工作日誌請求過於頻繁');
+        setError('請稍後再試');
+      } else {
+        const errorMessage = err.response?.data?.message || '查詢工作日誌失敗';
+        setError(errorMessage);
+      }
+      
+      setIsLoading(false);
+      throw err;
     }
-    
-    setIsLoading(false);
-    throw err;
-  }
-}, []);
-
+  }, []);
 
   return {
     submitWorkLog,
