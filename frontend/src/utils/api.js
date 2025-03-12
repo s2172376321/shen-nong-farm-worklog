@@ -43,15 +43,15 @@ const throttle = (key, fn, delay = 3000) => {
   // 檢查是否存在並且在冷卻期
   if (throttleMap.has(key)) {
     const { timestamp, rejectCount } = throttleMap.get(key);
+    const timeSince = now - timestamp;
     
-    // 更寬容的條件: 只有連續多次請求才節流
-    if (rejectCount >= 5 && now - timestamp < 1000) {
-      console.warn(`${key} 請求已被節流，請稍後再試`);
-      return Promise.reject(new Error('Request throttled'));
-    }
-    
-    // 如果在冷卻期內，增加拒絕計數，但不立即拒絕
-    if (now - timestamp < delay / 3) {
+    // 如果距離上次請求超過3秒，允許通過
+    if (timeSince > 3000) {
+      console.log(`${key} 請求間隔已超過3秒，允許通過`);
+    } 
+    // 否則記錄重複請求但仍然允許通過
+    else {
+      console.log(`${key} 請求間隔較短 (${timeSince}ms)，但仍允許`);
       throttleMap.set(key, {
         timestamp,
         rejectCount: (rejectCount || 0) + 1
@@ -65,13 +65,9 @@ const throttle = (key, fn, delay = 3000) => {
     rejectCount: 0
   });
   
-  // 設置延遲清除
-  setTimeout(() => {
-    throttleMap.delete(key);
-  }, delay);
-  
   return fn();
 };
+
 
 // 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
