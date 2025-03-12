@@ -231,25 +231,26 @@ const WorkLogController = {
     }
   },
 
-  async getTodayHour(req, res) {
-    try {
-      const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
-      
-      const responseData = {
-        total_hours: totalHours,
-        remaining_hours: (8 - parseFloat(totalHours)).toFixed(2),
-        is_complete: parseFloat(totalHours) >= 8
-      };
+// WorkLogController 中添加或修改此方法
+async getTodayHour(req, res) {
+  try {
+    const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
+    
+    const responseData = {
+      total_hours: totalHours,
+      remaining_hours: (8 - parseFloat(totalHours)).toFixed(2),
+      is_complete: parseFloat(totalHours) >= 8
+    };
 
-      res.json(responseData);
-    } catch (error) {
-      console.error('獲取今日工時失敗:', error);
-      res.status(500).json({ 
-        message: '伺服器錯誤，請稍後再試',
-        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
-      });
-    }
+    res.json(responseData);
+  } catch (error) {
+    console.error('獲取今日工時失敗:', error);
+    res.status(500).json({ 
+      message: '伺服器錯誤，請稍後再試',
+      error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
   }
+}
 };
 
 module.exports = WorkLogController;
