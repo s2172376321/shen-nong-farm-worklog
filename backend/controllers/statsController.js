@@ -13,13 +13,15 @@ const StatsController = {
       const pendingWorkLogsQuery = 'SELECT COUNT(*) as pending_work_logs FROM work_logs WHERE status = $1';
       const pendingWorkLogsResult = await db.query(pendingWorkLogsQuery, ['pending']);
 
-      // 未讀公告數
+      // 未讀公告數 - 修改為計算用戶未讀的
       const unreadNoticesQuery = `
         SELECT COUNT(*) as unread_notices 
-        FROM notices 
-        WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
+        FROM notices n
+        LEFT JOIN notice_reads nr ON n.id = nr.notice_id AND nr.user_id = $1
+        WHERE nr.id IS NULL
+        AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
       `;
-      const unreadNoticesResult = await db.query(unreadNoticesQuery);
+      const unreadNoticesResult = await db.query(unreadNoticesQuery, [req.user.id]);
 
       res.json({
         totalUsers: usersCountResult.rows[0].total_users,

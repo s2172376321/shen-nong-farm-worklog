@@ -31,4 +31,16 @@ router.delete('/:noticeId',
   NoticeController.deleteNotice
 );
 
+// 標記公告為已讀
+router.post('/:noticeId/read', 
+  authMiddleware, 
+  NoticeController.markAsRead
+);
+
+// 獲取未讀公告數量
+router.get('/unread-count', 
+  authMiddleware, 
+  NoticeController.getUnreadCount
+);
+
 module.exports = router;

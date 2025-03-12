@@ -17,6 +17,7 @@ const WorkLogReview = () => {
   useEffect(() => {
     const loadWorkLogs = async () => {
       try {
+        setIsLoading(true);
         const data = await searchWorkLogs({
           status: filter.status,
           startDate: filter.startDate,
@@ -25,11 +26,11 @@ const WorkLogReview = () => {
         setWorkLogs(data);
         setIsLoading(false);
       } catch (err) {
-        setError('载入工作日志失败');
+        setError('載入工作日誌失敗');
         setIsLoading(false);
       }
     };
-
+    
     loadWorkLogs();
   }, [filter]);
 

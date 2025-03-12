@@ -195,84 +195,62 @@ const WorkLogController = {
   },
     
   // 查詢工作日誌
-  async searchWorkLogs(req, res) {
-    const { location, crop, startDate, endDate, format } = req.query;
+// 查詢工作日誌 - 修改版
+async searchWorkLogs(req, res) {
+  const { location, crop, startDate, endDate, status } = req.query;
 
-    try {
-      let query = `
-        SELECT wl.*, u.username 
-        FROM work_logs wl
-        JOIN users u ON wl.user_id = u.id
-        WHERE 1=1
-      `;
-      const values = [];
-      let paramIndex = 1;
+  try {
+    let query = `
+      SELECT wl.*, u.username
+      FROM work_logs wl
+      JOIN users u ON wl.user_id = u.id
+      WHERE 1=1
+    `;
+    const values = [];
+    let paramIndex = 1;
 
-      // 如果不是管理員，只能查看自己的工作日誌
-      if (req.user.role !== 'admin') {
-        query += ` AND wl.user_id = $${paramIndex}`;
-        values.push(req.user.id);
-        paramIndex++;
-      }
-
-      if (location) {
-        query += ` AND wl.location ILIKE $${paramIndex}`;
-        values.push(`%${location}%`);
-        paramIndex++;
-      }
-
-      if (crop) {
-        query += ` AND wl.crop ILIKE $${paramIndex}`;
-        values.push(`%${crop}%`);
-        paramIndex++;
-      }
-
-      if (startDate && endDate) {
-        query += ` AND wl.created_at BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-        values.push(startDate, endDate);
-        paramIndex += 2;
-      }
-
-      query += ' ORDER BY wl.created_at DESC';
-
-      const result = await db.query(query, values);
-      
-      // 如果請求 CSV 格式
-      if (format === 'csv') {
-        const headers = ['id', 'username', 'location', 'crop', 'start_time', 'end_time', 
-                        'work_categories', 'details', 'harvest_quantity', 'status', 'created_at'];
-        
-        // 處理資料為 CSV 格式
-        const csvData = result.rows.map(row => ({
-          id: row.id,
-          username: row.username,
-          location: row.location,
-          crop: row.crop,
-          start_time: row.start_time,
-          end_time: row.end_time,
-          work_categories: Array.isArray(row.work_categories) ? row.work_categories.join('; ') : row.work_categories,
-          details: row.details,
-          harvest_quantity: row.harvest_quantity,
-          status: row.status,
-          created_at: csvUtils.formatDate(row.created_at)
-        }));
-        
-        const csv = csvUtils.convertToCSV(csvData, headers);
-        
-        // 設置 CSV 標頭
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename="work_logs.csv"');
-        return res.send(csv);
-      }
-      
-      // 否則返回 JSON
-      res.json(result.rows);
-    } catch (error) {
-      console.error('查詢工作日誌失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+    // 如果是使用者查詢，只顯示自己的工作日誌
+    if (!req.user.role || req.user.role !== 'admin') {
+      query += ` AND wl.user_id = $${paramIndex}`;
+      values.push(req.user.id);
+      paramIndex++;
     }
-  },
 
+    if (location) {
+      query += ` AND wl.location ILIKE $${paramIndex}`;
+      values.push(`%${location}%`);
+      paramIndex++;
+    }
+
+    if (crop) {
+      query += ` AND wl.crop ILIKE $${paramIndex}`;
+      values.push(`%${crop}%`);
+      paramIndex++;
+    }
+
+    // 添加狀態過濾
+    if (status) {
+      query += ` AND wl.status = $${paramIndex}`;
+      values.push(status);
+      paramIndex++;
+    }
+
+    if (startDate && endDate) {
+      query += ` AND wl.created_at BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+      values.push(startDate, endDate);
+      paramIndex += 2;
+    }
+
+    query += ' ORDER BY wl.created_at DESC';
+
+    const result = await db.query(query, values);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('查詢工作日誌失敗:', error);
+    res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+  }
+},
 
   async uploadCSV(req, res) {
     try {

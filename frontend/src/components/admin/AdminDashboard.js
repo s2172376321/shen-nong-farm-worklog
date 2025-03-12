@@ -1,7 +1,7 @@
 // 位置：frontend/src/components/admin/AdminDashboard.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchDashboardStats } from '../../utils/api';
+import { fetchDashboardStats, getUnreadNoticeCount } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import UserManagement from './UserManagement';
 import WorkLogReview from './WorkLogReview';
@@ -43,7 +43,7 @@ const AdminDashboard = () => {
     },
     {
       title: '公告欄',
-      component: NoticeBoard,
+      component: props => <NoticeBoard {...props} onNoticeRead={handleNoticeRead} />,
       description: '查看所有公告',
       icon: '📰'
     },
@@ -70,6 +70,41 @@ const AdminDashboard = () => {
 
     loadStats();
   }, []);
+
+  // 載入未讀公告數量
+  useEffect(() => {
+    const loadUnreadCount = async () => {
+      try {
+        const response = await getUnreadNoticeCount();
+        setStats(prev => ({
+          ...prev,
+          unreadNotices: response.unreadCount
+        }));
+      } catch (err) {
+        console.error('載入未讀公告數量失敗:', err);
+      }
+    };
+    
+    loadUnreadCount();
+    
+    // 定期更新未讀數量 (每5分鐘)
+    const interval = setInterval(loadUnreadCount, 5 * 60 * 1000);
+    
+    // 清理函數
+    return () => clearInterval(interval);
+  }, []);
+
+  // 當通知被閱讀時更新未讀數量
+  function handleNoticeRead() {
+    getUnreadNoticeCount()
+      .then(response => {
+        setStats(prev => ({
+          ...prev,
+          unreadNotices: response.unreadCount
+        }));
+      })
+      .catch(err => console.error('更新未讀公告數量失敗:', err));
+  }
 
   const handleLogout = () => {
     logout();
@@ -104,6 +139,11 @@ const AdminDashboard = () => {
               >
                 <span className="mr-3">{section.icon}</span>
                 {section.title}
+                {section.title === '公告欄' && stats.unreadNotices > 0 && (
+                  <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                    {stats.unreadNotices}
+                  </span>
+                )}
               </button>
             ))}
             
@@ -142,6 +182,9 @@ const AdminDashboard = () => {
                 <p className="text-2xl text-blue-400">
                   {isLoading ? 'N/A' : stats.unreadNotices}
                 </p>
+                {stats.unreadNotices > 0 && (
+                  <p className="text-xs text-blue-300 mt-1">您有新的未讀公告</p>
+                )}
               </div>
             </div>
             
@@ -177,10 +220,17 @@ const AdminDashboard = () => {
                   className="bg-gray-800 p-6 rounded-lg shadow-md hover:bg-gray-700 transition-all duration-300 cursor-pointer group"
                   onClick={() => setActiveSection(section)}
                 >
-                  <h2 className="text-xl font-semibold mb-4 text-blue-400 group-hover:text-blue-300">
-                    <span className="mr-2">{section.icon}</span>
-                    {section.title}
-                  </h2>
+                  <div className="flex justify-between items-start">
+                    <h2 className="text-xl font-semibold mb-4 text-blue-400 group-hover:text-blue-300">
+                      <span className="mr-2">{section.icon}</span>
+                      {section.title}
+                    </h2>
+                    {section.title === '公告欄' && stats.unreadNotices > 0 && (
+                      <span className="bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                        {stats.unreadNotices}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-gray-400 mb-4">{section.description}</p>
                   <div className="text-right">
                     <button 
@@ -236,6 +286,13 @@ const AdminDashboard = () => {
             >
               <span className="mr-3">{section.icon}</span>
               {section.title}
+              {section.title === '公告欄' && 
+               activeSection.title !== '公告欄' && 
+               stats.unreadNotices > 0 && (
+                <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                  {stats.unreadNotices}
+                </span>
+              )}
             </button>
           ))}
           
@@ -264,7 +321,7 @@ const AdminDashboard = () => {
         <div className="mb-6">
           <h1 className="text-2xl font-bold">{activeSection.title}</h1>
         </div>
-        <ActiveComponent />
+        <ActiveComponent onNoticeRead={handleNoticeRead} />
       </div>
     </div>
   );

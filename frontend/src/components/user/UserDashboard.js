@@ -1,13 +1,16 @@
 // 位置：frontend/src/components/user/UserDashboard.js
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import NoticeBoard from '../common/NoticeBoard';
 import { Card } from '../ui';
+import { getUnreadNoticeCount } from '../../utils/api';
 
 const UserDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [unreadNotices, setUnreadNotices] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
 
   // 導航選項
   const navItems = [
@@ -15,6 +18,36 @@ const UserDashboard = () => {
     { id: 'worklog', label: '填寫工作日誌', icon: '📝', path: '/work-log' },
     { id: 'settings', label: '帳號設定', icon: '⚙️', path: '/settings' }
   ];
+
+  // 載入未讀公告數量
+  useEffect(() => {
+    const loadUnreadCount = async () => {
+      try {
+        const response = await getUnreadNoticeCount();
+        setUnreadNotices(response.unreadCount);
+      } catch (err) {
+        console.error('載入未讀公告數量失敗:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadUnreadCount();
+    
+    // 定期更新未讀數量 (每5分鐘)
+    const interval = setInterval(loadUnreadCount, 5 * 60 * 1000);
+    
+    // 清理函數
+    return () => clearInterval(interval);
+  }, []);
+
+  // 當NoticeBoard標記公告為已讀時更新未讀數量
+  const handleNoticeRead = () => {
+    // 重新獲取未讀數量
+    getUnreadNoticeCount()
+      .then(response => setUnreadNotices(response.unreadCount))
+      .catch(err => console.error('更新未讀公告數量失敗:', err));
+  };
 
   const handleLogout = () => {
     logout();
@@ -47,6 +80,11 @@ const UserDashboard = () => {
               >
                 <span className="mr-3">{item.icon}</span>
                 {item.label}
+                {item.id === 'notices' && unreadNotices > 0 && (
+                  <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
+                    {unreadNotices}
+                  </span>
+                )}
               </Link>
             ))}
             
@@ -76,7 +114,14 @@ const UserDashboard = () => {
             </Card>
             <Card className="p-4">
               <h3 className="text-lg font-semibold mb-2">未讀公告</h3>
-              <p className="text-2xl text-blue-400">3</p>
+              {isLoading ? (
+                <div className="animate-pulse h-8 bg-gray-700 rounded"></div>
+              ) : (
+                <p className="text-2xl text-blue-400">{unreadNotices}</p>
+              )}
+              {unreadNotices > 0 && (
+                <p className="text-xs text-blue-300 mt-1">您有新的公告，請查看</p>
+              )}
             </Card>
           </div>
           
@@ -84,7 +129,10 @@ const UserDashboard = () => {
             <div className="md:col-span-2">
               <Card className="p-4">
                 <h2 className="text-xl font-semibold mb-4">近期公告</h2>
-                <NoticeBoard preview={true} />
+                <NoticeBoard 
+                  preview={true} 
+                  onNoticeRead={handleNoticeRead}
+                />
                 <div className="mt-4 text-right">
                   <Link to="/notices" className="text-blue-400 hover:text-blue-300">
                     查看全部公告 →

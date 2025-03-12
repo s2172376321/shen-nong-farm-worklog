@@ -1,8 +1,9 @@
 // 位置：frontend/src/components/common/NoticeBoard.js
 import React, { useState, useEffect } from 'react';
-import { fetchNotices } from '../../utils/api';
+import { fetchNotices, markNoticeAsRead } from '../../utils/api';
+import { Card } from '../ui';
 
-const NoticeBoard = ({ preview = false }) => {
+const NoticeBoard = ({ preview = false, onNoticeRead }) => {
   const [notices, setNotices] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -21,6 +22,30 @@ const NoticeBoard = ({ preview = false }) => {
 
     loadNotices();
   }, []);
+
+  // 處理閱讀公告
+  const handleReadNotice = async (noticeId) => {
+    try {
+      // 先在介面上標記為已讀
+      setNotices(prevNotices => 
+        prevNotices.map(notice => 
+          notice.id === noticeId 
+            ? { ...notice, is_read: true } 
+            : notice
+        )
+      );
+      
+      // 呼叫 API 標記為已讀
+      await markNoticeAsRead(noticeId);
+      
+      // 通知父組件更新未讀數量
+      if (onNoticeRead) {
+        onNoticeRead();
+      }
+    } catch (err) {
+      console.error('標記公告已讀失敗:', err);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -50,11 +75,27 @@ const NoticeBoard = ({ preview = false }) => {
       ) : (
         <div className="space-y-4">
           {displayNotices.map(notice => (
-            <div 
+            <Card 
               key={notice.id} 
-              className="bg-gray-800 p-4 rounded-lg shadow-md"
+              className={`p-4 cursor-pointer transition-all duration-200 
+                ${notice.is_read ? 'bg-gray-800' : 'bg-gray-700 border-l-4 border-blue-500'}
+              `}
+              onClick={() => !notice.is_read && handleReadNotice(notice.id)}
             >
-              <h2 className="text-xl font-semibold mb-2">{notice.title}</h2>
+              <div className="flex justify-between items-start">
+                <h2 className="text-xl font-semibold mb-2">
+                  {!notice.is_read && (
+                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                  )}
+                  {notice.title}
+                </h2>
+                {!notice.is_read && (
+                  <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">
+                    未讀
+                  </span>
+                )}
+              </div>
+              
               <p className="text-gray-300">
                 {preview 
                   ? notice.content.length > 100 
@@ -66,7 +107,7 @@ const NoticeBoard = ({ preview = false }) => {
               <div className="text-sm text-gray-500 mt-2">
                 {new Date(notice.created_at).toLocaleDateString()}
               </div>
-            </div>
+            </Card>
           ))}
         </div>
       )}
