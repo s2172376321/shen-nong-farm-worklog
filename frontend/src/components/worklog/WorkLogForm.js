@@ -71,23 +71,27 @@ const WorkLogForm = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // 加載位置數據
-  const loadLocations = useCallback(async () => {
-    try {
-      const locationData = await fetchLocations();
-      if (Array.isArray(locationData)) {
-        // 提取唯一的區域名稱
-        const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
-        setAreas(uniqueAreas);
-      } else {
-        console.error('位置資料格式不正確', locationData);
-        setAreas([]);
-      }
-    } catch (err) {
-      console.error('載入位置資料失敗', err);
+// 加載位置數據
+const loadLocations = useCallback(async () => {
+  try {
+    const locationData = await fetchLocations();
+    if (Array.isArray(locationData)) {
+      // 提取唯一的區域名稱
+      const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
+      setAreas(uniqueAreas);
+      // 設置所有位置數據
+      setPositions(locationData); // 這行是關鍵
+    } else {
+      console.error('位置資料格式不正確', locationData);
       setAreas([]);
+      setPositions([]);
     }
-  }, []);
+  } catch (err) {
+    console.error('載入位置資料失敗', err);
+    setAreas([]);
+    setPositions([]);
+  }
+}, []);
 
   // 加載工作類別
   const loadWorkCategories = useCallback(async () => {
