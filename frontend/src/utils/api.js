@@ -107,9 +107,22 @@ api.interceptors.response.use(
       message: error.message
     });
     
+    // 處理特定錯誤類型
+    if (error.response && error.response.status === 401) {
+      // 處理未授權錯誤，可能是token過期
+      console.warn('授權已過期或無效，將重定向到登入頁面');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+      return Promise.reject(new Error('認證已過期，請重新登入'));
+    }
+    
     return Promise.reject(error);
   }
 );
+
+
+
 
 // ----- WebSocket API -----
 // WebSocket 連接類
