@@ -335,30 +335,95 @@ export const logout = () => {
 
 // ----- 工作日誌 API -----
 export const createWorkLog = async (workLogData) => {
-  const formattedData = {
-    location_code: workLogData.location_code,
-    position_code: workLogData.position_code,
-    position_name: workLogData.position_name,
-    work_category_code: workLogData.work_category_code,
-    work_category_name: workLogData.work_category_name,
-    start_time: workLogData.startTime,
-    end_time: workLogData.endTime,
-    details: workLogData.details,
-    harvest_quantity: workLogData.harvestQuantity || 0,
-    product_id: workLogData.product_id || null,
-    product_name: workLogData.product_name || null,
-    product_quantity: workLogData.product_quantity || 0
-  };
-  
-  const response = await api.post('/work-logs', formattedData);
-  
-  // 創建日誌後清除相關快取
-  apiCache.clear('workLogs');
-  apiCache.clear('workStats');
-  apiCache.clear('todayHour');
-  
-  return response.data;
+  try {
+    console.log('準備提交工作日誌數據:', workLogData);
+
+    // 檢查必填欄位
+    if (!workLogData.startTime && !workLogData.start_time) {
+      throw new Error('缺少開始時間');
+    }
+    if (!workLogData.endTime && !workLogData.end_time) {
+      throw new Error('缺少結束時間');
+    }
+    
+    // 確保至少有位置或位置名稱
+    if (!workLogData.location && !workLogData.position_name) {
+      throw new Error('缺少位置資訊');
+    }
+    
+    // 確保至少有作物或工作類別名稱
+    if (!workLogData.crop && !workLogData.work_category_name) {
+      throw new Error('缺少作物或工作類別資訊');
+    }
+
+    // 直接使用原始數據並添加適當的默認值
+    // 不進行欄位重命名，避免在轉換過程中丟失數據
+    const payload = {
+      ...workLogData,
+      // 確保必要欄位總是有值
+      location: workLogData.location || workLogData.position_name || '',
+      crop: workLogData.crop || workLogData.work_category_name || '',
+      start_time: workLogData.startTime || workLogData.start_time || '',
+      end_time: workLogData.endTime || workLogData.end_time || '',
+      harvest_quantity: workLogData.harvestQuantity || workLogData.harvest_quantity || 0,
+      details: workLogData.details || ''
+    };
+    
+    // 顯示完整的發送數據，方便調試
+    console.log('最終發送到後端的數據:', JSON.stringify(payload, null, 2));
+    
+    // 增加超時時間處理大請求
+    const response = await api.post('/work-logs', payload, {
+      timeout: 10000 // 10秒超時
+    });
+    
+    console.log('工作日誌提交成功, 響應:', response.data);
+    
+    // 創建日誌後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear('todayHour');
+    
+    return response.data;
+  } catch (error) {
+    console.error('提交工作日誌錯誤:', error);
+    
+    // 檢查錯誤類型並提供更好的錯誤訊息
+    let userMessage = '提交工作日誌失敗';
+    
+    if (error.response) {
+      // 服務器回應了錯誤
+      console.error('服務器錯誤數據:', error.response.data);
+      
+      userMessage = error.response.data?.message || userMessage;
+      
+      if (error.response.status === 400) {
+        userMessage = `提交數據格式有誤: ${error.response.data?.details || userMessage}`;
+      } else if (error.response.status === 401) {
+        userMessage = '您的登入已過期，請重新登入';
+      } else if (error.response.status === 500) {
+        userMessage = '伺服器內部錯誤，請稍後再試';
+      }
+    } else if (error.request) {
+      // 請求已發送但沒有回應
+      userMessage = '無法連接到伺服器，請檢查網路連接';
+    } else {
+      // 請求設置時出現問題
+      userMessage = error.message || userMessage;
+    }
+    
+    // 包裝錯誤信息
+    const enhancedError = {
+      ...error,
+      userMessage,
+      originalMessage: error.message
+    };
+    
+    throw enhancedError;
+  }
 };
+
+
 
 // CSV 上傳工作日誌
 export const uploadCSV = async (csvFile) => {
