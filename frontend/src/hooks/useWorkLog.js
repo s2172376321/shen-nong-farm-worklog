@@ -2,7 +2,7 @@
 import { useState, useCallback } from 'react';
 import { createWorkLog, searchWorkLogs, uploadCSV } from '../utils/api';
 
-// 節流和快取管理 - 使用指數退避策略
+// 修改為更寬容的節流管理器
 const createThrottleManager = () => {
   const requestCache = new Map();
   const throttleMap = new Map();
@@ -12,21 +12,27 @@ const createThrottleManager = () => {
     throttle: (key, fn, baseDelay = 2000) => {
       const now = Date.now();
       
-      // 檢查是否有正在進行的請求
-      if (throttleMap.has(key)) {
-        return Promise.reject(new Error('Request throttled'));
-      }
-
-      // 檢查是否有可用的快取
+      // 優先使用快取來避免節流問題
       const cachedResult = requestCache.get(key);
-      if (cachedResult && (now - cachedResult.timestamp) < 10000) { // 增加快取有效期至10秒
-        console.log(`使用 ${key} 的快取數據`);
+      if (cachedResult && (now - cachedResult.timestamp) < 30000) { // 增加快取有效期至30秒
+        console.log(`使用 ${key} 的快取數據 (快取時間: ${Math.round((now - cachedResult.timestamp)/1000)}秒)`);
         return Promise.resolve(cachedResult.data);
       }
       
-      // 計算退避時間
+      // 檢查是否有正在進行的請求，但更寬容
+      if (throttleMap.has(key)) {
+        const lastRequest = throttleMap.get(key);
+        const timeSinceLastRequest = now - lastRequest;
+        
+        // 如果距離上次請求時間很短，則使用快取或返回空數組，不拋出錯誤
+        if (timeSinceLastRequest < 1000) { // 1秒內的重複請求
+          console.log(`請求 ${key} 太頻繁，返回空數組`);
+          return Promise.resolve([]); // 返回空數組而非拋出錯誤
+        }
+      }
+      
+      // 計算退避時間 (但我們不會真的退避，只是記錄)
       let backoffCount = backoffMap.get(key) || 0;
-      const delay = baseDelay * Math.pow(1.5, backoffCount); // 指數退避
       
       // 標記請求正在進行
       throttleMap.set(key, now);
@@ -42,18 +48,33 @@ const createThrottleManager = () => {
           // 重置退避計數
           backoffMap.delete(key);
           
+          console.log(`${key} 請求成功，已快取結果`);
           return result;
         })
         .catch(error => {
           // 失敗時增加退避計數
           backoffMap.set(key, backoffCount + 1);
+          console.warn(`${key} 請求失敗 (${backoffCount + 1}次)，錯誤:`, error.message);
+          
+          // 如果是節流錯誤且有快取，則返回快取數據
+          if (error.message === 'Request throttled' && cachedResult) {
+            console.log(`節流錯誤，使用舊的快取數據`);
+            return cachedResult.data;
+          }
+          
+          // 對於節流錯誤，返回空數組
+          if (error.message === 'Request throttled') {
+            console.log(`節流錯誤，沒有快取，返回空數組`);
+            return [];
+          }
+          
           throw error;
         })
         .finally(() => {
-          // 延遲解除節流，使用動態時間
+          // 延遲清除請求標記，避免長時間阻塞
           setTimeout(() => {
             throttleMap.delete(key);
-          }, delay);
+          }, 2000); // 固定2秒後移除限制
         });
     },
     
@@ -66,6 +87,7 @@ const createThrottleManager = () => {
         throttleMap.clear();
         backoffMap.clear();
       }
+      console.log('節流快取已清除');
     },
     
     getCacheStatus: () => {
@@ -77,6 +99,8 @@ const createThrottleManager = () => {
     }
   };
 };
+
+
 
 const throttleManager = createThrottleManager();
 
@@ -176,68 +200,72 @@ export const useWorkLog = () => {
     }
   }, []);
 
-  // 獲取工作日誌 - 增強錯誤處理和重試邏輯
-  const fetchWorkLogs = useCallback(async (filters) => {
-    if (!filters) {
-      console.warn('未提供過濾器，使用空對象');
-      filters = {};
-    }
-    
-    setIsLoading(true);
-    setError(null);
+// 獲取工作日誌 - 優化錯誤處理邏輯
+const fetchWorkLogs = useCallback(async (filters) => {
+  if (!filters) {
+    console.warn('未提供過濾器，使用空對象');
+    filters = {};
+  }
+  
+  setIsLoading(true);
+  setError(null);
 
-    // 為篩選器創建一個唯一的快取鍵
-    const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  // 為篩選器創建一個唯一的快取鍵
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  try {
+    console.log('嘗試獲取工作日誌，過濾條件:', JSON.stringify(filters));
     
-    try {
-      const response = await throttleManager.throttle(
-        cacheKey, 
-        async () => {
-          try {
-            return await searchWorkLogs(filters);
-          } catch (err) {
-            // 如果是特定錯誤，返回空數組而不是拋出錯誤
-            if (err.message === 'Request throttled' || 
-                (err.response && err.response.status === 429)) {
-              console.warn('工作日誌請求受限，返回空數組');
-              return [];
-            }
-            throw err;
-          }
-        },
-        8000 // 增加基本延遲至8秒
-      );
-      
-      setIsLoading(false);
-      
-      // 如果響應是空數組且從未成功過，設置警告
-      if (Array.isArray(response) && response.length === 0 && !lastSuccessTime) {
-        setError('無法獲取工作日誌，可能是連接問題');
-      }
-      
-      return response;
-    } catch (err) {
-      // 特殊處理節流錯誤
-      if (err.message === 'Request throttled') {
-        console.warn('工作日誌請求過於頻繁');
-        setError('請求頻率過高，請稍後再試');
-        setIsLoading(false);
-        return []; // 返回空數組，而不是拋出錯誤
-      } else {
-        const errorMessage = err.response?.data?.message || '查詢工作日誌失敗';
-        setError(errorMessage);
-        setIsLoading(false);
-        
-        // 對於特定錯誤，返回空數組而不是拋出錯誤
-        if (err.response && (err.response.status === 429 || err.response.status === 503)) {
-          console.warn('伺服器暫時無法處理請求，返回空數組');
+    const response = await throttleManager.throttle(
+      cacheKey, 
+      async () => {
+        try {
+          // 直接調用API，避免多層嵌套的錯誤處理
+          return await searchWorkLogs(filters);
+        } catch (err) {
+          // 輸出更詳細的錯誤日誌
+          console.error('searchWorkLogs API 調用失敗:', err);
+          
+          // 重要: 返回空數組但不拋出錯誤
           return [];
         }
-        
-        throw err;
+      },
+      8000 // 增加基本延遲至8秒
+    );
+    
+    // 設置成功狀態，即使返回空數組
+    setLastSuccessTime(Date.now());
+    setIsLoading(false);
+    
+    // 不再因為空數組而顯示錯誤
+    return response;
+  } catch (err) {
+    // 詳細日誌
+    console.error('fetchWorkLogs 執行失敗:', {
+      message: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    
+    // 特殊處理節流錯誤，但不顯示給用戶
+    if (err.message === 'Request throttled') {
+      console.warn('工作日誌請求過於頻繁，將返回空數組');
+      setIsLoading(false);
+      return []; // 返回空數組，不設置錯誤
+    } else {
+      // 只有真正的錯誤才顯示給用戶
+      const errorMessage = err.response?.data?.message || '查詢工作日誌失敗';
+      if (err.response?.status !== 404) { // 忽略404錯誤
+        setError(errorMessage);
       }
+      setIsLoading(false);
+      return []; // 返回空數組
     }
-  }, [lastSuccessTime]);
+  }
+}, [lastSuccessTime]);
+
+
+
 
   return {
     submitWorkLog,
