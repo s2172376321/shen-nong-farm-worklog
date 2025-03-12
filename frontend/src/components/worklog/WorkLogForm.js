@@ -558,7 +558,17 @@ const loadLocations = useCallback(async () => {
       // 提交前禁用重複提交
       if (isLoading) return;
       
-      const response = await submitWorkLog(workLog);
+      // 確保提交數據包含所有必要欄位
+      const submitData = {
+        ...workLog,
+        // 確保這些欄位存在且有值
+        location: workLog.position_name || "", // 使用position_name作為location
+        crop: workLog.work_category_name || "", // 使用work_category_name作為crop
+      };
+      
+      console.log('提交工作日誌數據:', submitData);
+      
+      const response = await submitWorkLog(submitData);
       console.log('工作日誌提交成功:', response);
       
       // 重新載入今日日誌
@@ -588,8 +598,16 @@ const loadLocations = useCallback(async () => {
     } catch (err) {
       console.error('提交工作日誌失敗:', err);
       
+      // 詳細記錄錯誤
+      if (err.response) {
+        console.error('服務器回應:', {
+          status: err.response.status,
+          data: err.response.data
+        });
+      }
+      
       // 顯示錯誤訊息
-      const errorMessage = err.userMessage || err.message || '提交工作日誌失敗，請檢查網路連線';
+      const errorMessage = err.userMessage || err.response?.data?.message || err.message || '提交工作日誌失敗，請檢查網路連線';
       alert(errorMessage);
       
       // 如果是驗證錯誤，更新表單錯誤
@@ -598,7 +616,7 @@ const loadLocations = useCallback(async () => {
       }
     }
   };
-
+  
   // 渲染欄位錯誤訊息
   const renderFieldError = (fieldName) => {
     if (formErrors[fieldName]) {
