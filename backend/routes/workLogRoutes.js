@@ -31,4 +31,31 @@ router.get('/today-hour',
   WorkLogController.getTodayHour
 );
 
+// 方案1: 暫時移除上傳CSV路由，直到實現對應的控制器方法
+// 如果您需要CSV上傳功能，請實現 WorkLogController.uploadCSV 方法
+// router.post('/upload-csv',
+//   authMiddleware,
+//   WorkLogController.uploadCSV
+// );
+
+// 方案2: 使用一個臨時的處理函數
+router.post('/upload-csv',
+  authMiddleware,
+  (req, res) => {
+    res.status(501).json({
+      message: 'CSV上傳功能尚未實現'
+    });
+  }
+);
+
+// 導出工作日誌
+router.get('/export',
+  authMiddleware,
+  (req, res) => {
+    res.status(501).json({
+      message: '導出功能尚未實現'
+    });
+  }
+);
+
 module.exports = router;
