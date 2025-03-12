@@ -25,7 +25,7 @@ router.patch('/:workLogId/review',
   WorkLogController.reviewWorkLog
 );
 
-// 獲取今日工時
+// 獲取今日工時 - 確保此路由已正確定義
 router.get('/today-hour', 
   authMiddleware, 
   WorkLogController.getTodayHour
