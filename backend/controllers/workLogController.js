@@ -55,47 +55,145 @@ async function queryTodayWorkHours(userId, isAdmin) {
 const WorkLogController = {
   // 創建工作日誌
   async createWorkLog(req, res) {
-    const { 
-      location, 
-      crop, 
-      startTime, 
-      endTime, 
-      workCategories, 
-      details, 
-      harvestQuantity 
-    } = req.body;
-
     try {
+      // 記錄接收到的完整請求數據，方便調試
+      console.log('接收到工作日誌提交請求:', JSON.stringify(req.body, null, 2));
+      
+      // 驗證請求數據是否包含必要欄位
+      const { 
+        location, 
+        crop, 
+        startTime, 
+        endTime,
+        start_time,
+        end_time,
+        work_categories,
+        workCategories, 
+        details, 
+        harvestQuantity,
+        harvest_quantity,
+        position_code,
+        position_name,
+        work_category_code,
+        work_category_name
+      } = req.body;
+  
+      // 使用實際提供的欄位或其替代欄位
+      const effectiveStartTime = startTime || start_time;
+      const effectiveEndTime = endTime || end_time;
+      const effectiveHarvestQuantity = harvestQuantity || harvest_quantity || 0;
+      const effectiveWorkCategories = workCategories || work_categories || [];
+      
+      // 檢查必填字段
+      if (!effectiveStartTime || !effectiveEndTime) {
+        return res.status(400).json({ 
+          message: '缺少必填欄位',
+          details: '開始時間和結束時間為必填項'
+        });
+      }
+  
+      // 檢查位置和作物是否至少有一個有效值
+      if ((!location && !position_name) || (!crop && !work_category_name)) {
+        return res.status(400).json({ 
+          message: '缺少必填欄位',
+          details: '位置和作物/工作類別為必填項'
+        });
+      }
+  
+      // 時間格式驗證
+      const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+      if (!timeRegex.test(effectiveStartTime) || !timeRegex.test(effectiveEndTime)) {
+        return res.status(400).json({ 
+          message: '時間格式不正確',
+          details: '時間必須為 HH:MM 格式'
+        });
+      }
+  
+      console.log('插入資料庫的欄位值:', {
+        user_id: req.user.id,
+        location: location || position_name,
+        crop: crop || work_category_name,
+        start_time: effectiveStartTime,
+        end_time: effectiveEndTime,
+        position_code,
+        position_name,
+        work_category_code,
+        work_category_name
+      });
+  
+      // 使用更寬容的SQL查詢，接受多種可能的欄位組合
       const query = `
         INSERT INTO work_logs 
-        (user_id, location, crop, start_time, end_time, work_categories, details, harvest_quantity)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (user_id, location, crop, start_time, end_time, work_categories, details, harvest_quantity,
+         location_code, position_code, position_name, work_category_code, work_category_name)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id
       `;
-
+  
       const values = [
-        req.user.id,  // 從認證中間件取得使用者ID
-        location,
-        crop,
-        startTime,
-        endTime,
-        workCategories,
-        details,
-        harvestQuantity
+        req.user.id,
+        location || position_name || '', // 使用 position_name 作為 location 的備選
+        crop || work_category_name || '', // 使用 work_category_name 作為 crop 的備選
+        effectiveStartTime,
+        effectiveEndTime,
+        effectiveWorkCategories,
+        details || '',
+        effectiveHarvestQuantity,
+        req.body.location_code || '',
+        position_code || '',
+        position_name || '',
+        work_category_code || '',
+        work_category_name || ''
       ];
-
+  
+      // 嘗試插入資料庫
+      console.log('執行SQL查詢...');
       const result = await db.query(query, values);
+      console.log('SQL查詢成功，返回ID:', result.rows[0].id);
       
+      // 成功回應
       res.status(201).json({
         message: '工作日誌創建成功',
-        workLogId: result.rows[0].id
+        workLogId: result.rows[0].id,
+        status: 'success'
       });
     } catch (error) {
-      console.error('創建工作日誌失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      // 詳細記錄錯誤
+      console.error('創建工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack,
+        query: error.query
+      });
+      
+      // 檢查常見數據庫錯誤類型並提供友好訊息
+      let errorMessage = '伺服器錯誤，請稍後再試';
+      let statusCode = 500;
+      
+      if (error.code === '23505') {
+        errorMessage = '重複提交工作日誌';
+        statusCode = 400;
+      } else if (error.code === '23503') {
+        errorMessage = '參考的外鍵不存在';
+        statusCode = 400;
+      } else if (error.code === '22P02') {
+        errorMessage = '數據類型錯誤';
+        statusCode = 400;
+      } else if (error.code === '42P01') {
+        errorMessage = '資料表不存在，請聯繫管理員';
+        statusCode = 500;
+      } else if (error.code === '42703') {
+        errorMessage = '欄位不存在，可能需要更新資料庫結構';
+        statusCode = 500;
+      }
+      
+      res.status(statusCode).json({ 
+        message: errorMessage,
+        details: process.env.NODE_ENV !== 'production' ? error.message : undefined,
+        status: 'error'
+      });
     }
   },
-
+    
   // 查詢工作日誌
   async searchWorkLogs(req, res) {
     const { location, crop, startDate, endDate, format } = req.query;
@@ -175,6 +273,111 @@ const WorkLogController = {
     }
   },
 
+
+  async uploadCSV(req, res) {
+    try {
+      // 檢查是否有文件上傳
+      if (!req.files || !req.files.csvFile) {
+        return res.status(400).json({ 
+          message: '沒有找到CSV文件' 
+        });
+      }
+  
+      const csvFile = req.files.csvFile;
+      
+      // 檢查文件類型
+      if (!csvFile.name.endsWith('.csv')) {
+        return res.status(400).json({ 
+          message: '只支持CSV文件格式' 
+        });
+      }
+      
+      // 暫存文件到臨時目錄
+      const tempFilePath = path.join(__dirname, '../temp', `upload_${Date.now()}.csv`);
+      
+      // 確保臨時目錄存在
+      if (!fs.existsSync(path.join(__dirname, '../temp'))) {
+        fs.mkdirSync(path.join(__dirname, '../temp'), { recursive: true });
+      }
+      
+      // 寫入臨時文件
+      await fs.promises.writeFile(tempFilePath, csvFile.data);
+      
+      // 解析CSV文件
+      const workLogs = await parseWorkLogCSV(tempFilePath);
+      
+      // 驗證並存儲工作日誌
+      const results = {
+        success: 0,
+        failed: 0,
+        errors: []
+      };
+      
+      for (const workLog of workLogs) {
+        // 驗證數據
+        const validation = validateWorkLog(workLog);
+        
+        if (!validation.isValid) {
+          results.failed++;
+          results.errors.push({
+            data: workLog,
+            errors: validation.errors
+          });
+          continue;
+        }
+        
+        try {
+          // 存儲到數據庫
+          const query = `
+            INSERT INTO work_logs 
+            (user_id, location, crop, start_time, end_time, work_categories, details, harvest_quantity)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+          `;
+          
+          const values = [
+            req.user.id,
+            workLog.location,
+            workLog.crop,
+            workLog.startTime,
+            workLog.endTime,
+            workLog.workCategories,
+            workLog.details,
+            workLog.harvestQuantity
+          ];
+          
+          await db.query(query, values);
+          results.success++;
+        } catch (err) {
+          results.failed++;
+          results.errors.push({
+            data: workLog,
+            errors: [err.message]
+          });
+        }
+      }
+      
+      // 刪除臨時文件
+      try {
+        await fs.promises.unlink(tempFilePath);
+      } catch (unlinkError) {
+        console.error('刪除臨時文件失敗:', unlinkError);
+      }
+      
+      // 返回結果
+      res.json({
+        message: `CSV處理完成，成功：${results.success}，失敗：${results.failed}`,
+        results
+      });
+    } catch (error) {
+      console.error('CSV上傳處理失敗:', error);
+      res.status(500).json({ 
+        message: '處理CSV文件失敗',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
+    }
+  },
+  
   // 管理員覆核工作日誌
   async reviewWorkLog(req, res) {
     const { workLogId } = req.params;
@@ -234,12 +437,26 @@ const WorkLogController = {
 // WorkLogController 中添加或修改此方法
 async getTodayHour(req, res) {
   try {
-    const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
+    // 檢查用戶身份
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({ 
+        message: '未授權訪問'
+      });
+    }
     
+    // 計算今日已工作時數
+    const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
+    console.log(`用戶 ${req.user.id} 今日已工作 ${totalHours} 小時`);
+    
+    // 計算剩餘工時
+    const remainingHours = (8 - parseFloat(totalHours)).toFixed(2);
+    const isComplete = parseFloat(totalHours) >= 8;
+    
+    // 返回響應
     const responseData = {
       total_hours: totalHours,
-      remaining_hours: (8 - parseFloat(totalHours)).toFixed(2),
-      is_complete: parseFloat(totalHours) >= 8
+      remaining_hours: remainingHours,
+      is_complete: isComplete
     };
 
     res.json(responseData);
