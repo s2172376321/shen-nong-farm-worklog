@@ -28,11 +28,14 @@ const apiCache = {
   }
 };
 
-// 創建 axios 實例
+// 創建 axios 實例 - 修正為使用 3002 端口
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api',
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
   withCredentials: true,
-  timeout: 10000
+  timeout: 15000,  // 增加超時時間到15秒
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
 
 // 節流函數 - 用於限制請求頻率
@@ -93,58 +96,108 @@ const throttle = (key, fn, initialDelay = 1000) => {
   });
 };
 
-// 攔截器：為每個請求添加 Token
+// 請求攔截器 - 增加更多日誌
 api.interceptors.request.use(
   config => {
+    // 為每個請求添加 Token
     const token = localStorage.getItem('token');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
     
-    // 對於文件上傳請求，不設置 Content-Type，讓瀏覽器自動設置
-    if (config.data instanceof FormData) {
-      delete config.headers['Content-Type'];
-    }
+    // 增加請求重試功能
+    config.retry = 3; // 重試次數
+    config.retryDelay = 1000; // 重試間隔
     
-    // 請求標識符，用於節流
-    config.requestId = `${config.method}:${config.url}:${JSON.stringify(config.params || {})}`;
+    // 記錄請求細節（不包含敏感資訊）
+    const logInfo = {
+      url: config.url,
+      method: config.method,
+      hasToken: !!token,
+      timestamp: new Date().toISOString()
+    };
+    console.log(`送出請求: ${config.method.toUpperCase()} ${config.url}`, logInfo);
     
-    console.log('發送API請求:', config.url); // 調試日誌
     return config;
   },
   error => {
-    console.error('API請求錯誤:', error); // 調試日誌
+    console.error('請求錯誤:', error);
     return Promise.reject(error);
   }
 );
 
-// 響應攔截器：統一處理錯誤
+
+// 響應攔截器 - 增強錯誤處理
 api.interceptors.response.use(
   response => {
-    console.log('API響應成功:', response.config.url); // 調試日誌
+    // 記錄成功響應（僅日誌資訊，不包含完整資料）
+    console.log(`請求成功: ${response.config.url}`, {
+      status: response.status,
+      statusText: response.statusText,
+      dataSize: JSON.stringify(response.data).length,
+      timestamp: new Date().toISOString()
+    });
     return response;
   },
-  error => {
-    // 詳細記錄錯誤信息
-    console.error('API響應錯誤:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message
-    });
+  async error => {
+    const { config, response } = error;
     
-    // 特殊處理429錯誤(過多請求)
-    if (error.response && error.response.status === 429) {
-      console.warn('請求頻率過高，使用本地快取或稍後重試');
+    // 如果是請求超時或網絡錯誤，則嘗試重試
+    if (!response && config && config.retry > 0) {
+      console.log(`嘗試重新連接到 ${config.url}，剩餘重試次數: ${config.retry}`);
+      
+      // 等待一段時間再重試
+      await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+      
+      // 減少重試次數並重新發送請求
+      config.retry -= 1;
+      return api(config);
     }
+    
+    // 如果是 401 未授權，可能是 token 過期，嘗試刷新 token
+    if (response && response.status === 401) {
+      // 這裡可以添加 token 刷新邏輯
+      console.log('認證失敗，需要重新登入');
+      
+      // 清除本地存儲的認證信息
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      
+      // 重定向到登入頁面
+      window.location.href = '/login';
+    }
+    
+    // 表單驗證錯誤 - 更清晰的錯誤處理
+    if (response && response.status === 400) {
+      console.warn('表單驗證錯誤:', response.data);
+      const errorMessage = response.data?.message || '請檢查表單欄位';
+      error.userMessage = errorMessage;
+      // 增加額外屬性以便UI顯示詳細錯誤
+      error.validationErrors = response.data?.errors || {};
+    } else {
+      // 其他錯誤 - 提供更友好的錯誤訊息
+      const errorMessage = response?.data?.message || 
+                          error.message || 
+                          '發生未知錯誤';
+      error.userMessage = errorMessage;
+    }
+    
+    // 記錄錯誤詳情
+    console.error('API 請求失敗:', {
+      url: config?.url,
+      method: config?.method,
+      status: response?.status,
+      statusText: response?.statusText,
+      message: error.userMessage,
+      timestamp: new Date().toISOString()
+    });
     
     return Promise.reject(error);
   }
 );
 
 // ----- WebSocket API -----
-// WebSocket 連接類
+// WebSocket 連接類 - 更新WebSocket URL以匹配伺服器
 export class WebSocketService {
   constructor() {
     this.socket = null;
@@ -164,7 +217,8 @@ export class WebSocketService {
 
     try {
       console.log('嘗試連接 WebSocket...');
-      this.socket = new WebSocket('ws://localhost:3001/ws');
+      // 修改為使用3002端口
+      this.socket = new WebSocket('ws://localhost:3002/ws');
 
       this.socket.onopen = this.onOpen.bind(this);
       this.socket.onmessage = this.onMessage.bind(this);
@@ -353,31 +407,49 @@ export const logout = () => {
   apiCache.clear();
 };
 
-// ----- 工作日誌 API -----
+// ----- 工作日誌 API ----- (修改工作日誌提交格式)
 export const createWorkLog = async (workLogData) => {
-  const formattedData = {
-    location_code: workLogData.location_code,
-    position_code: workLogData.position_code,
-    position_name: workLogData.position_name,
-    work_category_code: workLogData.work_category_code,
-    work_category_name: workLogData.work_category_name,
-    start_time: workLogData.startTime,
-    end_time: workLogData.endTime,
-    details: workLogData.details,
-    harvest_quantity: workLogData.harvestQuantity || 0,
-    product_id: workLogData.product_id || null,
-    product_name: workLogData.product_name || null,
-    product_quantity: workLogData.product_quantity || 0
-  };
-  
-  const response = await api.post('/work-logs', formattedData);
-  
-  // 創建日誌後清除相關快取
-  apiCache.clear('workLogs');
-  apiCache.clear('workStats');
-  apiCache.clear('todayHour');
-  
-  return response.data;
+  try {
+    // 檢查必要欄位
+    const requiredFields = ['location_code', 'position_code', 'work_category_code', 'startTime', 'endTime'];
+    const missingFields = requiredFields.filter(field => !workLogData[field]);
+    
+    if (missingFields.length > 0) {
+      throw new Error(`請填寫所有必要欄位: ${missingFields.join(', ')}`);
+    }
+    
+    // 標準化提交數據格式
+    const formattedData = {
+      location_code: workLogData.location_code,
+      position_code: workLogData.position_code,
+      position_name: workLogData.position_name || '',
+      work_category_code: workLogData.work_category_code,
+      work_category_name: workLogData.work_category_name || '',
+      start_time: workLogData.startTime,  // 保持 startTime 格式
+      end_time: workLogData.endTime,      // 保持 endTime 格式
+      details: workLogData.details || '',
+      harvest_quantity: workLogData.harvestQuantity || 0,
+      product_id: workLogData.product_id || null,
+      product_name: workLogData.product_name || null,
+      product_quantity: workLogData.product_quantity || 0
+    };
+    
+    console.log('送出工作日誌資料:', formattedData);
+    
+    const response = await api.post('/work-logs', formattedData);
+    
+    // 創建日誌後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear('todayHour');
+    
+    console.log('工作日誌創建成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('創建工作日誌失敗:', error);
+    // 重新拋出錯誤，保持原始錯誤訊息
+    throw error;
+  }
 };
 
 // CSV 上傳工作日誌
@@ -738,6 +810,12 @@ export const fetchLocations = async () => {
       () => api.get('/data/locations')
     );
     
+    // 檢查數據格式
+    if (!Array.isArray(response.data)) {
+      console.warn('位置數據格式不正確:', response.data);
+      return []; // 返回空數組避免錯誤
+    }
+    
     // 儲存到快取 (長時間快取)
     apiCache.set('locations', response.data, 3600000); // 快取1小時
     
@@ -1009,6 +1087,24 @@ export const fetchDashboardStats = async () => {
       };
     }
     throw error;
+  }
+};
+
+// 新增的健康檢查API，可用於檢查伺服器連線狀態
+export const checkServerHealth = async () => {
+  try {
+    const response = await api.get('/health-check', { timeout: 3000 });
+    return {
+      status: 'online',
+      message: response.data?.message || '伺服器連線正常',
+      serverTime: response.data?.serverTime
+    };
+  } catch (error) {
+    return {
+      status: 'offline',
+      message: '無法連線到伺服器',
+      error: error.message
+    };
   }
 };
 
