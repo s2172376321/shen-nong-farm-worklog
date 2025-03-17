@@ -74,11 +74,22 @@ export const markNoticeAsRead = async (noticeId) => {
   return response.data;
 };
 
+
+
+export const fetchLocationCrops = async (positionCode) => {
+  const response = await api.get(`/work-logs/position/${positionCode}/crops`);
+  return response.data;
+};
+
+
+
 // 獲取未讀公告數量
 export const getUnreadNoticeCount = async () => {
   const response = await api.get('/notices/unread-count');
   return response.data;
 };
+
+
 // 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
   config => {
