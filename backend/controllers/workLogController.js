@@ -193,8 +193,35 @@ const WorkLogController = {
       });
     }
   },
+
+
+// 獲取特定位置的作物列表
+async getLocationCrops(req, res) {
+  const { positionCode } = req.params;
+  
+  try {
+    // 查詢工作類別為"種植"的工作日誌，找出該位置的所有作物
+    const query = `
+      SELECT DISTINCT crop 
+      FROM work_logs 
+      WHERE position_code = $1 
+      AND work_category_name = '種植' 
+      ORDER BY crop
+    `;
     
-  // 查詢工作日誌
+    const result = await db.query(query, [positionCode]);
+    
+    res.json(result.rows.map(row => row.crop));
+  } catch (error) {
+    console.error('獲取位置作物列表失敗:', error);
+    res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+  }
+},
+
+
+
+
+
 // 查詢工作日誌 - 修改版
 async searchWorkLogs(req, res) {
   const { location, crop, startDate, endDate, status } = req.query;
@@ -414,36 +441,58 @@ async searchWorkLogs(req, res) {
 
 // WorkLogController 中添加或修改此方法
 async getTodayHour(req, res) {
+  const userId = req.user.id;
+  const today = new Date().toISOString().split('T')[0]; // 獲取今天的日期 YYYY-MM-DD
+
   try {
-    // 檢查用戶身份
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({ 
-        message: '未授權訪問'
-      });
-    }
+    // 查詢今日工作日誌
+    const query = `
+      SELECT start_time, end_time
+      FROM work_logs
+      WHERE user_id = $1
+      AND DATE(created_at) = $2
+    `;
+
+    const result = await db.query(query, [userId, today]);
+    const workLogs = result.rows;
+
+    // 計算總工時
+    let totalMinutes = 0;
     
-    // 計算今日已工作時數
-    const totalHours = await queryTodayWorkHours(req.user.id, req.user.role === 'admin');
-    console.log(`用戶 ${req.user.id} 今日已工作 ${totalHours} 小時`);
+    workLogs.forEach(log => {
+      if (!log.start_time || !log.end_time) return;
+      
+      const startParts = log.start_time.split(':');
+      const endParts = log.end_time.split(':');
+      
+      if (startParts.length !== 2 || endParts.length !== 2) return;
+      
+      const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
+      const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+      
+      if (isNaN(startMinutes) || isNaN(endMinutes)) return;
+      
+      // 排除午休時間 (12:00-13:00)
+      if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
+        totalMinutes += (endMinutes - startMinutes - 60);
+      } else {
+        totalMinutes += (endMinutes - startMinutes);
+      }
+    });
     
-    // 計算剩餘工時
-    const remainingHours = (8 - parseFloat(totalHours)).toFixed(2);
-    const isComplete = parseFloat(totalHours) >= 8;
-    
-    // 返回響應
-    const responseData = {
-      total_hours: totalHours,
+    const totalHours = totalMinutes / 60;
+    const formattedTotalHours = totalHours.toFixed(2);
+    const remainingHours = Math.max(0, 8 - totalHours).toFixed(2);
+    const isComplete = totalHours >= 8;
+
+    res.json({
+      total_hours: formattedTotalHours,
       remaining_hours: remainingHours,
       is_complete: isComplete
-    };
-
-    res.json(responseData);
+    });
   } catch (error) {
     console.error('獲取今日工時失敗:', error);
-    res.status(500).json({ 
-      message: '伺服器錯誤，請稍後再試',
-      error: process.env.NODE_ENV !== 'production' ? error.message : undefined
-    });
+    res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
   }
 }
 };
