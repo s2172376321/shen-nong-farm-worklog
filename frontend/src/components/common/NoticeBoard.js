@@ -26,6 +26,8 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
   // 處理閱讀公告
   const handleReadNotice = async (noticeId) => {
     try {
+      console.log('標記公告已讀:', noticeId);
+      
       // 先在介面上標記為已讀
       setNotices(prevNotices => 
         prevNotices.map(notice => 
@@ -80,7 +82,7 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
               className={`p-4 cursor-pointer transition-all duration-200 
                 ${notice.is_read ? 'bg-gray-800' : 'bg-gray-700 border-l-4 border-blue-500'}
               `}
-              onClick={() => !notice.is_read && handleReadNotice(notice.id)}
+              onClick={() => handleReadNotice(notice.id)}
             >
               <div className="flex justify-between items-start">
                 <h2 className="text-xl font-semibold mb-2">
