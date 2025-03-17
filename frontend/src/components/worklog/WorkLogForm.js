@@ -7,12 +7,16 @@ import { fetchLocations, fetchWorkCategories, fetchProducts, checkServerHealth }
 
 const WorkLogForm = () => {
   const { user } = useAuth();
-  const { CreateWorkLog, uploadCSV, fetchWorkLogs, isLoading, error } = useWorkLog();
+  const { submitWorkLog, uploadCSV, fetchWorkLogs, isLoading, error } = useWorkLog();
 
   // 返回函數
   const handleGoBack = () => {
-  window.history.back();
-};
+    window.history.back();
+  };
+  
+  // 新增日期選擇狀態
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dateWorkLogs, setDateWorkLogs] = useState([]);  // 存儲選定日期的日誌
   
   // 基本表單數據
   const [workLog, setWorkLog] = useState({
@@ -82,27 +86,27 @@ const WorkLogForm = () => {
     return () => clearInterval(interval);
   }, []);
 
-// 加載位置數據
-const loadLocations = useCallback(async () => {
-  try {
-    const locationData = await fetchLocations();
-    if (Array.isArray(locationData)) {
-      // 提取唯一的區域名稱
-      const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
-      setAreas(uniqueAreas);
-      // 設置所有位置數據
-      setPositions(locationData); // 這行是關鍵
-    } else {
-      console.error('位置資料格式不正確', locationData);
+  // 加載位置數據
+  const loadLocations = useCallback(async () => {
+    try {
+      const locationData = await fetchLocations();
+      if (Array.isArray(locationData)) {
+        // 提取唯一的區域名稱
+        const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
+        setAreas(uniqueAreas);
+        // 設置所有位置數據
+        setPositions(locationData); // 這行是關鍵
+      } else {
+        console.error('位置資料格式不正確', locationData);
+        setAreas([]);
+        setPositions([]);
+      }
+    } catch (err) {
+      console.error('載入位置資料失敗', err);
       setAreas([]);
       setPositions([]);
     }
-  } catch (err) {
-    console.error('載入位置資料失敗', err);
-    setAreas([]);
-    setPositions([]);
-  }
-}, []);
+  }, []);
 
   // 加載工作類別
   const loadWorkCategories = useCallback(async () => {
@@ -148,8 +152,6 @@ const loadLocations = useCallback(async () => {
     }
   }, []);
 
-
-
   const getFilteredProducts = useCallback(() => {
     if (!productSearchTerm.trim()) {
       return seedProducts.slice(0, 10); // 沒有搜索詞時顯示前10個結果
@@ -169,29 +171,103 @@ const loadLocations = useCallback(async () => {
     }).slice(0, 10); // 限制顯示10個搜索結果
   }, [seedProducts, productSearchTerm]);
 
+  // 處理產品搜索框輸入變化
+  const handleProductSearchChange = (e) => {
+    setProductSearchTerm(e.target.value);
+    setShowProductDropdown(true);
+    setFormErrors(prev => ({ ...prev, product: null }));
+  };
+
+  // 處理產品選擇
+  const handleProductSelect = (product) => {
+    const productName = `${product.商品編號} - ${product.規格 || ''} (${product.單位 || ''})`;
+    setWorkLog(prev => ({
+      ...prev,
+      product_id: product.商品編號,
+      product_name: productName
+    }));
+    setProductSearchTerm(productName);
+    setShowProductDropdown(false);
+    setFormErrors(prev => ({ ...prev, product: null }));
+  };
+
+  // 載入指定日期的工作日誌
+  const loadDateWorkLogs = useCallback(async (date) => {
+    try {
+      console.log('正在載入指定日期工作日誌，日期:', date);
+      
+      const logs = await fetchWorkLogs({ 
+        startDate: date, 
+        endDate: date 
+      });
+      
+      console.log('API返回的工作日誌原始數據:', logs);
+      
+      if (!Array.isArray(logs)) {
+        console.error('工作日誌資料格式不正確', logs);
+        setDateWorkLogs([]);
+        setRemainingHours(8);
+        return;
+      }
+      
+      console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
+      
+      // 標準化時間格式
+      const normalizedLogs = logs.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
+        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
+      }));
+      
+      console.log('標準化後的工作日誌:', normalizedLogs);
+      setDateWorkLogs(normalizedLogs);
+      
+      // 如果是今天的日期，同時更新todayWorkLogs
+      const today = new Date().toISOString().split('T')[0];
+      if (date === today) {
+        setTodayWorkLogs(normalizedLogs);
+      }
+      
+      // 計算剩餘工時
+      const { remainingHours } = calculateWorkHours(normalizedLogs);
+      console.log('剩餘工時計算結果:', remainingHours);
+      setRemainingHours(remainingHours);
+      
+      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
+      if (normalizedLogs.length > 0) {
+        const sortedLogs = [...normalizedLogs].sort((a, b) => {
+          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
+          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
+          return timeB - timeA; // 降序排列，最新的在前面
+        });
+        
+        const latestLog = sortedLogs[0];
+        if (latestLog && latestLog.end_time) {
+          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
+          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
+          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+          console.log('設置下一個開始時間為:', nextStartTime);
+        } else {
+          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+        }
+      } else {
+        // 沒有紀錄，從工作開始時間開始
+        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+      }
+    } catch (err) {
+      console.error('載入指定日期工作日誌失敗', err);
+      setDateWorkLogs([]);
+      setRemainingHours(8);
+      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+    }
+  }, [fetchWorkLogs, calculateWorkHours]);
   
-
-// 處理產品搜索框輸入變化
-const handleProductSearchChange = (e) => {
-  setProductSearchTerm(e.target.value);
-  setShowProductDropdown(true);
-  setFormErrors(prev => ({ ...prev, product: null }));
-};
-
-// 處理產品選擇
-const handleProductSelect = (product) => {
-  const productName = `${product.商品編號} - ${product.規格 || ''} (${product.單位 || ''})`;
-  setWorkLog(prev => ({
-    ...prev,
-    product_id: product.商品編號,
-    product_name: productName
-  }));
-  setProductSearchTerm(productName);
-  setShowProductDropdown(false);
-  setFormErrors(prev => ({ ...prev, product: null }));
-};
-  
-
+  // 載入今日工作日誌
+  const loadTodayWorkLogs = useCallback(async () => {
+    // 直接使用loadDateWorkLogs加載當天的日誌
+    const today = new Date().toISOString().split('T')[0];
+    await loadDateWorkLogs(today);
+  }, [loadDateWorkLogs]);
   
   // 載入初始數據
   useEffect(() => {
@@ -202,7 +278,7 @@ const handleProductSelect = (product) => {
           loadLocations(),
           loadWorkCategories(),
           loadProducts(),
-          loadTodayWorkLogs()
+          loadDateWorkLogs(selectedDate)
         ]);
       } catch (error) {
         console.error('初始化數據失敗', error);
@@ -210,7 +286,7 @@ const handleProductSelect = (product) => {
     };
     
     loadData();
-  }, [loadLocations, loadWorkCategories, loadProducts]);
+  }, [loadLocations, loadWorkCategories, loadProducts, loadDateWorkLogs, selectedDate]);
 
   // 計算工作時長
   const calculateWorkHours = useCallback((logs) => {
@@ -290,72 +366,13 @@ const handleProductSelect = (product) => {
     return { totalHours, remainingHours };
   }, []);
   
-  // 載入今日工作日誌
-  const loadTodayWorkLogs = useCallback(async () => {
-    try {
-      // 使用當前日期作為過濾條件
-      const today = new Date().toISOString().split('T')[0];
-      console.log('正在載入今日工作日誌，日期:', today);
-      
-      const logs = await fetchWorkLogs({ 
-        startDate: today, 
-        endDate: today 
-      });
-      
-      console.log('API返回的工作日誌原始數據:', logs);
-      
-      if (!Array.isArray(logs)) {
-        console.error('工作日誌資料格式不正確', logs);
-        setTodayWorkLogs([]);
-        setRemainingHours(8);
-        return;
-      }
-      
-      console.log(`成功載入 ${logs.length} 筆今日工作日誌`);
-      
-      // 如果 API 返回的時間格式可能有問題，嘗試標準化時間格式
-      const normalizedLogs = logs.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
-        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
-      }));
-      
-      console.log('標準化後的工作日誌:', normalizedLogs);
-      setTodayWorkLogs(normalizedLogs);
-      
-      // 計算剩餘工時
-      const { remainingHours } = calculateWorkHours(normalizedLogs);
-      console.log('剩餘工時計算結果:', remainingHours);
-      setRemainingHours(remainingHours);
-      
-      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
-      if (normalizedLogs.length > 0) {
-        const sortedLogs = [...normalizedLogs].sort((a, b) => {
-          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
-          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
-          return timeB - timeA; // 降序排列，最新的在前面
-        });
-        
-        const latestLog = sortedLogs[0];
-        if (latestLog && latestLog.end_time) {
-          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
-          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
-          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-          console.log('設置下一個開始時間為:', nextStartTime);
-        } else {
-          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-        }
-      } else {
-        // 沒有紀錄，從工作開始時間開始
-        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-      }
-    } catch (err) {
-      console.error('載入今日工作日誌失敗', err);
-      setTodayWorkLogs([]);
-      setRemainingHours(8);
-      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-    }
-  }, [fetchWorkLogs, calculateWorkHours]);
+  // 處理日期變更
+  const handleDateChange = (e) => {
+    const newDate = e.target.value;
+    setSelectedDate(newDate);
+    setFormErrors(prev => ({ ...prev, date: null }));
+    loadDateWorkLogs(newDate);
+  };
   
   // 處理區域選擇
   const handleAreaChange = (e) => {
@@ -581,7 +598,7 @@ const handleProductSelect = (product) => {
       setCsvFile(null);
       
       // 上傳成功後重新載入今日工作日誌
-      await loadTodayWorkLogs();
+      await loadDateWorkLogs(selectedDate);
       
       // 重置文件上傳控件
       const fileInput = document.getElementById('csv-file-input');
@@ -592,61 +609,60 @@ const handleProductSelect = (product) => {
     }
   };
 
-// 驗證時間選擇
-const validateTimeSelection = (startTime, endTime) => {
-  if (!startTime || !endTime) {
-    return { valid: false, message: '請選擇開始和結束時間' };
-  }
-  
-  // 檢查是否在工作時間內 (07:30-16:30)
-  const minWorkTime = new Date('2000-01-01T07:30:00');
-  const maxWorkTime = new Date('2000-01-01T16:30:00');
-  const lunchStart = new Date('2000-01-01T12:00:00');
-  const lunchEnd = new Date('2000-01-01T13:00:00');
-  
-  const start = new Date(`2000-01-01T${startTime}:00`);
-  const end = new Date(`2000-01-01T${endTime}:00`);
-  
-  if (start < minWorkTime || end > maxWorkTime) {
-    return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
-  }
-  
-  if (start >= end) {
-    return { valid: false, message: '結束時間必須晚於開始時間' };
-  }
-  
-  // 檢查是否與午休時間重疊
-  if ((start < lunchStart && end > lunchStart) || 
-      (start >= lunchStart && start < lunchEnd)) {
-    return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
-  }
-  
-  // 增強檢查: 詳細檢查是否與已提交的時段重疊
-  for (const log of todayWorkLogs) {
-    // 確保時間格式一致
-    if (!log.start_time || !log.end_time) continue;
-    
-    const logStart = new Date(`2000-01-01T${log.start_time}`);
-    const logEnd = new Date(`2000-01-01T${log.end_time}`);
-    
-    // 檢查所有可能的重疊情況
-    // 情況1: 新時段的開始時間在已存在時段內
-    // 情況2: 新時段的結束時間在已存在時段內
-    // 情況3: 新時段完全包含已存在時段
-    // 情況4: 新時段完全被已存在時段包含
-    if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
-        (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
-        (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
-      
-      return { 
-        valid: false, 
-        message: `所選時間與已存在的時段「${log.start_time.substring(0, 5)}-${log.end_time.substring(0, 5)}」重疊` 
-      };
+  // 驗證時間選擇
+  const validateTimeSelection = (startTime, endTime) => {
+    if (!startTime || !endTime) {
+      return { valid: false, message: '請選擇開始和結束時間' };
     }
-  }
-  
-  return { valid: true, message: '' };
-};
+    
+    // 檢查是否在工作時間內 (07:30-16:30)
+    const minWorkTime = new Date('2000-01-01T07:30:00');
+    const maxWorkTime = new Date('2000-01-01T16:30:00');
+    const lunchStart = new Date('2000-01-01T12:00:00');
+    const lunchEnd = new Date('2000-01-01T13:00:00');
+    
+    const start = new Date(`2000-01-01T${startTime}:00`);
+    const end = new Date(`2000-01-01T${endTime}:00`);
+    
+    if (start < minWorkTime || end > maxWorkTime) {
+      return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
+    }
+    
+    if (start >= end) {
+      return { valid: false, message: '結束時間必須晚於開始時間' };
+    }
+    
+    // 檢查是否與午休時間重疊
+    if ((start < lunchStart && end > lunchStart) || 
+        (start >= lunchStart && start < lunchEnd)) {
+      return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
+    }
+    
+    // 使用選擇日期的日誌列表
+    const logsToCheck = dateWorkLogs;
+    
+    // 增強檢查: 詳細檢查是否與已提交的時段重疊
+    for (const log of logsToCheck) {
+      // 確保時間格式一致
+      if (!log.start_time || !log.end_time) continue;
+      
+      const logStart = new Date(`2000-01-01T${log.start_time}`);
+      const logEnd = new Date(`2000-01-01T${log.end_time}`);
+      
+      // 檢查所有可能的重疊情況
+      if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
+          (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
+          (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
+        
+        return { 
+          valid: false, 
+          message: `所選時間與已存在的時段「${log.start_time.substring(0, 5)}-${log.end_time.substring(0, 5)}」重疊` 
+        };
+      }
+    }
+    
+    return { valid: true, message: '' };
+  };
 
   // 驗證表單
   const validateForm = () => {
@@ -678,7 +694,7 @@ const validateTimeSelection = (startTime, endTime) => {
     
     // 產品相關驗證
     if (showProductSelector) {
-      if (!selectedProductCategory) {
+      if (!selectedProductCategory && workLog.work_category_name !== '種植') {
         errors.product_category = '請選擇產品類別';
       }
       
@@ -725,15 +741,15 @@ const validateTimeSelection = (startTime, endTime) => {
         // 確保這些欄位存在且有值
         location: workLog.position_name || "", // 使用position_name作為location
         crop: workLog.work_category_name || "", // 使用work_category_name作為crop
+        date: selectedDate // 添加選定日期
       };
       
       console.log('提交工作日誌數據:', submitData);
       
-      const response = await createWorkLog(submitData);
+      const response = await submitWorkLog(submitData);
       console.log('工作日誌提交成功:', response);
       
-      // ===== 修復部分 - 開始 =====
-      // 1. 立即將成功提交的日誌添加到當前顯示的日誌列表中
+      // 立即將成功提交的日誌添加到當前顯示的日誌列表中
       const submittedLog = {
         ...submitData,
         id: response.workLogId || Date.now(), // 使用返回的ID或臨時生成一個
@@ -745,27 +761,22 @@ const validateTimeSelection = (startTime, endTime) => {
         created_at: new Date().toISOString()
       };
       
-      // 添加到日誌列表中(使用 dateWorkLogs 或 todayWorkLogs，取決於你的代碼結構)
-      const updatedLogs = [...(dateWorkLogs || todayWorkLogs), submittedLog];
-      if (typeof setDateWorkLogs === 'function') {
-        setDateWorkLogs(updatedLogs);
-      } else if (typeof setTodayWorkLogs === 'function') {
+      // 添加到日誌列表中
+      const updatedLogs = [...dateWorkLogs, submittedLog];
+      setDateWorkLogs(updatedLogs);
+      
+      // 如果是今天的日期，也更新 todayWorkLogs
+      const today = new Date().toISOString().split('T')[0];
+      if (selectedDate === today) {
         setTodayWorkLogs(updatedLogs);
       }
       
-      // 2. 重新計算剩餘工時
+      // 重新計算剩餘工時
       const { remainingHours } = calculateWorkHours(updatedLogs);
       setRemainingHours(remainingHours);
       
-      // 3. 為確保數據一致性，仍然從服務器重新載入日誌
-      // 使用選定日期或今天日期重新載入
-      const dateToReload = selectedDate || new Date().toISOString().split('T')[0];
-      if (typeof loadDateWorkLogs === 'function') {
-        await loadDateWorkLogs(dateToReload);
-      } else if (typeof loadTodayWorkLogs === 'function') {
-        await loadTodayWorkLogs();
-      }
-      // ===== 修復部分 - 結束 =====
+      // 為確保數據一致性，仍然從服務器重新載入日誌
+      await loadDateWorkLogs(selectedDate);
       
       // 重置表單，但保留位置和工作類別
       const resetForm = {
@@ -940,13 +951,17 @@ const validateTimeSelection = (startTime, endTime) => {
           <div>
             {/* 通知區域 */}
             <Card className="mb-4 p-4 bg-blue-900">
-              <h3 className="text-lg font-semibold mb-2">今日工作進度</h3>
+              <h3 className="text-lg font-semibold mb-2">
+                {selectedDate === new Date().toISOString().split('T')[0] 
+                  ? '今日工作進度' 
+                  : `${selectedDate} 工作進度`}
+              </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-300">已提交時段：</p>
-                  {todayWorkLogs.length > 0 ? (
+                  {dateWorkLogs.length > 0 ? (
                     <ul className="list-disc list-inside">
-                      {todayWorkLogs.map((log, index) => (
+                      {dateWorkLogs.map((log, index) => (
                         <li key={index} className="text-gray-300 text-sm">
                           {log.start_time} - {log.end_time} ({log.work_category_name || '未知類別'} @ {log.position_name || '未知位置'})
                         </li>
@@ -977,6 +992,20 @@ const validateTimeSelection = (startTime, endTime) => {
 
             {/* 表單 */}
             <form onSubmit={handleSubmit} className="space-y-4 bg-gray-800 p-4 rounded-lg">
+              {/* 新增日期選擇器 */}
+              <div className="mb-4">
+                <label className="block mb-2">工作日期 <span className="text-red-500">*</span></label>
+                <Input 
+                  type="date"
+                  name="workDate"
+                  value={selectedDate}
+                  onChange={handleDateChange}
+                  max={new Date().toISOString().split('T')[0]}  // 限制最大日期為今天
+                  className={formErrors.date ? 'border border-red-500' : ''}
+                />
+                {renderFieldError('date')}
+              </div>
+              
               {/* 位置選擇 */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
