@@ -7,7 +7,12 @@ import { fetchLocations, fetchWorkCategories, fetchProducts, checkServerHealth }
 
 const WorkLogForm = () => {
   const { user } = useAuth();
-  const { submitWorkLog, uploadCSV, fetchWorkLogs, isLoading, error } = useWorkLog();
+  const { CreateWorkLog, uploadCSV, fetchWorkLogs, isLoading, error } = useWorkLog();
+
+  // 返回函數
+  const handleGoBack = () => {
+  window.history.back();
+};
   
   // 基本表單數據
   const [workLog, setWorkLog] = useState({
@@ -31,6 +36,8 @@ const WorkLogForm = () => {
   const [workCategories, setWorkCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
+  const [availableCrops, setAvailableCrops] = useState([]);
+
   
   // 使用者今日已提交的工作時段
   const [todayWorkLogs, setTodayWorkLogs] = useState([]);
@@ -41,6 +48,10 @@ const WorkLogForm = () => {
   const [showHarvestQuantity, setShowHarvestQuantity] = useState(false);
   const [selectedProductCategory, setSelectedProductCategory] = useState('');
   const [remainingHours, setRemainingHours] = useState(8);
+  const [seedProducts, setSeedProducts] = useState([]); // 儲存所有種子種苗產品
+  const [productSearchTerm, setProductSearchTerm] = useState(''); // 搜索詞
+  const [showProductDropdown, setShowProductDropdown] = useState(false); // 控制下拉列表顯示
+
   
   // 表單驗證
   const [formErrors, setFormErrors] = useState({});
@@ -114,17 +125,74 @@ const loadLocations = useCallback(async () => {
     try {
       const productData = await fetchProducts();
       if (Array.isArray(productData)) {
+        // 儲存所有產品
         setProducts(productData);
+        
+        // 篩選出葉菜類和水果類種子種苗產品 (以2807和2808開頭)
+        const seedData = productData.filter(product => {
+          const productId = product.商品編號?.toString() || '';
+          return productId.startsWith('2807') || productId.startsWith('2808');
+        });
+        
+        console.log(`找到 ${seedData.length} 種種子種苗產品`);
+        setSeedProducts(seedData);
       } else {
         console.error('產品資料格式不正確', productData);
         setProducts([]);
+        setSeedProducts([]);
       }
     } catch (err) {
       console.error('載入產品資料失敗', err);
       setProducts([]);
+      setSeedProducts([]);
     }
   }, []);
 
+
+
+  const getFilteredProducts = useCallback(() => {
+    if (!productSearchTerm.trim()) {
+      return seedProducts.slice(0, 10); // 沒有搜索詞時顯示前10個結果
+    }
+    
+    const searchTermLower = productSearchTerm.toLowerCase();
+    
+    // 搜索條件: 商品編號、規格或單位包含搜索詞
+    return seedProducts.filter(product => {
+      const productId = product.商品編號?.toString().toLowerCase() || '';
+      const productSpec = product.規格?.toString().toLowerCase() || '';
+      const productUnit = product.單位?.toString().toLowerCase() || '';
+      
+      return productId.includes(searchTermLower) || 
+             productSpec.includes(searchTermLower) || 
+             productUnit.includes(searchTermLower);
+    }).slice(0, 10); // 限制顯示10個搜索結果
+  }, [seedProducts, productSearchTerm]);
+
+  
+
+// 處理產品搜索框輸入變化
+const handleProductSearchChange = (e) => {
+  setProductSearchTerm(e.target.value);
+  setShowProductDropdown(true);
+  setFormErrors(prev => ({ ...prev, product: null }));
+};
+
+// 處理產品選擇
+const handleProductSelect = (product) => {
+  const productName = `${product.商品編號} - ${product.規格 || ''} (${product.單位 || ''})`;
+  setWorkLog(prev => ({
+    ...prev,
+    product_id: product.商品編號,
+    product_name: productName
+  }));
+  setProductSearchTerm(productName);
+  setShowProductDropdown(false);
+  setFormErrors(prev => ({ ...prev, product: null }));
+};
+  
+
+  
   // 載入初始數據
   useEffect(() => {
     const loadData = async () => {
@@ -146,37 +214,82 @@ const loadLocations = useCallback(async () => {
 
   // 計算工作時長
   const calculateWorkHours = useCallback((logs) => {
-    if (!Array.isArray(logs)) return { totalHours: 0, remainingHours: 8 };
+    console.log("計算工時，日誌數量:", logs?.length, "日誌內容:", logs);
+    
+    if (!Array.isArray(logs) || logs.length === 0) {
+      console.log("沒有日誌記錄或格式不正確，返回默認值");
+      return { totalHours: 0, remainingHours: 8 };
+    }
     
     let totalMinutes = 0;
     
-    logs.forEach(log => {
-      if (!log.start_time || !log.end_time) return;
+    logs.forEach((log, index) => {
+      if (!log.start_time || !log.end_time) {
+        console.log(`日誌 #${index} 缺少開始或結束時間`, log);
+        return;
+      }
+      
+      console.log(`處理日誌 #${index}:`, {
+        startTime: log.start_time,
+        endTime: log.end_time
+      });
       
       const startParts = log.start_time.split(':');
       const endParts = log.end_time.split(':');
       
-      if (startParts.length !== 2 || endParts.length !== 2) return;
+      if (startParts.length !== 2 || endParts.length !== 2) {
+        console.log(`日誌 #${index} 時間格式不正確`, {
+          startParts,
+          endParts
+        });
+        return;
+      }
       
       const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
       const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
       
-      if (isNaN(startMinutes) || isNaN(endMinutes)) return;
+      if (isNaN(startMinutes) || isNaN(endMinutes)) {
+        console.log(`日誌 #${index} 時間轉換失敗`, {
+          startMinutes,
+          endMinutes
+        });
+        return;
+      }
+      
+      // 計算該時段的分鐘數
+      let logMinutes = endMinutes - startMinutes;
       
       // 排除午休時間 (12:00-13:00)
       if (startMinutes < 12 * 60 && endMinutes > 13 * 60) {
-        totalMinutes += (endMinutes - startMinutes - 60);
-      } else {
-        totalMinutes += (endMinutes - startMinutes);
+        logMinutes -= 60;
+        console.log(`日誌 #${index} 跨越午休時間，扣除60分鐘`);
+      } else if (startMinutes < 13 * 60 && endMinutes > 12 * 60 && endMinutes <= 13 * 60) {
+        logMinutes -= (endMinutes - 12 * 60);
+        console.log(`日誌 #${index} 部分占用午休時間，扣除${endMinutes - 12 * 60}分鐘`);
+      } else if (startMinutes >= 12 * 60 && startMinutes < 13 * 60 && endMinutes > 13 * 60) {
+        logMinutes -= (13 * 60 - startMinutes);
+        console.log(`日誌 #${index} 部分占用午休時間，扣除${13 * 60 - startMinutes}分鐘`);
+      } else if (startMinutes >= 12 * 60 && endMinutes <= 13 * 60) {
+        logMinutes = 0; // 完全在午休時間內
+        console.log(`日誌 #${index} 完全在午休時間內，不計入工時`);
       }
+      
+      console.log(`日誌 #${index} 計算結果: ${logMinutes}分鐘`);
+      totalMinutes += logMinutes;
     });
     
     const totalHours = +(totalMinutes / 60).toFixed(2);
     const remainingHours = Math.max(0, +(8 - totalHours).toFixed(2));
     
+    console.log("計算工時結果:", {
+      totalMinutes,
+      totalHours,
+      remainingHours
+    });
+    
     return { totalHours, remainingHours };
   }, []);
-
+  
   // 載入今日工作日誌
   const loadTodayWorkLogs = useCallback(async () => {
     try {
@@ -189,6 +302,8 @@ const loadLocations = useCallback(async () => {
         endDate: today 
       });
       
+      console.log('API返回的工作日誌原始數據:', logs);
+      
       if (!Array.isArray(logs)) {
         console.error('工作日誌資料格式不正確', logs);
         setTodayWorkLogs([]);
@@ -197,15 +312,25 @@ const loadLocations = useCallback(async () => {
       }
       
       console.log(`成功載入 ${logs.length} 筆今日工作日誌`);
-      setTodayWorkLogs(logs);
+      
+      // 如果 API 返回的時間格式可能有問題，嘗試標準化時間格式
+      const normalizedLogs = logs.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
+        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
+      }));
+      
+      console.log('標準化後的工作日誌:', normalizedLogs);
+      setTodayWorkLogs(normalizedLogs);
       
       // 計算剩餘工時
-      const { remainingHours } = calculateWorkHours(logs);
+      const { remainingHours } = calculateWorkHours(normalizedLogs);
+      console.log('剩餘工時計算結果:', remainingHours);
       setRemainingHours(remainingHours);
       
       // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
-      if (logs.length > 0) {
-        const sortedLogs = [...logs].sort((a, b) => {
+      if (normalizedLogs.length > 0) {
+        const sortedLogs = [...normalizedLogs].sort((a, b) => {
           const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
           const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
           return timeB - timeA; // 降序排列，最新的在前面
@@ -231,7 +356,7 @@ const loadLocations = useCallback(async () => {
       setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
     }
   }, [fetchWorkLogs, calculateWorkHours]);
-
+  
   // 處理區域選擇
   const handleAreaChange = (e) => {
     const areaName = e.target.value;
@@ -254,12 +379,13 @@ const loadLocations = useCallback(async () => {
   };
 
   // 處理位置選擇
-  const handlePositionChange = (e) => {
+  const handlePositionChange = async (e) => {
     const positionCode = e.target.value;
     setFormErrors(prev => ({ ...prev, position: null }));
     
     if (!positionCode) {
       setWorkLog(prev => ({ ...prev, position_code: '', position_name: '', location_code: '' }));
+      setAvailableCrops([]); // 清空作物列表
       return;
     }
     
@@ -271,14 +397,27 @@ const loadLocations = useCallback(async () => {
         ...prev,
         position_code: positionCode,
         position_name: selectedPosition.位置名稱 || '',
-        location_code: selectedPosition.區域代號 || ''
+        location_code: selectedPosition.區域代號 || '',
+        // 清除作物選擇
+        crop: ''
       }));
+      
+      // 加載該位置的作物列表
+      try {
+        const crops = await fetchLocationCrops(positionCode);
+        console.log(`位置 ${positionCode} 的作物列表:`, crops);
+        setAvailableCrops(crops);
+      } catch (err) {
+        console.error('加載作物列表失敗:', err);
+        setAvailableCrops([]);
+      }
     } else {
       console.warn('找不到匹配的位置:', positionCode);
       setWorkLog(prev => ({ ...prev, position_code: positionCode, position_name: '', location_code: '' }));
+      setAvailableCrops([]);
     }
   };
-
+  
   // 處理工作類別選擇
   const handleWorkCategoryChange = (e) => {
     const categoryCode = e.target.value;
@@ -290,7 +429,7 @@ const loadLocations = useCallback(async () => {
       setShowHarvestQuantity(false);
       return;
     }
-    
+      
     // 從工作類別列表中找到選擇的類別
     const selectedCategory = workCategories.find(c => c.工作內容代號 === categoryCode);
     
@@ -301,17 +440,26 @@ const loadLocations = useCallback(async () => {
         work_category_name: selectedCategory.工作內容名稱 || ''
       }));
       
+      // 判斷是否為種植類別
+      const isPlanting = selectedCategory.工作內容名稱 === '種植';
+      
       // 檢查是否需要顯示產品選擇器
       const costCategory = selectedCategory.成本類別;
-      const isProductNeeded = costCategory === 1 || costCategory === 2;
+      const isProductNeeded = costCategory === 1 || costCategory === 2 || isPlanting;
       setShowProductSelector(isProductNeeded);
       
-      // 檢查是否為採收類別
-      const isHarvest = selectedCategory.工作內容名稱 === '採收';
-      setShowHarvestQuantity(isHarvest);
-      
-      // 如果不需要產品，清除產品相關數據
-      if (!isProductNeeded) {
+      // 重置產品選擇相關狀態
+      if (isProductNeeded) {
+        setProductSearchTerm('');
+        setShowProductDropdown(false);
+        
+        // 如果是種植類別，直接過濾出種子種苗產品
+        if (isPlanting) {
+          setFilteredProducts([]);
+          setSelectedProductCategory('');
+        }
+      } else {
+        // 如果不需要產品，清除產品相關數據
         setWorkLog(prev => ({
           ...prev,
           product_id: '',
@@ -320,6 +468,10 @@ const loadLocations = useCallback(async () => {
         }));
         setSelectedProductCategory('');
       }
+      
+      // 檢查是否為採收類別
+      const isHarvest = selectedCategory.工作內容名稱 === '採收';
+      setShowHarvestQuantity(isHarvest);
     } else {
       console.warn('找不到匹配的工作類別:', categoryCode);
       setWorkLog(prev => ({ ...prev, work_category_code: categoryCode, work_category_name: '' }));
@@ -327,7 +479,7 @@ const loadLocations = useCallback(async () => {
       setShowHarvestQuantity(false);
     }
   };
-
+  
   // 處理產品類別選擇
   const handleProductCategoryChange = (e) => {
     const category = e.target.value;
@@ -440,52 +592,61 @@ const loadLocations = useCallback(async () => {
     }
   };
 
-  // 驗證時間選擇
-  const validateTimeSelection = (startTime, endTime) => {
-    if (!startTime || !endTime) {
-      return { valid: false, message: '請選擇開始和結束時間' };
-    }
+// 驗證時間選擇
+const validateTimeSelection = (startTime, endTime) => {
+  if (!startTime || !endTime) {
+    return { valid: false, message: '請選擇開始和結束時間' };
+  }
+  
+  // 檢查是否在工作時間內 (07:30-16:30)
+  const minWorkTime = new Date('2000-01-01T07:30:00');
+  const maxWorkTime = new Date('2000-01-01T16:30:00');
+  const lunchStart = new Date('2000-01-01T12:00:00');
+  const lunchEnd = new Date('2000-01-01T13:00:00');
+  
+  const start = new Date(`2000-01-01T${startTime}:00`);
+  const end = new Date(`2000-01-01T${endTime}:00`);
+  
+  if (start < minWorkTime || end > maxWorkTime) {
+    return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
+  }
+  
+  if (start >= end) {
+    return { valid: false, message: '結束時間必須晚於開始時間' };
+  }
+  
+  // 檢查是否與午休時間重疊
+  if ((start < lunchStart && end > lunchStart) || 
+      (start >= lunchStart && start < lunchEnd)) {
+    return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
+  }
+  
+  // 增強檢查: 詳細檢查是否與已提交的時段重疊
+  for (const log of todayWorkLogs) {
+    // 確保時間格式一致
+    if (!log.start_time || !log.end_time) continue;
     
-    // 檢查是否在工作時間內 (07:30-16:30)
-    const minWorkTime = new Date('2000-01-01T07:30:00');
-    const maxWorkTime = new Date('2000-01-01T16:30:00');
-    const lunchStart = new Date('2000-01-01T12:00:00');
-    const lunchEnd = new Date('2000-01-01T13:00:00');
+    const logStart = new Date(`2000-01-01T${log.start_time}`);
+    const logEnd = new Date(`2000-01-01T${log.end_time}`);
     
-    const start = new Date(`2000-01-01T${startTime}:00`);
-    const end = new Date(`2000-01-01T${endTime}:00`);
-    
-    if (start < minWorkTime || end > maxWorkTime) {
-      return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
-    }
-    
-    if (start >= end) {
-      return { valid: false, message: '結束時間必須晚於開始時間' };
-    }
-    
-    // 檢查是否與午休時間重疊
-    if ((start < lunchStart && end > lunchStart) || 
-        (start >= lunchStart && start < lunchEnd)) {
-      return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
-    }
-    
-    // 檢查是否與已提交的時段重疊
-    for (const log of todayWorkLogs) {
-      const logStart = new Date(`2000-01-01T${log.start_time}:00`);
-      const logEnd = new Date(`2000-01-01T${log.end_time}:00`);
+    // 檢查所有可能的重疊情況
+    // 情況1: 新時段的開始時間在已存在時段內
+    // 情況2: 新時段的結束時間在已存在時段內
+    // 情況3: 新時段完全包含已存在時段
+    // 情況4: 新時段完全被已存在時段包含
+    if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
+        (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
+        (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
       
-      if ((start >= logStart && start < logEnd) || 
-          (end > logStart && end <= logEnd) ||
-          (start <= logStart && end >= logEnd)) {
-        return { 
-          valid: false, 
-          message: `所選時間與已存在的時段重疊：${log.start_time}-${log.end_time}` 
-        };
-      }
+      return { 
+        valid: false, 
+        message: `所選時間與已存在的時段「${log.start_time.substring(0, 5)}-${log.end_time.substring(0, 5)}」重疊` 
+      };
     }
-    
-    return { valid: true, message: '' };
-  };
+  }
+  
+  return { valid: true, message: '' };
+};
 
   // 驗證表單
   const validateForm = () => {
@@ -568,11 +729,43 @@ const loadLocations = useCallback(async () => {
       
       console.log('提交工作日誌數據:', submitData);
       
-      const response = await submitWorkLog(submitData);
+      const response = await createWorkLog(submitData);
       console.log('工作日誌提交成功:', response);
       
-      // 重新載入今日日誌
-      await loadTodayWorkLogs();
+      // ===== 修復部分 - 開始 =====
+      // 1. 立即將成功提交的日誌添加到當前顯示的日誌列表中
+      const submittedLog = {
+        ...submitData,
+        id: response.workLogId || Date.now(), // 使用返回的ID或臨時生成一個
+        start_time: submitData.startTime,
+        end_time: submitData.endTime,
+        position_name: submitData.position_name,
+        work_category_name: submitData.work_category_name,
+        details: submitData.details,
+        created_at: new Date().toISOString()
+      };
+      
+      // 添加到日誌列表中(使用 dateWorkLogs 或 todayWorkLogs，取決於你的代碼結構)
+      const updatedLogs = [...(dateWorkLogs || todayWorkLogs), submittedLog];
+      if (typeof setDateWorkLogs === 'function') {
+        setDateWorkLogs(updatedLogs);
+      } else if (typeof setTodayWorkLogs === 'function') {
+        setTodayWorkLogs(updatedLogs);
+      }
+      
+      // 2. 重新計算剩餘工時
+      const { remainingHours } = calculateWorkHours(updatedLogs);
+      setRemainingHours(remainingHours);
+      
+      // 3. 為確保數據一致性，仍然從服務器重新載入日誌
+      // 使用選定日期或今天日期重新載入
+      const dateToReload = selectedDate || new Date().toISOString().split('T')[0];
+      if (typeof loadDateWorkLogs === 'function') {
+        await loadDateWorkLogs(dateToReload);
+      } else if (typeof loadTodayWorkLogs === 'function') {
+        await loadTodayWorkLogs();
+      }
+      // ===== 修復部分 - 結束 =====
       
       // 重置表單，但保留位置和工作類別
       const resetForm = {
@@ -616,7 +809,7 @@ const loadLocations = useCallback(async () => {
       }
     }
   };
-  
+    
   // 渲染欄位錯誤訊息
   const renderFieldError = (fieldName) => {
     if (formErrors[fieldName]) {
@@ -632,6 +825,30 @@ const loadLocations = useCallback(async () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-4xl mx-auto">
+
+      <div className="mb-4">
+        <Button 
+          onClick={handleGoBack}
+          variant="secondary"
+          className="flex items-center text-sm"
+        >
+          <svg 
+            xmlns="http://www.w3.org/2000/svg" 
+            className="h-5 w-5 mr-1" 
+            viewBox="0 0 20 20" 
+            fill="currentColor"
+          >
+            <path 
+              fillRule="evenodd" 
+              d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
+              clipRule="evenodd" 
+            />
+          </svg>
+          返回
+        </Button>
+      </div>
+
+
         <h2 className="text-2xl font-bold mb-4 text-center">工作日誌登錄</h2>
         
         {/* 伺服器連線狀態 */}
@@ -799,6 +1016,35 @@ const loadLocations = useCallback(async () => {
                 </div>
               </div>
 
+
+              <div>
+                <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
+                <select
+                  value={workLog.crop}
+                  onChange={(e) => {
+                    setWorkLog(prev => ({ ...prev, crop: e.target.value }));
+                    setFormErrors(prev => ({ ...prev, crop: null }));
+                  }}  
+                  className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                    formErrors.crop ? 'border border-red-500' : ''
+                  }`}
+                  disabled={!workLog.position_code || availableCrops.length === 0}
+                >
+                  <option value="">選擇作物</option>
+                  {availableCrops.map(crop => (
+                    <option key={crop} value={crop}>{crop}</option>
+                ))}
+                </select>
+                {renderFieldError('crop')}
+                {workLog.position_code && availableCrops.length === 0 && (
+                  <p className="text-yellow-500 text-xs mt-1">
+                    此位置沒有記錄種植作物，請手動輸入作物名稱或先記錄種植工作
+                  </p>
+                )}
+              </div>
+
+
+
               {/* 工作類別選擇 */}
               <div>
                 <label className="block mb-2">工作類別 <span className="text-red-500">*</span></label>
@@ -821,70 +1067,112 @@ const loadLocations = useCallback(async () => {
 
               {/* 產品選擇（條件性顯示） */}
               {showProductSelector && (
-                <div className="border border-gray-600 p-4 rounded-lg">
-                  <h3 className="text-lg font-semibold mb-2">產品資訊</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block mb-2">產品類別 <span className="text-red-500">*</span></label>
-                      <select
-                        value={selectedProductCategory}
-                        onChange={handleProductCategoryChange}
-                        className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                          formErrors.product_category ? 'border border-red-500' : ''
-                        }`}
-                      >
-                        <option value="">選擇產品類別</option>
-                        <option value="801">葉菜類</option>
-                        <option value="802">水果類</option>
-                        <option value="803">瓜果類</option>
-                        <option value="804">家禽類</option>
-                        <option value="805">魚類</option>
-                        <option value="806">加工品類</option>
-                        <option value="807">葉菜種子種苗</option>
-                        <option value="808">水果種子種苗</option>
-                        <option value="809">肥料</option>
-                        <option value="810">資材</option>
-                        <option value="811">飼料</option>
-                      </select>
-                      {renderFieldError('product_category')}
-                    </div>
-                    <div>
-                      <label className="block mb-2">產品 <span className="text-red-500">*</span></label>
-                      <select
-                        value={workLog.product_id}
-                        onChange={handleProductChange}
-                        className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                          formErrors.product ? 'border border-red-500' : ''
-                        }`}
-                        disabled={!selectedProductCategory}
-                      >
-                        <option value="">選擇產品</option>
-                        {filteredProducts.map(product => (
-                          <option key={product.商品編號} value={product.商品編號}>
-                            {product.規格} ({product.單位})
-                          </option>
-                        ))}
-                      </select>
-                      {renderFieldError('product')}
-                    </div>
-                    <div>
-                      <label className="block mb-2">數量 <span className="text-red-500">*</span></label>
-                      <Input 
-                        type="number"
-                        name="product_quantity"
-                        value={workLog.product_quantity || ''}
-                        onChange={handleNumberChange}
-                        placeholder="請輸入數量"
-                        min="0"
-                        step="0.01"
-                        className={formErrors.product_quantity ? 'border border-red-500' : ''}
-                      />
-                      {renderFieldError('product_quantity')}
-                    </div>
+  <div className="border border-gray-600 p-4 rounded-lg">
+    <h3 className="text-lg font-semibold mb-2">產品資訊</h3>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* 如果是種植類別，直接顯示搜索框而不需要先選種類 */}
+      {workLog.work_category_name === '種植' ? (
+        <div className="md:col-span-2">
+          <label className="block mb-2">種子種苗產品 <span className="text-red-500">*</span></label>
+          <div className="relative">
+            <Input 
+              type="text"
+              value={productSearchTerm}
+              onChange={handleProductSearchChange}
+              placeholder="輸入關鍵字搜尋種子種苗..."
+              className={formErrors.product ? 'border border-red-500' : ''}
+              onFocus={() => setShowProductDropdown(true)}
+              onBlur={() => {
+                // 延遲關閉下拉框，使點擊事件能先觸發
+                setTimeout(() => setShowProductDropdown(false), 200);
+              }}
+            />
+            {showProductDropdown && getFilteredProducts().length > 0 && (
+              <div className="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                {getFilteredProducts().map(product => (
+                  <div 
+                    key={product.商品編號}
+                    className="p-2 hover:bg-gray-700 cursor-pointer"
+                    onMouseDown={() => handleProductSelect(product)}
+                  >
+                    <div className="font-medium">{product.商品編號} - {product.規格}</div>
+                    <div className="text-sm text-gray-400">單位: {product.單位}</div>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
+            )}
+          </div>
+          {renderFieldError('product')}
+          <p className="text-xs text-gray-400 mt-1">
+            請輸入關鍵字搜尋葉菜類或水果類種子種苗
+          </p>
+        </div>
+      ) : (
+        // 原有的產品類別和產品選擇代碼保持不變
+        <>
+          <div>
+            <label className="block mb-2">產品類別 <span className="text-red-500">*</span></label>
+            <select
+              value={selectedProductCategory}
+              onChange={handleProductCategoryChange}
+              className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                formErrors.product_category ? 'border border-red-500' : ''
+              }`}
+            >
+              <option value="">選擇產品類別</option>
+              <option value="801">葉菜類</option>
+              <option value="802">水果類</option>
+              <option value="803">瓜果類</option>
+              <option value="804">家禽類</option>
+              <option value="805">魚類</option>
+              <option value="806">加工品類</option>
+              <option value="807">葉菜種子種苗</option>
+              <option value="808">水果種子種苗</option>
+              <option value="809">肥料</option>
+              <option value="810">資材</option>
+              <option value="811">飼料</option>
+            </select>
+            {renderFieldError('product_category')}
+          </div>
+          <div>
+            <label className="block mb-2">產品 <span className="text-red-500">*</span></label>
+            <select
+              value={workLog.product_id}
+              onChange={handleProductChange}
+              className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                formErrors.product ? 'border border-red-500' : ''
+              }`}
+              disabled={!selectedProductCategory}
+            >
+              <option value="">選擇產品</option>
+              {filteredProducts.map(product => (
+                <option key={product.商品編號} value={product.商品編號}>
+                  {product.規格} ({product.單位})
+                </option>
+              ))}
+            </select>
+            {renderFieldError('product')}
+          </div>
+        </>
+      )}
 
+      <div>
+        <label className="block mb-2">數量 <span className="text-red-500">*</span></label>
+        <Input 
+          type="number"
+          name="product_quantity"
+          value={workLog.product_quantity || ''}
+          onChange={handleNumberChange}
+          placeholder="請輸入數量"
+          min="0"
+          step="0.01"
+          className={formErrors.product_quantity ? 'border border-red-500' : ''}
+        />
+        {renderFieldError('product_quantity')}
+      </div>
+    </div>
+  </div>
+)}
               {/* 採收重量（條件性顯示） */}
               {showHarvestQuantity && (
                 <div>
