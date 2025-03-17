@@ -36,7 +36,8 @@ const WorkLogForm = () => {
   
   // 相關數據
   const [areas, setAreas] = useState([]);
-  const [positions, setPositions] = useState([]);
+  const [allPositions, setAllPositions] = useState([]); // 儲存所有位置
+  const [positions, setPositions] = useState([]); // 儲存篩選後的位置
   const [workCategories, setWorkCategories] = useState([]);
   const [products, setProducts] = useState([]);
   const [filteredProducts, setFilteredProducts] = useState([]);
@@ -55,6 +56,7 @@ const WorkLogForm = () => {
   const [seedProducts, setSeedProducts] = useState([]); // 儲存所有種子種苗產品
   const [productSearchTerm, setProductSearchTerm] = useState(''); // 搜索詞
   const [showProductDropdown, setShowProductDropdown] = useState(false); // 控制下拉列表顯示
+  const [dataLoaded, setDataLoaded] = useState(false); // 追蹤基本數據載入狀態
 
   
   // 表單驗證
@@ -94,17 +96,17 @@ const WorkLogForm = () => {
         // 提取唯一的區域名稱
         const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
         setAreas(uniqueAreas);
-        // 設置所有位置數據
-        setPositions(locationData); // 這行是關鍵
+        // 儲存所有位置數據
+        setAllPositions(locationData);
       } else {
         console.error('位置資料格式不正確', locationData);
         setAreas([]);
-        setPositions([]);
+        setAllPositions([]);
       }
     } catch (err) {
       console.error('載入位置資料失敗', err);
       setAreas([]);
-      setPositions([]);
+      setAllPositions([]);
     }
   }, []);
 
@@ -191,104 +193,7 @@ const WorkLogForm = () => {
     setFormErrors(prev => ({ ...prev, product: null }));
   };
 
-  // 載入指定日期的工作日誌
-  const loadDateWorkLogs = useCallback(async (date) => {
-    try {
-      console.log('正在載入指定日期工作日誌，日期:', date);
-      
-      const logs = await fetchWorkLogs({ 
-        startDate: date, 
-        endDate: date 
-      });
-      
-      console.log('API返回的工作日誌原始數據:', logs);
-      
-      if (!Array.isArray(logs)) {
-        console.error('工作日誌資料格式不正確', logs);
-        setDateWorkLogs([]);
-        setRemainingHours(8);
-        return;
-      }
-      
-      console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
-      
-      // 標準化時間格式
-      const normalizedLogs = logs.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
-        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
-      }));
-      
-      console.log('標準化後的工作日誌:', normalizedLogs);
-      setDateWorkLogs(normalizedLogs);
-      
-      // 如果是今天的日期，同時更新todayWorkLogs
-      const today = new Date().toISOString().split('T')[0];
-      if (date === today) {
-        setTodayWorkLogs(normalizedLogs);
-      }
-      
-      // 計算剩餘工時
-      const { remainingHours } = calculateWorkHours(normalizedLogs);
-      console.log('剩餘工時計算結果:', remainingHours);
-      setRemainingHours(remainingHours);
-      
-      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
-      if (normalizedLogs.length > 0) {
-        const sortedLogs = [...normalizedLogs].sort((a, b) => {
-          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
-          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
-          return timeB - timeA; // 降序排列，最新的在前面
-        });
-        
-        const latestLog = sortedLogs[0];
-        if (latestLog && latestLog.end_time) {
-          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
-          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
-          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-          console.log('設置下一個開始時間為:', nextStartTime);
-        } else {
-          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-        }
-      } else {
-        // 沒有紀錄，從工作開始時間開始
-        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-      }
-    } catch (err) {
-      console.error('載入指定日期工作日誌失敗', err);
-      setDateWorkLogs([]);
-      setRemainingHours(8);
-      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-    }
-  }, [fetchWorkLogs, calculateWorkHours]);
-  
-  // 載入今日工作日誌
-  const loadTodayWorkLogs = useCallback(async () => {
-    // 直接使用loadDateWorkLogs加載當天的日誌
-    const today = new Date().toISOString().split('T')[0];
-    await loadDateWorkLogs(today);
-  }, [loadDateWorkLogs]);
-  
-  // 載入初始數據
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setFormErrors({});
-        await Promise.all([
-          loadLocations(),
-          loadWorkCategories(),
-          loadProducts(),
-          loadDateWorkLogs(selectedDate)
-        ]);
-      } catch (error) {
-        console.error('初始化數據失敗', error);
-      }
-    };
-    
-    loadData();
-  }, [loadLocations, loadWorkCategories, loadProducts, loadDateWorkLogs, selectedDate]);
-
-  // 計算工作時長
+  // 計算工作時長 - 必須在 loadDateWorkLogs 之前定義
   const calculateWorkHours = useCallback((logs) => {
     console.log("計算工時，日誌數量:", logs?.length, "日誌內容:", logs);
     
@@ -366,6 +271,84 @@ const WorkLogForm = () => {
     return { totalHours, remainingHours };
   }, []);
   
+  // 載入指定日期的工作日誌
+  const loadDateWorkLogs = useCallback(async (date) => {
+    try {
+      console.log('正在載入指定日期工作日誌，日期:', date);
+      
+      const logs = await fetchWorkLogs({ 
+        startDate: date, 
+        endDate: date 
+      });
+      
+      console.log('API返回的工作日誌原始數據:', logs);
+      
+      if (!Array.isArray(logs)) {
+        console.error('工作日誌資料格式不正確', logs);
+        setDateWorkLogs([]);
+        setRemainingHours(8);
+        return;
+      }
+      
+      console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
+      
+      // 標準化時間格式
+      const normalizedLogs = logs.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
+        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
+      }));
+      
+      console.log('標準化後的工作日誌:', normalizedLogs);
+      setDateWorkLogs(normalizedLogs);
+      
+      // 如果是今天的日期，同時更新todayWorkLogs
+      const today = new Date().toISOString().split('T')[0];
+      if (date === today) {
+        setTodayWorkLogs(normalizedLogs);
+      }
+      
+      // 計算剩餘工時
+      const { remainingHours } = calculateWorkHours(normalizedLogs);
+      console.log('剩餘工時計算結果:', remainingHours);
+      setRemainingHours(remainingHours);
+      
+      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
+      if (normalizedLogs.length > 0) {
+        const sortedLogs = [...normalizedLogs].sort((a, b) => {
+          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
+          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
+          return timeB - timeA; // 降序排列，最新的在前面
+        });
+        
+        const latestLog = sortedLogs[0];
+        if (latestLog && latestLog.end_time) {
+          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
+          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
+          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+          console.log('設置下一個開始時間為:', nextStartTime);
+        } else {
+          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+        }
+      } else {
+        // 沒有紀錄，從工作開始時間開始
+        setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+      }
+    } catch (err) {
+      console.error('載入指定日期工作日誌失敗', err);
+      setDateWorkLogs([]);
+      setRemainingHours(8);
+      setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+    }
+  }, [fetchWorkLogs, calculateWorkHours]);
+  
+  // 載入今日工作日誌
+  const loadTodayWorkLogs = useCallback(async () => {
+    // 直接使用loadDateWorkLogs加載當天的日誌
+    const today = new Date().toISOString().split('T')[0];
+    await loadDateWorkLogs(today);
+  }, [loadDateWorkLogs]);
+
   // 處理日期變更
   const handleDateChange = (e) => {
     const newDate = e.target.value;
@@ -373,6 +356,44 @@ const WorkLogForm = () => {
     setFormErrors(prev => ({ ...prev, date: null }));
     loadDateWorkLogs(newDate);
   };
+
+  // 只在組件掛載時載入一次基礎數據 (區域、類別、產品)
+  useEffect(() => {
+    if (!dataLoaded) {
+      const loadBaseData = async () => {
+        try {
+          setFormErrors({});
+          await Promise.all([
+            loadLocations(),
+            loadWorkCategories(),
+            loadProducts()
+          ]);
+          setDataLoaded(true);
+        } catch (error) {
+          console.error('初始化基礎數據失敗', error);
+        }
+      };
+      
+      loadBaseData();
+    }
+  }, [loadLocations, loadWorkCategories, loadProducts, dataLoaded]);
+
+  // 日期變化時載入對應日期的工作日誌
+  useEffect(() => {
+    if (dataLoaded) {
+      loadDateWorkLogs(selectedDate);
+    }
+  }, [loadDateWorkLogs, selectedDate, dataLoaded]);
+  
+  // 當區域變化時更新位置列表
+  useEffect(() => {
+    if (selectedArea) {
+      const filteredPositions = allPositions.filter(pos => pos.區域名稱 === selectedArea);
+      setPositions(filteredPositions);
+    } else {
+      setPositions([]);
+    }
+  }, [selectedArea, allPositions]);
   
   // 處理區域選擇
   const handleAreaChange = (e) => {
@@ -380,19 +401,13 @@ const WorkLogForm = () => {
     setSelectedArea(areaName);
     setFormErrors(prev => ({ ...prev, area: null }));
     
-    // 依據選擇的區域篩選位置
-    if (areaName) {
-      // 從全部位置中篩選出屬於該區域的位置
-      const filteredPositions = Array.isArray(positions) 
-        ? positions.filter(pos => pos.區域名稱 === areaName)
-        : [];
-      setPositions(filteredPositions);
-    } else {
-      setPositions([]);
-    }
-    
     // 清除已選位置
-    setWorkLog(prev => ({ ...prev, position_code: '', position_name: '' }));
+    setWorkLog(prev => ({ 
+      ...prev, 
+      position_code: '', 
+      position_name: '',
+      location_code: ''
+    }));
   };
 
   // 處理位置選擇
@@ -972,7 +987,7 @@ const WorkLogForm = () => {
                   )}
                 </div>
                 <div>
-                  <p className="text-sm text-gray-300">今日剩餘工時：</p>
+                  <p className="text-sm text-gray-300">剩餘工時：</p>
                   <p className="text-2xl font-bold text-yellow-400">{remainingHours} 小時</p>
                   {parseFloat(remainingHours) > 0 && (
                     <p className="text-red-400 text-sm mt-1">
