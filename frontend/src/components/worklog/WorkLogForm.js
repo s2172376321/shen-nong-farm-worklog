@@ -797,12 +797,21 @@ const handleSubmit = async (e) => {
     
     // 確保提交數據包含所有必要欄位
     const submitData = {
-      ...workLog,
-      // 確保這些欄位存在且有值
-      location: workLog.position_name || "", // 使用position_name作為location
-      date: selectedDate // 添加選定日期
-    };
-    
+      location_code: workLog.location_code || '',
+      position_code: workLog.position_code || '',
+      position_name: workLog.position_name || '',
+      work_category_code: workLog.work_category_code || '',
+      work_category_name: workLog.work_category_name || '',
+      startTime: workLog.startTime || '',  // 保持與後端一致的字段名
+      endTime: workLog.endTime || '',      // 保持與後端一致的字段名
+      details: workLog.details || '',
+      harvestQuantity: workLog.harvestQuantity || 0,
+      product_id: workLog.product_id || '',
+      product_name: workLog.product_name || '',
+      product_quantity: workLog.product_quantity || 0,
+      crop: workLog.crop || '',
+      date: selectedDate  // 明確添加日期字段
+    };    
     console.log('提交工作日誌數據:', JSON.stringify(submitData, null, 2));
     
     const response = await submitWorkLog(submitData);

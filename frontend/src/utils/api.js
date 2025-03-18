@@ -2,6 +2,12 @@
 import axios from 'axios';
 
 
+
+const throttleMap = new Map();
+
+
+
+
 // 快取存儲
 const apiCache = {
   data: {},
@@ -36,38 +42,31 @@ const api = axios.create({
   timeout: 15000  // 增加超時時間到15秒
 });
 
-// 節流函數 - 修改為更寬容的版本
-const throttleMap = new Map();
+// 節流函數 - 修改為更好的版本
 const throttle = (key, fn, delay = 3000) => {
   const now = Date.now();
   
-  // 檢查是否存在並且在冷卻期
   if (throttleMap.has(key)) {
-    const { timestamp, rejectCount } = throttleMap.get(key);
-    const timeSince = now - timestamp;
-    
-    // 如果距離上次請求超過3秒，允許通過
-    if (timeSince > 3000) {
-      console.log(`${key} 請求間隔已超過3秒，允許通過`);
-    } 
-    // 否則記錄重複請求但仍然允許通過
-    else {
-      console.log(`${key} 請求間隔較短 (${timeSince}ms)，但仍允許`);
-      throttleMap.set(key, {
-        timestamp,
-        rejectCount: (rejectCount || 0) + 1
-      });
+    const { timestamp } = throttleMap.get(key);
+    if (now - timestamp < delay) {
+      console.log(`請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
+      return Promise.reject(new Error('Request throttled'));
     }
   }
-
-  // 更新節流映射
-  throttleMap.set(key, {
-    timestamp: now,
-    rejectCount: 0
-  });
   
-  return fn();
+  throttleMap.set(key, { timestamp: now });
+  
+  return fn().finally(() => {
+    // 請求完成後不要立即刪除，而是延遲一段時間
+    setTimeout(() => {
+      throttleMap.delete(key);
+    }, delay);
+  });
 };
+
+
+
+
 
 // 標記公告為已讀
 export const markNoticeAsRead = async (noticeId) => {
