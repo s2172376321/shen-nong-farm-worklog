@@ -76,6 +76,7 @@ export const markNoticeAsRead = async (noticeId) => {
 
 
 
+// 修改 fetchLocationCrops 函數，增強錯誤處理
 export const fetchLocationCrops = async (positionCode) => {
   // 檢查缓存
   const cacheKey = `locationCrops:${positionCode}`;
@@ -88,8 +89,16 @@ export const fetchLocationCrops = async (positionCode) => {
   try {
     console.log(`嘗試獲取位置 ${positionCode} 的作物列表`);
     
-    // 使用已配置的api实例，确保添加了Authorization头
-    const response = await api.get(`/work-logs/position/${positionCode}/crops`);
+    // 增加超時設置
+    const response = await api.get(`/work-logs/position/${positionCode}/crops`, {
+      timeout: 10000
+    });
+    
+    // 檢查返回數據格式
+    if (!Array.isArray(response.data)) {
+      console.warn(`位置 ${positionCode} 返回了非數組數據:`, response.data);
+      return [];
+    }
     
     // 存儲到快取
     apiCache.set(cacheKey, response.data, 3600000); // 快取1小時
@@ -537,9 +546,13 @@ export const uploadCSV = async (csvFile) => {
   }
 };
 
+// 修改 searchWorkLogs 函數，增強錯誤處理和日誌記錄
 export const searchWorkLogs = async (filters) => {
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  // 詳細日誌
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
   
   // 檢查快取
   const cachedData = apiCache.get(cacheKey);
@@ -549,24 +562,69 @@ export const searchWorkLogs = async (filters) => {
   }
   
   try {
-    // 使用節流避免頻繁請求
-    const response = await throttle(
-      `searchWorkLogs:${JSON.stringify(filters)}`,
-      () => api.get('/work-logs/search', { params: filters }),
-      5000  // 增加節流時間
-    );
+    console.log('開始發送工作日誌搜尋請求');
     
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+    // 加上超時處理
+    const response = await api.get('/work-logs/search', { 
+      params: filters,
+      timeout: 15000  // 增加超時時間到15秒
+    });
     
-    return response.data;
+    console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
+    
+    // 標準化日期和時間格式
+    if (Array.isArray(response.data)) {
+      const normalizedData = response.data.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.start_time,
+        end_time: log.end_time?.substring(0, 5) || log.end_time,
+        created_at: log.created_at || new Date().toISOString()
+      }));
+      
+      // 儲存到快取
+      apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+      
+      return normalizedData;
+    }
+    
+    // 如果返回的不是數組，記錄錯誤並返回空數組
+    console.error('API返回了非數組數據:', response.data);
+    return [];
   } catch (error) {
-    // 如果是節流錯誤，顯示友好提示
-    if (error.message === 'Request throttled') {
-      console.warn('請求過於頻繁，請稍後再試');
+    // 詳細日誌
+    console.error('searchWorkLogs 錯誤:', {
+      message: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: error.config?.url,
+      params: JSON.stringify(error.config?.params)
+    });
+    
+    // 如果是404，不是真正的錯誤，只是沒有記錄
+    if (error.response && error.response.status === 404) {
+      console.log('沒有找到符合條件的工作日誌');
       return [];
     }
-    throw error;
+    
+    // 針對常見的錯誤類型提供更好的處理
+    if (!navigator.onLine) {
+      console.warn('瀏覽器處於離線狀態');
+      return [];
+    }
+    
+    if (error.code === 'ECONNABORTED') {
+      console.warn('請求超時');
+      return [];
+    }
+    
+    if (error.response && error.response.status === 401) {
+      console.warn('身份驗證已過期，需要重新登入');
+      // 可以在這裡添加重新導向到登入頁面的邏輯
+      return [];
+    }
+    
+    // 其他錯誤，返回空數組
+    return [];
   }
 };
 
@@ -596,7 +654,7 @@ export const getTodayHour = async () => {
     try {
       console.log(`嘗試獲取今日工時 (${retryCount}/${maxRetries})`);
       
-      // 使用增加的超時時間直接發送請求，避開節流
+      // 使用增加的超時時間
       const response = await api.get('/work-logs/today-hour', {
         timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
       });
@@ -608,16 +666,23 @@ export const getTodayHour = async () => {
         throw new Error('回應數據格式不正確');
       }
       
-      // 增加快取時間
-      apiCache.set('todayHour', data, 180000); // 快取3分鐘
+      // 確保數據格式一致
+      const formattedData = {
+        total_hours: parseFloat(data.total_hours || 0).toFixed(2),
+        remaining_hours: parseFloat(data.remaining_hours || 8).toFixed(2),
+        is_complete: Boolean(data.is_complete)
+      };
       
-      console.log('成功獲取今日工時:', data);
-      return data;
+      // 快取時間
+      apiCache.set('todayHour', formattedData, 180000); // 快取3分鐘
+      
+      console.log('成功獲取今日工時:', formattedData);
+      return formattedData;
     } catch (error) {
       retryCount++;
       console.error(`獲取今日工時失敗 (${retryCount}/${maxRetries}):`, error.message);
       
-      // 如果還有重試機會，等待後重試
+      // 重試邏輯
       if (retryCount <= maxRetries) {
         const delay = 2000 * retryCount; // 隨著重試次數增加延遲
         console.log(`等待 ${delay}ms 後重試...`);
