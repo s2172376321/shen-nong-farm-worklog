@@ -8,11 +8,10 @@ import {
   fetchWorkCategories, 
   fetchProducts, 
   checkServerHealth,
-  fetchLocationCrops  // 新增導入 fetchLocationCrops
+  fetchLocationCrops 
 } from '../../utils/api';
 
-const WorkLogForm = () => {
-  // eslint-disable-next-line no-unused-vars
+const WorkLogForm = ({ onSubmitSuccess }) => {
   const { user, logout } = useAuth();                                                                        
   const { submitWorkLog, uploadCSV, fetchWorkLogs, isLoading: apiLoading, error } = useWorkLog();
   
@@ -43,7 +42,8 @@ const WorkLogForm = () => {
     harvestQuantity: 0,
     product_id: '',
     product_name: '',
-    product_quantity: 0
+    product_quantity: 0,
+    crop: ''  // 新增作物欄位
   });
   
   // 相關數據
@@ -55,9 +55,7 @@ const WorkLogForm = () => {
   const [filteredProducts, setFilteredProducts] = useState([]);
   const [availableCrops, setAvailableCrops] = useState([]);
 
-  
-  // 使用者今日已提交的工作時段 - 雖然未直接使用，但在提交時會用到
-  // eslint-disable-next-line no-unused-vars
+  // 使用者今日已提交的工作時段
   const [todayWorkLogs, setTodayWorkLogs] = useState([]);
   
   // 狀態控制
@@ -71,7 +69,6 @@ const WorkLogForm = () => {
   const [showProductDropdown, setShowProductDropdown] = useState(false); // 控制下拉列表顯示
   const [dataLoaded, setDataLoaded] = useState(false); // 追蹤基本數據載入狀態
 
-  
   // 表單驗證
   const [formErrors, setFormErrors] = useState({});
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
@@ -206,7 +203,7 @@ const WorkLogForm = () => {
     setFormErrors(prev => ({ ...prev, product: null }));
   };
 
-  // 計算工作時長 - 必須在 loadDateWorkLogs 之前定義
+  // 計算工作時長
   const calculateWorkHours = useCallback((logs) => {
     console.log("計算工時，日誌數量:", logs?.length, "日誌內容:", logs);
     
@@ -355,8 +352,7 @@ const WorkLogForm = () => {
     }
   }, [fetchWorkLogs, calculateWorkHours]);
   
-  // 載入今日工作日誌 - 雖然未直接使用，但保留為公共方法
-  // eslint-disable-next-line no-unused-vars
+  // 載入今日工作日誌
   const loadTodayWorkLogs = useCallback(async () => {
     // 直接使用loadDateWorkLogs加載當天的日誌
     const today = new Date().toISOString().split('T')[0];
@@ -376,6 +372,7 @@ const WorkLogForm = () => {
     if (!dataLoaded) {
       const loadBaseData = async () => {
         try {
+          setIsLoading(true);
           setFormErrors({});
           await Promise.all([
             loadLocations(),
@@ -383,8 +380,10 @@ const WorkLogForm = () => {
             loadProducts()
           ]);
           setDataLoaded(true);
+          setIsLoading(false);
         } catch (error) {
           console.error('初始化基礎數據失敗', error);
+          setIsLoading(false);
         }
       };
       
@@ -603,6 +602,13 @@ const WorkLogForm = () => {
     setWorkLog(prev => ({ ...prev, [name]: value }));
   };
 
+  // 處理作物選擇
+  const handleCropChange = (e) => {
+    const crop = e.target.value;
+    setWorkLog(prev => ({ ...prev, crop }));
+    setFormErrors(prev => ({ ...prev, crop: null }));
+  };
+
   // 處理 CSV 文件選擇
   const handleCsvFileChange = (e) => {
     const file = e.target.files[0];
@@ -634,6 +640,11 @@ const WorkLogForm = () => {
       const fileInput = document.getElementById('csv-file-input');
       if (fileInput) fileInput.value = '';
       setIsLoading(false); // 結束加載
+
+      // 呼叫父元件的成功回調
+      if (onSubmitSuccess) {
+        onSubmitSuccess();
+      }
     } catch (err) {
       console.error('CSV 上傳失敗:', err);
       setCsvError(err.userMessage || err.message || 'CSV 上傳失敗');
@@ -712,6 +723,11 @@ const WorkLogForm = () => {
     if (!workLog.work_category_code) {
       errors.work_category = '請選擇工作類別';
     }
+
+    // 作物驗證
+    if (!workLog.crop) {
+      errors.crop = '請選擇或輸入作物名稱';
+    }
     
     // 時間欄位驗證
     const timeValidation = validateTimeSelection(workLog.startTime, workLog.endTime);
@@ -777,13 +793,13 @@ const handleSubmit = async (e) => {
   try {
     // 提交前禁用重複提交
     if (isLoading) return;
+    setIsLoading(true);
     
     // 確保提交數據包含所有必要欄位
     const submitData = {
       ...workLog,
       // 確保這些欄位存在且有值
       location: workLog.position_name || "", // 使用position_name作為location
-      crop: workLog.crop || "", // 使用選擇的作物，而不是工作類別名稱
       date: selectedDate // 添加選定日期
     };
     
@@ -828,6 +844,7 @@ const handleSubmit = async (e) => {
       position_name: workLog.position_name,
       work_category_code: workLog.work_category_code,
       work_category_name: workLog.work_category_name,
+      crop: workLog.crop, // 保留作物選擇
       startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
       endTime: '',
       details: '',
@@ -839,9 +856,15 @@ const handleSubmit = async (e) => {
     
     setWorkLog(resetForm);
     setFormErrors({});
+    setIsLoading(false);
     
     // 顯示成功訊息
     alert('工作日誌提交成功！');
+
+    // 呼叫父元件的成功回調
+    if (onSubmitSuccess) {
+      onSubmitSuccess();
+    }
   } catch (err) {
     console.error('提交工作日誌詳細錯誤:', {
       message: err.message,
@@ -874,6 +897,8 @@ const handleSubmit = async (e) => {
     if (err.validationErrors) {
       setFormErrors(prev => ({ ...prev, ...err.validationErrors }));
     }
+    
+    setIsLoading(false);
   }
 };
 
@@ -1107,10 +1132,7 @@ const handleSubmit = async (e) => {
                 <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
                 <select
                   value={workLog.crop}
-                  onChange={(e) => {
-                    setWorkLog(prev => ({ ...prev, crop: e.target.value }));
-                    setFormErrors(prev => ({ ...prev, crop: null }));
-                  }}  
+                  onChange={handleCropChange}  
                   className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
                     formErrors.crop ? 'border border-red-500' : ''
                   }`}
@@ -1119,7 +1141,7 @@ const handleSubmit = async (e) => {
                   <option value="">選擇作物</option>
                   {availableCrops.map(crop => (
                     <option key={crop} value={crop}>{crop}</option>
-                ))}
+                  ))}
                 </select>
                 {renderFieldError('crop')}
                 {workLog.position_code && availableCrops.length === 0 && (
@@ -1127,9 +1149,17 @@ const handleSubmit = async (e) => {
                     此位置沒有記錄種植作物，請手動輸入作物名稱或先記錄種植工作
                   </p>
                 )}
+                {/* 當沒有可用作物時顯示手動輸入欄位 */}
+                {workLog.position_code && availableCrops.length === 0 && (
+                  <Input
+                    type="text"
+                    value={workLog.crop}
+                    onChange={(e) => setWorkLog(prev => ({ ...prev, crop: e.target.value }))}
+                    placeholder="請手動輸入作物名稱"
+                    className="mt-2"
+                  />
+                )}
               </div>
-
-
 
               {/* 工作類別選擇 */}
               <div>
@@ -1153,112 +1183,113 @@ const handleSubmit = async (e) => {
 
               {/* 產品選擇（條件性顯示） */}
               {showProductSelector && (
-  <div className="border border-gray-600 p-4 rounded-lg">
-    <h3 className="text-lg font-semibold mb-2">產品資訊</h3>
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* 如果是種植類別，直接顯示搜索框而不需要先選種類 */}
-      {workLog.work_category_name === '種植' ? (
-        <div className="md:col-span-2">
-          <label className="block mb-2">種子種苗產品 <span className="text-red-500">*</span></label>
-          <div className="relative">
-            <Input 
-              type="text"
-              value={productSearchTerm}
-              onChange={handleProductSearchChange}
-              placeholder="輸入關鍵字搜尋種子種苗..."
-              className={formErrors.product ? 'border border-red-500' : ''}
-              onFocus={() => setShowProductDropdown(true)}
-              onBlur={() => {
-                // 延遲關閉下拉框，使點擊事件能先觸發
-                setTimeout(() => setShowProductDropdown(false), 200);
-              }}
-            />
-            {showProductDropdown && getFilteredProducts().length > 0 && (
-              <div className="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                {getFilteredProducts().map(product => (
-                  <div 
-                    key={product.商品編號}
-                    className="p-2 hover:bg-gray-700 cursor-pointer"
-                    onMouseDown={() => handleProductSelect(product)}
-                  >
-                    <div className="font-medium">{product.商品編號} - {product.規格}</div>
-                    <div className="text-sm text-gray-400">單位: {product.單位}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          {renderFieldError('product')}
-          <p className="text-xs text-gray-400 mt-1">
-            請輸入關鍵字搜尋葉菜類或水果類種子種苗
-          </p>
-        </div>
-      ) : (
-        // 原有的產品類別和產品選擇代碼保持不變
-        <>
-          <div>
-            <label className="block mb-2">產品類別 <span className="text-red-500">*</span></label>
-            <select
-              value={selectedProductCategory}
-              onChange={handleProductCategoryChange}
-              className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                formErrors.product_category ? 'border border-red-500' : ''
-              }`}
-            >
-              <option value="">選擇產品類別</option>
-              <option value="801">葉菜類</option>
-              <option value="802">水果類</option>
-              <option value="803">瓜果類</option>
-              <option value="804">家禽類</option>
-              <option value="805">魚類</option>
-              <option value="806">加工品類</option>
-              <option value="807">葉菜種子種苗</option>
-              <option value="808">水果種子種苗</option>
-              <option value="809">肥料</option>
-              <option value="810">資材</option>
-              <option value="811">飼料</option>
-            </select>
-            {renderFieldError('product_category')}
-          </div>
-          <div>
-            <label className="block mb-2">產品 <span className="text-red-500">*</span></label>
-            <select
-              value={workLog.product_id}
-              onChange={handleProductChange}
-              className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                formErrors.product ? 'border border-red-500' : ''
-              }`}
-              disabled={!selectedProductCategory}
-            >
-              <option value="">選擇產品</option>
-              {filteredProducts.map(product => (
-                <option key={product.商品編號} value={product.商品編號}>
-                  {product.規格} ({product.單位})
-                </option>
-              ))}
-            </select>
-            {renderFieldError('product')}
-          </div>
-        </>
-      )}
+                <div className="border border-gray-600 p-4 rounded-lg">
+                  <h3 className="text-lg font-semibold mb-2">產品資訊</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* 如果是種植類別，直接顯示搜索框而不需要先選種類 */}
+                    {workLog.work_category_name === '種植' ? (
+                      <div className="md:col-span-2">
+                        <label className="block mb-2">種子種苗產品 <span className="text-red-500">*</span></label>
+                        <div className="relative">
+                          <Input 
+                            type="text"
+                            value={productSearchTerm}
+                            onChange={handleProductSearchChange}
+                            placeholder="輸入關鍵字搜尋種子種苗..."
+                            className={formErrors.product ? 'border border-red-500' : ''}
+                            onFocus={() => setShowProductDropdown(true)}
+                            onBlur={() => {
+                              // 延遲關閉下拉框，使點擊事件能先觸發
+                              setTimeout(() => setShowProductDropdown(false), 200);
+                            }}
+                          />
+                          {showProductDropdown && getFilteredProducts().length > 0 && (
+                            <div className="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                              {getFilteredProducts().map(product => (
+                                <div 
+                                  key={product.商品編號}
+                                  className="p-2 hover:bg-gray-700 cursor-pointer"
+                                  onMouseDown={() => handleProductSelect(product)}
+                                >
+                                  <div className="font-medium">{product.商品編號} - {product.規格}</div>
+                                  <div className="text-sm text-gray-400">單位: {product.單位}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {renderFieldError('product')}
+                        <p className="text-xs text-gray-400 mt-1">
+                          請輸入關鍵字搜尋葉菜類或水果類種子種苗
+                        </p>
+                      </div>
+                    ) : (
+                      // 原有的產品類別和產品選擇代碼保持不變
+                      <>
+                        <div>
+                          <label className="block mb-2">產品類別 <span className="text-red-500">*</span></label>
+                          <select
+                            value={selectedProductCategory}
+                            onChange={handleProductCategoryChange}
+                            className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                              formErrors.product_category ? 'border border-red-500' : ''
+                            }`}
+                          >
+                            <option value="">選擇產品類別</option>
+                            <option value="801">葉菜類</option>
+                            <option value="802">水果類</option>
+                            <option value="803">瓜果類</option>
+                            <option value="804">家禽類</option>
+                            <option value="805">魚類</option>
+                            <option value="806">加工品類</option>
+                            <option value="807">葉菜種子種苗</option>
+                            <option value="808">水果種子種苗</option>
+                            <option value="809">肥料</option>
+                            <option value="810">資材</option>
+                            <option value="811">飼料</option>
+                          </select>
+                          {renderFieldError('product_category')}
+                        </div>
+                        <div>
+                          <label className="block mb-2">產品 <span className="text-red-500">*</span></label>
+                          <select
+                            value={workLog.product_id}
+                            onChange={handleProductChange}
+                            className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                              formErrors.product ? 'border border-red-500' : ''
+                            }`}
+                            disabled={!selectedProductCategory}
+                          >
+                            <option value="">選擇產品</option>
+                            {filteredProducts.map(product => (
+                              <option key={product.商品編號} value={product.商品編號}>
+                                {product.規格} ({product.單位})
+                              </option>
+                            ))}
+                          </select>
+                          {renderFieldError('product')}
+                        </div>
+                      </>
+                    )}
 
-      <div>
-        <label className="block mb-2">數量 <span className="text-red-500">*</span></label>
-        <Input 
-          type="number"
-          name="product_quantity"
-          value={workLog.product_quantity || ''}
-          onChange={handleNumberChange}
-          placeholder="請輸入數量"
-          min="0"
-          step="0.01"
-          className={formErrors.product_quantity ? 'border border-red-500' : ''}
-        />
-        {renderFieldError('product_quantity')}
-      </div>
-    </div>
-  </div>
-)}
+                    <div>
+                      <label className="block mb-2">數量 <span className="text-red-500">*</span></label>
+                      <Input 
+                        type="number"
+                        name="product_quantity"
+                        value={workLog.product_quantity || ''}
+                        onChange={handleNumberChange}
+                        placeholder="請輸入數量"
+                        min="0"
+                        step="0.01"
+                        className={formErrors.product_quantity ? 'border border-red-500' : ''}
+                      />
+                      {renderFieldError('product_quantity')}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               {/* 採收重量（條件性顯示） */}
               {showHarvestQuantity && (
                 <div>
