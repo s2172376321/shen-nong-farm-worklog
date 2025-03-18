@@ -78,17 +78,41 @@ export const markNoticeAsRead = async (noticeId) => {
 
 
 export const fetchLocationCrops = async (positionCode) => {
+  // 檢查缓存
+  const cacheKey = `locationCrops:${positionCode}`;
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log(`使用快取的位置 ${positionCode} 作物列表数据`);
+    return cachedData;
+  }
+  
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/locations/${positionCode}/crops`, {
-      headers: getAuthHeader()
-    });
+    console.log(`嘗試獲取位置 ${positionCode} 的作物列表`);
+    
+    // 使用已配置的api实例，确保添加了Authorization头
+    const response = await api.get(`/work-logs/position/${positionCode}/crops`);
+    
+    // 存儲到快取
+    apiCache.set(cacheKey, response.data, 3600000); // 快取1小時
+    
     return response.data;
   } catch (error) {
-    handleApiError(error);
-    return []; // 返回空數組以避免錯誤
+    console.error(`獲取位置 ${positionCode} 的作物列表失敗:`, error);
+    
+    // 详细记录错误
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
+    
+    // 返回空數组，确保UI不会崩溃
+    return [];
   }
 };
-
 
 export const testAuth = async () => {
   try {
@@ -1006,5 +1030,36 @@ export const checkServerHealth = async () => {
     };
   }
 };
+
+
+export const getApiStatus = async () => {
+  try {
+    // 使用現有的健康檢查函數
+    const healthStatus = await checkServerHealth();
+    
+    // 擴展傳回的狀態資訊
+    return {
+      ...healthStatus,
+      cacheStatus: {
+        size: Object.keys(apiCache.data).length,
+        keys: Object.keys(apiCache.data)
+      },
+      throttleStatus: {
+        size: throttleMap.size,
+        keys: Array.from(throttleMap.keys())
+      },
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('獲取API狀態失敗:', error);
+    return {
+      status: 'error',
+      message: '無法獲取API狀態資訊',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+  }
+};
+
 
 export default api;

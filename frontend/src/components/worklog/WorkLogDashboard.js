@@ -1,20 +1,27 @@
 // 位置：frontend/src/components/worklog/WorkLogDashboard.js
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { searchWorkLogs, fetchLocationsByArea, fetchWorkCategories } from '../../utils/api';
+import { searchWorkLogs, fetchLocationsByArea, fetchWorkCategories, getApiStatus } from '../../utils/api';
 import { Button, Card, Input } from '../ui';
 import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
 import LocationSelector from '../common/LocationSelector';
+import ApiDiagnostic from '../common/ApiDiagnostic';
+import { useWorkLog } from '../../hooks/useWorkLog';
 
 const WorkLogDashboard = () => {
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+  const { fetchWorkLogs, clearCache } = useWorkLog();
   const [workLogs, setWorkLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [areaData, setAreaData] = useState([]);
   const [workCategories, setWorkCategories] = useState([]);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
   
   // 過濾條件
   const [filters, setFilters] = useState({
@@ -24,17 +31,88 @@ const WorkLogDashboard = () => {
     location_code: ''
   });
 
+  // 檢查伺服器狀態
+  useEffect(() => {
+    const checkServerStatus = async () => {
+      try {
+        const status = await getApiStatus();
+        setServerStatus(status);
+        console.log('伺服器狀態檢查結果:', status);
+      } catch (err) {
+        console.error('檢查伺服器狀態失敗:', err);
+        setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
+      }
+    };
+    
+    checkServerStatus();
+    // 每30秒檢查一次
+    const interval = setInterval(checkServerStatus, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   // 載入工作日誌
   useEffect(() => {
     const loadWorkLogs = async () => {
       setIsLoading(true);
+      setError(null);
+      
       try {
-        const data = await searchWorkLogs(filters);
-        setWorkLogs(data);
-        setError(null);
+        // 增加載入狀態日誌
+        console.log('開始載入工作日誌，過濾條件:', filters);
+        
+        // 增加診斷資訊
+        const networkStatus = navigator.onLine ? '在線' : '離線';
+        const token = localStorage.getItem('token') ? '存在' : '不存在';
+        console.log('診斷資訊:', { networkStatus, token });
+        
+        const data = await fetchWorkLogs(filters);
+        
+        if (Array.isArray(data)) {
+          console.log(`成功載入 ${data.length} 條工作日誌`);
+          setWorkLogs(data);
+        } else {
+          console.error('工作日誌數據格式不正確:', data);
+          setWorkLogs([]);
+          setError('返回數據格式不正確，請聯繫系統管理員');
+        }
       } catch (err) {
         console.error('載入工作日誌失敗:', err);
-        setError('載入工作日誌失敗，請稍後再試');
+        
+        // 提供更有用的錯誤訊息
+        let errorMessage = '載入工作日誌失敗，請稍後再試';
+        
+        if (!navigator.onLine) {
+          errorMessage = '網絡連接中斷，請檢查您的網絡連接';
+        } else if (err.message && err.message.includes('timeout')) {
+          errorMessage = '伺服器響應超時，請稍後再試';
+        } else if (err.response) {
+          // 處理特定的HTTP錯誤
+          switch (err.response.status) {
+            case 401:
+              errorMessage = '登入狀態已失效，請重新登入';
+              // 可選：自動登出並重定向
+              setTimeout(() => {
+                logout();
+                navigate('/login');
+              }, 2000);
+              break;
+            case 403:
+              errorMessage = '您沒有權限查看工作日誌';
+              break;
+            case 404:
+              errorMessage = '找不到工作日誌資源，請確認API設置';
+              break;
+            case 500:
+              errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
+              break;
+            default:
+              errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
+          }
+        } else if (err.request) {
+          errorMessage = '無法連接到伺服器，請檢查網絡連接';
+        }
+        
+        setError(errorMessage);
         setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
       } finally {
         setIsLoading(false);
@@ -42,7 +120,7 @@ const WorkLogDashboard = () => {
     };
 
     loadWorkLogs();
-  }, [filters]);
+  }, [filters, fetchWorkLogs, logout, navigate]);
 
   // 載入位置和工作類別資料（用於過濾）
   useEffect(() => {
@@ -127,7 +205,7 @@ const WorkLogDashboard = () => {
   const refreshWorkLogs = async () => {
     setIsLoading(true);
     try {
-      const data = await searchWorkLogs(filters);
+      const data = await fetchWorkLogs(filters);
       setWorkLogs(data);
       setError(null);
     } catch (err) {
@@ -137,6 +215,19 @@ const WorkLogDashboard = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 重試按鈕的處理函數
+  const handleRetry = () => {
+    // 強制清除快取
+    if (typeof clearCache === 'function') {
+      clearCache('workLogs');
+    }
+    
+    // 重新載入資料
+    const currentFilters = { ...filters };
+    setFilters({ ...filters, _timestamp: Date.now() }); // 添加時間戳強制刷新
+    setTimeout(() => setFilters(currentFilters), 100); // 恢復原始過濾器，觸發重新載入
   };
 
   return (
@@ -153,6 +244,18 @@ const WorkLogDashboard = () => {
             </Button>
           </div>
         </div>
+
+        {/* 伺服器連線狀態 */}
+        {serverStatus.status !== 'online' && (
+          <div className={`mb-4 p-3 rounded-lg text-center ${
+            serverStatus.status === 'offline' ? 'bg-red-700' : 'bg-yellow-700'
+          }`}>
+            <p className="font-medium">{serverStatus.message}</p>
+            {serverStatus.status === 'offline' && (
+              <p className="text-sm mt-1">請檢查網路連線或聯絡系統管理員</p>
+            )}
+          </div>
+        )}
 
         {/* 工作時間統計 */}
         <div className="mb-6">
@@ -240,7 +343,24 @@ const WorkLogDashboard = () => {
           ) : error ? (
             <div className="p-8 text-center">
               <p className="text-red-400 mb-4">{error}</p>
-              <Button onClick={refreshWorkLogs}>重試</Button>
+              <div className="bg-gray-800 p-4 rounded-lg text-sm text-left mb-4">
+                <p className="font-semibold mb-2">診斷信息:</p>
+                <ul className="list-disc list-inside">
+                  <li>網絡狀態: {navigator.onLine ? '在線' : '離線'}</li>
+                  <li>認證狀態: {localStorage.getItem('token') ? '已登入' : '未登入'}</li>
+                  <li>API地址: {process.env.REACT_APP_API_URL || '未設置'}</li>
+                  <li>瀏覽器: {navigator.userAgent}</li>
+                </ul>
+              </div>
+              <div className="flex space-x-4 justify-center">
+                <Button onClick={handleRetry}>重試載入</Button>
+                <Button 
+                  onClick={() => setShowDiagnostic(true)}
+                  variant="secondary"
+                >
+                  診斷連接問題
+                </Button>
+              </div>
             </div>
           ) : workLogs.length === 0 ? (
             <div className="p-8 text-center text-gray-400">
@@ -264,23 +384,25 @@ const WorkLogDashboard = () => {
                 <tbody>
                   {workLogs.map((log, index) => {
                     // 計算工作時長（小時）
-                    let durationHours = "N/A";
-                    try {
-                      if (log.start_time && log.end_time) {
-                        const startParts = log.start_time.split(':');
-                        const endParts = log.end_time.split(':');
-                        
-                        if (startParts.length === 2 && endParts.length === 2) {
-                          const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
-                          const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+                    let durationHours = log.work_hours || "N/A";
+                    if (durationHours === "N/A") {
+                      try {
+                        if (log.start_time && log.end_time) {
+                          const startParts = log.start_time.split(':');
+                          const endParts = log.end_time.split(':');
                           
-                          if (!isNaN(startMinutes) && !isNaN(endMinutes) && endMinutes >= startMinutes) {
-                            durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                          if (startParts.length === 2 && endParts.length === 2) {
+                            const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
+                            const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
+                            
+                            if (!isNaN(startMinutes) && !isNaN(endMinutes) && endMinutes >= startMinutes) {
+                              durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
+                            }
                           }
                         }
+                      } catch (e) {
+                        console.warn("時間計算錯誤:", e);
                       }
-                    } catch (e) {
-                      console.warn("時間計算錯誤:", e);
                     }
                     
                     return (
@@ -298,10 +420,10 @@ const WorkLogDashboard = () => {
                           {log.area_name || 'N/A'}
                         </td>
                         <td className="p-3">
-                          {log.position_name || 'N/A'}
+                          {log.position_name || log.location || 'N/A'}
                         </td>
                         <td className="p-3">
-                          {log.work_category_name || 'N/A'}
+                          {log.work_category_name || log.crop || 'N/A'}
                         </td>
                         <td className="p-3">
                           <span 
@@ -323,6 +445,15 @@ const WorkLogDashboard = () => {
           )}
         </Card>
       </div>
+
+      {/* 診斷工具彈窗 */}
+      {showDiagnostic && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="w-full max-w-3xl">
+            <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
