@@ -1,6 +1,8 @@
 // 位置：frontend/src/context/AuthContext.js
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { loginUser, googleLogin } from '../utils/api';
+import api, { apiCache, throttle } from '../utils/api';
+
 
 const AuthContext = createContext({
   user: null,
