@@ -209,12 +209,19 @@ const WorkLogController = {
         userRole: req.user?.role
       });
       
+      // 添加結果限制避免返回過多數據
+      const LIMIT = 100; 
+      
       let queryText = `
-        SELECT wl.*, u.username, u.name as user_full_name
+        SELECT wl.id, wl.user_id, wl.location, wl.crop, 
+               wl.start_time, wl.end_time, wl.work_hours, 
+               wl.details, wl.position_name, wl.work_category_name,
+               wl.status, wl.created_at, u.username
         FROM work_logs wl
         JOIN users u ON wl.user_id = u.id
         WHERE 1=1
       `;
+      
       const values = [];
       let paramIndex = 1;
   
@@ -245,13 +252,14 @@ const WorkLogController = {
       }
   
       if (startDate && endDate) {
-        // 修改日期篩選，使用完整日期比較而不是僅用 created_at
+        // 修改日期篩選，使用 DATE 函數確保正確比較
         queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
         values.push(startDate, endDate);
         paramIndex += 2;
       }
   
-      queryText += ' ORDER BY wl.created_at DESC';
+      // 添加排序和限制
+      queryText += ' ORDER BY wl.created_at DESC LIMIT ' + LIMIT;
   
       console.log('執行SQL:', queryText);
       console.log('參數:', values);
@@ -279,7 +287,7 @@ const WorkLogController = {
         error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
     }
-  },
+  } ,
 
 
   // 獲取特定位置的作物列表 - 新增函數
