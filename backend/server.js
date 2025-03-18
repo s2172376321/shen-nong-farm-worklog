@@ -81,6 +81,48 @@ app.get('/api/db-status', async (req, res) => {
   }
 });
 
+// 在路由初始化前添加
+app.get('/api/health-check', async (req, res) => {
+  try {
+    // 簡單查詢測試
+    const result = await db.query('SELECT NOW()');
+    res.json({ 
+      status: 'online', 
+      message: '服務正常運行中',
+      serverTime: result.rows[0].now,
+      poolStats: db.getPoolStats()
+    });
+  } catch (err) {
+    console.error('健康檢查失敗:', err);
+    res.status(500).json({ 
+      status: 'error', 
+      message: '服務異常',
+      error: process.env.NODE_ENV === 'production' ? undefined : err.message
+    });
+  }
+});
+
+// 添加資料庫狀態端點
+app.get('/api/db-status', async (req, res) => {
+  try {
+    // 簡單查詢測試
+    const result = await db.query('SELECT NOW()');
+    res.json({ 
+      status: 'connected', 
+      time: result.rows[0].now,
+      poolStats: db.getPoolStats()
+    });
+  } catch (err) {
+    console.error('資料庫連接測試失敗:', err);
+    res.status(500).json({ 
+      status: 'error', 
+      message: err.message,
+      code: err.code
+    });
+  }
+});
+
+
 // 初始化數據庫架構
 async function initDbSchema() {
   try {

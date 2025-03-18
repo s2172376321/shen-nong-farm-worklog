@@ -1,3 +1,6 @@
+// 位置：backend/config/database.js
+// 優化數據庫連接配置
+
 // backend/config/database.js
 const { Pool } = require('pg');
 
@@ -9,10 +12,12 @@ class Database {
       database: process.env.DB_NAME,
       password: process.env.DB_PASSWORD,
       port: process.env.DB_PORT || 5432,
-      max: 20, // 連線池最大連線數
+      max: 10, // 減少最大連線數以避免資源過度使用
       idleTimeoutMillis: 30000, // 連線閒置30秒後關閉
-      connectionTimeoutMillis: 5000, // 增加到5秒，處理較慢的網絡環境
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+      connectionTimeoutMillis: 10000, // 增加到10秒，處理較慢的網絡環境
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      statement_timeout: 15000, // 15秒查詢超時
+      query_timeout: 15000, // 15秒查詢超時
     });
 
     // 連線池事件監聽
@@ -46,7 +51,14 @@ class Database {
     const start = Date.now();
     
     try {
-      const result = await this.pool.query(text, params);
+      // 為查詢添加超時
+      const queryOptions = {
+        text,
+        values: params,
+        timeout: 15000 // 15秒超時
+      };
+      
+      const result = await this.pool.query(queryOptions);
       
       // 記錄查詢時間（僅在非生產環境）
       if (process.env.NODE_ENV !== 'production') {
@@ -57,8 +69,9 @@ class Database {
       return result;
     } catch (error) {
       // 檢查是否為連接問題，並且還有重試次數
-      if ((error.code === 'ECONNREFUSED' || error.code === '08006' || error.code === '08001') && retryCount > 0) {
-        console.warn(`資料庫連線失敗，${retryCount}秒後重試...`);
+      if ((error.code === 'ECONNREFUSED' || error.code === '08006' || error.code === '08001' || 
+          error.code === '57014' || error.code === '57P01') && retryCount > 0) {
+        console.warn(`資料庫連線失敗或查詢超時，${retryCount}秒後重試...`);
         
         // 等待一秒後重試
         await new Promise(resolve => setTimeout(resolve, 1000));
