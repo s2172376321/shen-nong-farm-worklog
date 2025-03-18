@@ -69,4 +69,17 @@ router.post('/feedback',
   }
 );
 
+
+// 在後端添加測試端點 backend/routes/authRoutes.js
+router.get('/test', authMiddleware, (req, res) => {
+  res.json({
+    status: 'authenticated',
+    user: {
+      id: req.user.id,
+      role: req.user.role
+    }
+  });
+});
+
+
 module.exports = router;

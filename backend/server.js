@@ -62,12 +62,23 @@ app.use(fileUpload({
 app.options('*', cors(corsOptions));
 
 // 添加健康檢查路由
-app.get('/api/health-check', (req, res) => {
-  res.json({
-    status: 'online',
-    message: '伺服器連線正常',
-    serverTime: new Date().toISOString()
-  });
+app.get('/api/db-status', async (req, res) => {
+  try {
+    // 簡單查詢測試
+    const result = await db.query('SELECT NOW()');
+    res.json({ 
+      status: 'connected', 
+      time: result.rows[0].now,
+      poolStats: db.getPoolStats()
+    });
+  } catch (err) {
+    console.error('資料庫連接測試失敗:', err);
+    res.status(500).json({ 
+      status: 'error', 
+      message: err.message,
+      code: err.code
+    });
+  }
 });
 
 // 初始化數據庫架構

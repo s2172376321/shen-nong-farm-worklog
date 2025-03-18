@@ -1,6 +1,7 @@
 // 位置：frontend/src/utils/api.js
 import axios from 'axios';
 
+
 // 快取存儲
 const apiCache = {
   data: {},
@@ -77,8 +78,35 @@ export const markNoticeAsRead = async (noticeId) => {
 
 
 export const fetchLocationCrops = async (positionCode) => {
-  const response = await api.get(`/work-logs/position/${positionCode}/crops`);
-  return response.data;
+  try {
+    const response = await axios.get(`${API_BASE_URL}/api/locations/${positionCode}/crops`, {
+      headers: getAuthHeader()
+    });
+    return response.data;
+  } catch (error) {
+    handleApiError(error);
+    return []; // 返回空數組以避免錯誤
+  }
+};
+
+
+export const testAuth = async () => {
+  try {
+    const response = await api.get('/auth/test');
+    console.log('認證狀態:', response.data);
+    return response.data;
+  } catch (err) {
+    console.error('認證測試失敗:', err);
+    // 如果是403錯誤，可能需要重新登入
+    if (err.response && err.response.status === 403) {
+      console.warn('權限被拒絕，將重新登入');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      // 可以選擇是否直接導向登入頁面
+      // window.location.href = '/login';
+    }
+    throw err;
+  }
 };
 
 
