@@ -25,14 +25,13 @@ router.patch('/:workLogId/review',
   WorkLogController.reviewWorkLog
 );
 
-
+// 新增：獲取位置的作物列表
 router.get('/position/:positionCode/crops', 
   authMiddleware, 
   WorkLogController.getLocationCrops
 );
 
-
-// 獲取今日工時 - 確保此路由已正確定義
+// 獲取今日工時
 router.get('/today-hour', 
   authMiddleware, 
   WorkLogController.getTodayHour
