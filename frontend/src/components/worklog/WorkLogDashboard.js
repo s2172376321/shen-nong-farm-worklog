@@ -195,18 +195,20 @@ const WorkLogDashboard = () => {
 
   // 刷新工作日誌列表
   const refreshWorkLogs = async () => {
-    await loadWorkLogs();
-  };
-
-  // 重試按鈕的處理函數
-  const handleRetry = () => {
-    // 強制清除快取
+    // 強制清除緩存，確保獲取最新數據
     if (typeof clearCache === 'function') {
-      clearCache();
+      clearCache(); // 調用從 useWorkLog 獲取的 clearCache 函數
     }
     
-    // 重新載入資料
-    refreshWorkLogs();
+    // 重置過濾器以確保包含最新提交的記錄
+    setFilters(prev => ({
+      ...prev,
+      // 重新設置日期確保包含今天
+      startDate: prev.startDate,
+      endDate: prev.endDate
+    }));
+    
+    await loadWorkLogs();
   };
 
   // 格式化時間顯示
