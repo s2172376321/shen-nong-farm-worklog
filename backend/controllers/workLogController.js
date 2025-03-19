@@ -212,6 +212,7 @@ async searchWorkLogs(req, res) {
     
     // 添加結果限制避免返回過多數據
     const LIMIT = 100; 
+    queryText += ' LIMIT 100';
     
     // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
     let queryText = `
