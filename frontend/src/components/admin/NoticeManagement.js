@@ -30,20 +30,44 @@ const NoticeManagement = () => {
     loadNotices();
   }, []);
 
-  // 創建新公告
-  const handleCreateNotice = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await createNotice(newNotice);
-      setNotices([...notices, response]);
-      setNewNotice({ title: '', content: '', expiresAt: '' });
-      setError(null);
-    } catch (err) {
-      setError(err.response?.data?.message || '創建公告失敗');
-    }
-  };
+// 創建新公告
+const handleCreateNotice = async (e) => {
+  e.preventDefault();
+  
+  // 添加表單驗證
+  if (!newNotice.title || !newNotice.content) {
+    setError('標題和內容不能為空');
+    return;
+  }
+  
+  // 添加更多日誌以便調試
+  console.log('提交新公告:', newNotice);
+  
+  try {
+    // 創建一個新對象傳遞，避免任何引用問題
+    const noticeToSubmit = {
+      title: newNotice.title,
+      content: newNotice.content,
+      expiresAt: newNotice.expiresAt
+    };
+    
+    const response = await createNotice(noticeToSubmit);
+    console.log('公告創建成功:', response);
+    
+    // 更新公告列表
+    setNotices([...notices, response]);
+    setNewNotice({ title: '', content: '', expiresAt: '' });
+    setError(null);
+  } catch (err) {
+    console.error('創建公告錯誤:', err);
+    setError(err.response?.data?.message || err.message || '創建公告失敗');
+  }
+};
 
-  // 更新公告
+
+
+
+// 更新公告
   const handleUpdateNotice = async () => {
     if (!selectedNotice) return;
     try {
