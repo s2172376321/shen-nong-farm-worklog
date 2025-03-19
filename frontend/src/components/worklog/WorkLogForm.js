@@ -13,7 +13,7 @@ import {
 
 const WorkLogForm = ({ onSubmitSuccess }) => {
   const { user, logout } = useAuth();                                                                        
-  const { submitWorkLog, uploadCSV, fetchWorkLogs, isLoading: apiLoading, error } = useWorkLog();
+  const { submitWorkLog, uploadCSV, fetchWorkLogs, isLoading: apiLoading, error, clearCache } = useWorkLog();
   
   // 添加本地 loading 狀態
   const [localLoading, setIsLoading] = useState(false);
