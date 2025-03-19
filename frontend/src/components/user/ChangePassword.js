@@ -1,8 +1,7 @@
 // 位置：frontend/src/components/user/ChangePassword.js
 import React, { useState } from 'react';
-import { Button, Input, Card } from '../ui';
+import { Button, Input } from '../ui';
 import { changePassword } from '../../utils/api';
-import GoogleBind from './GoogleBind';
 
 const ChangePassword = () => {
   const [formData, setFormData] = useState({
@@ -58,75 +57,63 @@ const ChangePassword = () => {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">帳號設定</h1>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* 修改密碼區塊 */}
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold mb-4">修改密碼</h2>
-          
-          {error && (
-            <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-              {error}
-            </div>
-          )}
-          
-          {success && (
-            <div className="bg-green-600 text-white p-3 rounded-lg mb-4">
-              {success}
-            </div>
-          )}
-          
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block mb-2">目前密碼</label>
-              <Input
-                type="password"
-                name="oldPassword"
-                value={formData.oldPassword}
-                onChange={handleChange}
-                required
-                placeholder="請輸入目前密碼"
-              />
-            </div>
-            
-            <div>
-              <label className="block mb-2">新密碼</label>
-              <Input
-                type="password"
-                name="newPassword"
-                value={formData.newPassword}
-                onChange={handleChange}
-                required
-                placeholder="請輸入新密碼"
-              />
-            </div>
-            
-            <div>
-              <label className="block mb-2">確認新密碼</label>
-              <Input
-                type="password"
-                name="confirmPassword"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                required
-                placeholder="請再次輸入新密碼"
-              />
-            </div>
-            
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
-              {isLoading ? '處理中...' : '更新密碼'}
-            </Button>
-          </form>
-        </Card>
+      {error && (
+        <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
+          {error}
+        </div>
+      )}
+      
+      {success && (
+        <div className="bg-green-600 text-white p-3 rounded-lg mb-4">
+          {success}
+        </div>
+      )}
+      
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block mb-2">目前密碼</label>
+          <Input
+            type="password"
+            name="oldPassword"
+            value={formData.oldPassword}
+            onChange={handleChange}
+            required
+            placeholder="請輸入目前密碼"
+          />
+        </div>
         
-        {/* Google 帳號綁定 */}
-        <GoogleBind />
-      </div>
+        <div>
+          <label className="block mb-2">新密碼</label>
+          <Input
+            type="password"
+            name="newPassword"
+            value={formData.newPassword}
+            onChange={handleChange}
+            required
+            placeholder="請輸入新密碼"
+          />
+        </div>
+        
+        <div>
+          <label className="block mb-2">確認新密碼</label>
+          <Input
+            type="password"
+            name="confirmPassword"
+            value={formData.confirmPassword}
+            onChange={handleChange}
+            required
+            placeholder="請再次輸入新密碼"
+          />
+        </div>
+        
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isLoading}
+        >
+          {isLoading ? '處理中...' : '更新密碼'}
+        </Button>
+      </form>
     </div>
   );
 };
