@@ -926,14 +926,14 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       alert('工作日誌提交成功！');
 
       // 呼叫父元件的成功回調
-      if (onSubmitSuccess) {
+      if (typeof onSubmitSuccess === 'function') {
         onSubmitSuccess();
-      }
+          }
       setTimeout(() => {
         // 呼叫父元件的成功回調
-        if (onSubmitSuccess) {
+        if (typeof onSubmitSuccess === 'function') {
           onSubmitSuccess();
-        }
+              }
       }, 300);
     
     } catch (err) {
