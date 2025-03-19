@@ -19,16 +19,22 @@ const WorkLogReview = () => {
     window.history.back();
   };
 
-  // 載入工作日誌
-  useEffect(() => {
-    const loadWorkLogs = async () => {
-      try {
-        setIsLoading(true);
-        const data = await searchWorkLogs({
-          status: filter.status,
-          startDate: filter.date, // 使用選定的日期作為開始日期
-          endDate: filter.date    // 使用選定的日期作為結束日期（同一天）
-        });
+// 載入工作日誌
+useEffect(() => {
+  const loadWorkLogs = async () => {
+    try {
+      setIsLoading(true);
+      
+      // 確保日期格式正確
+      const formattedDate = filter.date ? new Date(filter.date).toISOString().split('T')[0] : '';
+      
+      const data = await searchWorkLogs({
+        status: filter.status,
+        startDate: formattedDate, // 使用選定的日期作為開始日期
+        endDate: formattedDate    // 使用選定的日期作為結束日期（同一天）
+      });
+      
+      if (Array.isArray(data)) {
         setWorkLogs(data);
         
         // 將工作日誌按使用者和日期分組
@@ -41,16 +47,24 @@ const WorkLogReview = () => {
           initialExpandState[key] = true; // 預設展開所有組
         });
         setExpandedGroups(initialExpandState);
-        
-        setIsLoading(false);
-      } catch (err) {
-        setError('載入工作日誌失敗');
-        setIsLoading(false);
+      } else {
+        console.error('工作日誌資料格式不正確', data);
+        setWorkLogs([]);
+        setGroupedWorkLogs({});
       }
-    };
+      
+      setIsLoading(false);
+    } catch (err) {
+      console.error('載入工作日誌失敗', err);
+      setError('載入工作日誌失敗');
+      setIsLoading(false);
+    }
+  };
 
-    loadWorkLogs();
-  }, [filter]);
+  loadWorkLogs();
+}, [filter]);
+
+
 
   // 將工作日誌按使用者和日期分組
   const groupWorkLogsByUserAndDate = (logs) => {
@@ -96,24 +110,57 @@ const WorkLogReview = () => {
     return timeString.substring(0, 5);
   };
 
-  // 審核工作日誌
-  const handleReviewWorkLog = async (workLogId, status) => {
-    try {
-      await reviewWorkLog(workLogId, status);
-      
-      // 更新本地狀態 - 移除已審核的日誌
-      const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
-      setWorkLogs(updatedWorkLogs);
-      
-      // 重新分組更新後的工作日誌
-      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-      setGroupedWorkLogs(updatedGrouped);
-      
-      setError(null);
-    } catch (err) {
-      setError('審核工作日誌失敗');
+// 審核工作日誌
+const handleReviewWorkLog = async (workLogId, status) => {
+  try {
+    await reviewWorkLog(workLogId, status);
+    
+    // 更新本地狀態 - 移除已審核的日誌
+    const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
+    setWorkLogs(updatedWorkLogs);
+    
+    // 重新分組更新後的工作日誌
+    const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
+    setGroupedWorkLogs(updatedGrouped);
+    
+    // 如果使用了 useWorkLog hook 並且有 clearCache 方法就清除緩存
+    if (typeof window.apiCache !== 'undefined' && typeof window.apiCache.clear === 'function') {
+      window.apiCache.clear('workLogs');
     }
-  };
+    
+    setError(null);
+    
+    // 刷新數據 - 使用當前已有的過濾條件
+    // 我們不直接調用 loadWorkLogs 而是重新加載過濾的數據
+    const refreshData = async () => {
+      try {
+        setIsLoading(true);
+        const data = await searchWorkLogs({
+          status: filter.status,
+          startDate: filter.date,
+          endDate: filter.date,
+          forceRefresh: true // 添加強制刷新標記
+        });
+        
+        if (Array.isArray(data)) {
+          setWorkLogs(data);
+          const grouped = groupWorkLogsByUserAndDate(data);
+          setGroupedWorkLogs(grouped);
+        }
+        setIsLoading(false);
+      } catch (err) {
+        console.error('刷新數據失敗:', err);
+        setIsLoading(false);
+      }
+    };
+    
+    refreshData();
+  } catch (err) {
+    console.error('審核工作日誌失敗:', err);
+    setError('審核工作日誌失敗');
+  }
+};
+
 
   // 批量審核同一組的所有工作日誌
   const handleBatchReview = async (groupKey, status) => {
@@ -215,7 +262,30 @@ const WorkLogReview = () => {
       {/* 分組顯示的工作日誌 */}
       <div className="bg-gray-800 p-6 rounded-lg">
         {Object.keys(groupedWorkLogs).length === 0 ? (
-          <p className="text-center text-gray-400">該日期沒有符合條件的工作日誌</p>
+          <div className="text-center p-8">
+            <p className="text-gray-400 mb-4">目前沒有待審核的工作日誌</p>
+            <div className="space-y-2">
+              <p className="text-sm text-gray-500">嘗試更改日期或狀態過濾器</p>
+              <div className="flex justify-center space-x-4 mt-4">
+                <Button
+                  onClick={() => setFilter(prev => ({
+                    ...prev,
+                    date: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString().split('T')[0]
+                  }))}
+                >
+                  查看昨天
+                </Button>
+                <Button
+                  onClick={() => setFilter(prev => ({
+                    ...prev,
+                    status: prev.status === 'pending' ? 'approved' : 'pending'
+                  }))}
+                >
+                  {filter.status === 'pending' ? '查看已核准' : '查看待審核'}
+                </Button>
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="space-y-6">
             {Object.keys(groupedWorkLogs).map(groupKey => (
