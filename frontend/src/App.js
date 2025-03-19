@@ -11,7 +11,8 @@ import AdminDashboard from './components/admin/AdminDashboard';
 import NoticeBoard from './components/common/NoticeBoard';
 import UserSettings from './components/user/UserSettings';
 import PrivateRoute from './components/common/PrivateRoute';
-import GoogleCallback from './components/auth/GoogleCallback'; // 新增 Google 回調頁面
+import GoogleCallback from './components/auth/GoogleCallback';
+import NotificationBadge from './components/common/NotificationBadge'; // 新增未讀通知組件
 
 function App() {
   const { user, isLoading } = useAuth();
@@ -27,6 +28,9 @@ function App() {
 
   return (
     <Router>
+      {/* 如果用戶已登入，顯示未讀通知徽章 */}
+      {user && <NotificationBadge />}
+      
       <Routes>
         {/* 公開路由 */}
         <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage />} />
