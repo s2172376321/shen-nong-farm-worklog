@@ -595,7 +595,7 @@ export const searchWorkLogs = async (filters) => {
         
         const response = await api.get('/work-logs/search', { 
           params: filters,
-          timeout: currentTimeout
+          timeout: 30000  // 增加到 30 秒
         });
         
         console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
