@@ -11,9 +11,10 @@ const WorkLogReview = () => {
   const [expandedGroups, setExpandedGroups] = useState({});
   const [filter, setFilter] = useState({
     status: 'pending',
-    date: new Date().toISOString().split('T')[0] // 預設為今天日期
+    date: '' // 修改：移除默認日期過濾，允許顯示所有記錄
   });
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // 添加刷新觸發器
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [loadingTimeout, setLoadingTimeout] = useState(null);
 
   // 返回函數
   const handleGoBack = () => {
@@ -61,22 +62,41 @@ const WorkLogReview = () => {
 
   // 刷新數據的函數
   const refreshData = useCallback(async () => {
+    // 清除任何現有的超時計時器
+    if (loadingTimeout) {
+      clearTimeout(loadingTimeout);
+    }
+    
     setIsLoading(true);
     setError(null);
+    
+    // 設置新的加載超時
+    const timeoutId = setTimeout(() => {
+      setIsLoading(false);
+      setError('請求超時，請嘗試刷新或調整過濾條件');
+    }, 30000); // 30秒超時
+    
+    setLoadingTimeout(timeoutId);
     
     try {
       console.log('開始加載工作日誌，過濾條件:', filter);
       
-      // 使用 AbortController 處理請求取消
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超時
+      // 添加請求診斷信息
+      console.log('診斷信息:', {
+        userRole: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).role : '未知',
+        tokenExists: !!localStorage.getItem('token'),
+        apiBaseUrl: process.env.REACT_APP_API_URL || '未設置',
+        networkStatus: navigator.onLine ? '在線' : '離線'
+      });
       
       const data = await searchWorkLogs({
         ...filter,
         forceRefresh: refreshTrigger // 加入強制刷新標記
       });
       
+      // 清除超時計時器
       clearTimeout(timeoutId);
+      setLoadingTimeout(null);
       
       // 確保數據為數組
       if (!Array.isArray(data)) {
@@ -104,6 +124,10 @@ const WorkLogReview = () => {
     } catch (err) {
       console.error('加載工作日誌失敗:', err);
       
+      // 清除超時計時器
+      clearTimeout(timeoutId);
+      setLoadingTimeout(null);
+      
       // 提供更詳細的錯誤信息
       if (err.name === 'AbortError') {
         setError('請求超時，請稍後再試');
@@ -122,16 +146,31 @@ const WorkLogReview = () => {
       // 確保在任何情況下都將 loading 狀態設為 false
       setIsLoading(false);
     }
-  }, [filter, refreshTrigger, groupWorkLogsByUserAndDate]);
+  }, [filter, refreshTrigger, groupWorkLogsByUserAndDate, loadingTimeout]);
 
   // 載入工作日誌
   useEffect(() => {
     refreshData();
+    
+    // 組件卸載時清理
+    return () => {
+      if (loadingTimeout) {
+        clearTimeout(loadingTimeout);
+      }
+    };
   }, [refreshData]);
 
   // 觸發刷新
   const handleRefresh = () => {
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  // 清除過濾條件
+  const clearFilters = () => {
+    setFilter({
+      status: 'pending',
+      date: ''
+    });
   };
 
   // 切換分組的展開/折疊狀態
@@ -157,6 +196,8 @@ const WorkLogReview = () => {
   const handleReviewWorkLog = async (workLogId, status) => {
     try {
       setIsLoading(true);
+      console.log(`審核工作日誌 ${workLogId} 狀態變更為 ${status}`);
+      
       await reviewWorkLog(workLogId, status);
       
       // 更新本地狀態 - 移除已審核的日誌
@@ -169,13 +210,13 @@ const WorkLogReview = () => {
       
       setError(null);
       setIsLoading(false);
-      
-      // 觸發刷新
-      handleRefresh();
     } catch (err) {
       console.error('審核工作日誌失敗:', err);
       setError('審核工作日誌失敗: ' + (err.message || '未知錯誤'));
       setIsLoading(false);
+      
+      // 審核失敗後刷新數據
+      setTimeout(handleRefresh, 1000);
     }
   };
 
@@ -189,9 +230,12 @@ const WorkLogReview = () => {
         throw new Error('找不到要審核的日誌組');
       }
       
+      console.log(`批量審核 ${group.logs.length} 條工作日誌，狀態變更為 ${status}`);
+      
       // 依次審核該組中的所有工作日誌
-      const promises = group.logs.map(log => reviewWorkLog(log.id, status));
-      await Promise.all(promises);
+      for (const log of group.logs) {
+        await reviewWorkLog(log.id, status);
+      }
       
       // 更新本地狀態 - 移除已審核的組
       const updatedWorkLogs = workLogs.filter(log => {
@@ -208,14 +252,31 @@ const WorkLogReview = () => {
       
       setError(null);
       setIsLoading(false);
-      
-      // 觸發刷新
-      handleRefresh();
     } catch (err) {
       console.error('批量審核工作日誌失敗:', err);
       setError('批量審核工作日誌失敗: ' + (err.message || '未知錯誤'));
       setIsLoading(false);
+      
+      // 審核失敗後刷新數據
+      setTimeout(handleRefresh, 1000);
     }
+  };
+
+  // 顯示診斷信息
+  const showDiagnosticInfo = () => {
+    const diagnosticInfo = {
+      userRole: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).role : '未知',
+      tokenExists: !!localStorage.getItem('token'),
+      apiBaseUrl: process.env.REACT_APP_API_URL || '未設置',
+      networkStatus: navigator.onLine ? '在線' : '離線',
+      filter: filter,
+      workLogsCount: workLogs.length,
+      groupedLogsCount: Object.keys(groupedWorkLogs).length,
+      browserInfo: navigator.userAgent
+    };
+    
+    alert('診斷信息已複製到控制台');
+    console.log('診斷信息:', diagnosticInfo);
   };
 
   if (isLoading) {
@@ -224,13 +285,20 @@ const WorkLogReview = () => {
         <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500 mb-4"></div>
         <p className="text-white text-lg">載入工作日誌中，請稍候...</p>
         {/* 添加超時自動重試功能 */}
-        <div className="mt-8">
+        <div className="mt-8 flex space-x-4">
           <Button 
             onClick={handleRefresh}
             variant="secondary"
             className="text-sm"
           >
             載入時間過長？點擊重試
+          </Button>
+          <Button 
+            onClick={clearFilters}
+            variant="secondary"
+            className="text-sm"
+          >
+            清除過濾條件
           </Button>
         </div>
       </div>
@@ -239,7 +307,7 @@ const WorkLogReview = () => {
 
   return (
     <div className="bg-gray-900 text-white p-6">
-      {/* 添加返回按鈕 */}
+      {/* 添加返回按鈕和頂部操作欄 */}
       <div className="mb-4 flex justify-between items-center">
         <Button 
           onClick={handleGoBack}
@@ -261,25 +329,45 @@ const WorkLogReview = () => {
           返回
         </Button>
         
-        {/* 添加刷新按鈕 */}
-        <Button 
-          onClick={handleRefresh}
-          className="flex items-center text-sm"
-        >
-          <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            className="h-5 w-5 mr-1" 
-            viewBox="0 0 20 20" 
-            fill="currentColor"
+        <div className="flex space-x-2">
+          {/* 診斷按鈕 */}
+          <Button 
+            onClick={showDiagnosticInfo}
+            variant="secondary"
+            className="text-sm"
           >
-            <path 
-              fillRule="evenodd" 
-              d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" 
-              clipRule="evenodd" 
-            />
-          </svg>
-          刷新數據
-        </Button>
+            診斷
+          </Button>
+          
+          {/* 清除過濾條件按鈕 */}
+          <Button 
+            onClick={clearFilters}
+            variant="secondary"
+            className="text-sm"
+          >
+            清除過濾
+          </Button>
+          
+          {/* 刷新按鈕 */}
+          <Button 
+            onClick={handleRefresh}
+            className="flex items-center text-sm"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-5 w-5 mr-1" 
+              viewBox="0 0 20 20" 
+              fill="currentColor"
+            >
+              <path 
+                fillRule="evenodd" 
+                d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" 
+                clipRule="evenodd" 
+              />
+            </svg>
+            刷新數據
+          </Button>
+        </div>
       </div>
     
       <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
@@ -299,7 +387,7 @@ const WorkLogReview = () => {
         </div>
       )}
 
-      {/* 篩選器 - 修改為單一日期 */}
+      {/* 篩選器 */}
       <div className="bg-gray-800 p-4 rounded-lg mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -315,13 +403,14 @@ const WorkLogReview = () => {
             </select>
           </div>
           <div>
-            <label className="block mb-2">日期</label>
+            <label className="block mb-2">日期 (選填)</label>
             <input
               type="date"
               value={filter.date}
               onChange={(e) => setFilter({...filter, date: e.target.value})}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
             />
+            <p className="text-xs text-gray-400 mt-1">留空顯示所有日期的記錄</p>
           </div>
         </div>
       </div>
@@ -330,17 +419,12 @@ const WorkLogReview = () => {
       <div className="bg-gray-800 p-6 rounded-lg">
         {Object.keys(groupedWorkLogs).length === 0 ? (
           <div className="text-center p-8">
-            <p className="text-gray-400 mb-4">目前沒有待審核的工作日誌</p>
+            <p className="text-gray-400 mb-4">目前沒有符合條件的工作日誌</p>
             <div className="space-y-2">
               <p className="text-sm text-gray-500">嘗試更改日期或狀態過濾器</p>
               <div className="flex justify-center space-x-4 mt-4">
-                <Button
-                  onClick={() => setFilter(prev => ({
-                    ...prev,
-                    date: new Date(new Date().setDate(new Date().getDate() - 1)).toISOString().split('T')[0]
-                  }))}
-                >
-                  查看昨天
+                <Button onClick={clearFilters}>
+                  清除過濾條件
                 </Button>
                 <Button
                   onClick={() => setFilter(prev => ({
@@ -402,7 +486,7 @@ const WorkLogReview = () => {
                 
                 {/* 分組內容 */}
                 {expandedGroups[groupKey] && (
-                  <div className="p-4">
+                  <div className="p-4 overflow-x-auto">
                     <table className="w-full">
                       <thead>
                         <tr className="bg-gray-700">
@@ -419,8 +503,8 @@ const WorkLogReview = () => {
                             <td className="p-3">
                               {formatTime(log.start_time)} - {formatTime(log.end_time)}
                             </td>
-                            <td className="p-3">{log.position_name || log.location}</td>
-                            <td className="p-3">{log.work_category_name || log.crop}</td>
+                            <td className="p-3">{log.position_name || log.location || '未指定'}</td>
+                            <td className="p-3">{log.work_category_name || log.crop || '未指定'}</td>
                             <td className="p-3">
                               <div>
                                 <p><strong>詳情:</strong> {log.details || '無'}</p>
@@ -428,7 +512,7 @@ const WorkLogReview = () => {
                                   <p><strong>採收量:</strong> {log.harvest_quantity} 台斤</p>
                                 )}
                                 {log.product_id && (
-                                  <p><strong>使用產品:</strong> {log.product_name} ({log.product_quantity})</p>
+                                  <p><strong>使用產品:</strong> {log.product_name || log.product_id} ({log.product_quantity || 0})</p>
                                 )}
                               </div>
                             </td>
