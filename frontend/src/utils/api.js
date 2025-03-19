@@ -1087,6 +1087,9 @@ export const fetchLocationsByArea = async () => {
 
 // 匯出工作日誌
 export const exportWorkLogs = async (filters, format = 'csv') => {
+  // 首先定義缓存键
+  const cacheKey = `exportWorkLogs:${JSON.stringify(filters)}:${format}`;
+  
   const queryParams = new URLSearchParams({
     ...filters,
     format
