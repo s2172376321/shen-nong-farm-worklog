@@ -1,9 +1,11 @@
 // 位置：frontend/src/components/common/NoticeBoard.js
 import React, { useState, useEffect } from 'react';
 import { fetchNotices, markNoticeAsRead } from '../../utils/api';
-import { Card } from '../ui';
+import { Card, Button } from '../ui';
+import { useNavigate } from 'react-router-dom';
 
 const NoticeBoard = ({ preview = false, onNoticeRead }) => {
+  const navigate = useNavigate();
   const [notices, setNotices] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -22,6 +24,11 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
 
     loadNotices();
   }, []);
+
+  // 返回上一頁
+  const handleGoBack = () => {
+    navigate(-1);
+  };
 
   // 處理閱讀公告
   const handleReadNotice = async (noticeId) => {
@@ -49,6 +56,12 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
     }
   };
 
+  // 單獨處理未讀標識的點擊事件
+  const handleUnreadBadgeClick = (e, noticeId) => {
+    e.stopPropagation(); // 阻止事件冒泡，避免觸發卡片的點擊事件
+    handleReadNotice(noticeId);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-6">
@@ -70,7 +83,30 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
 
   return (
     <div className={preview ? "" : "min-h-screen bg-gray-900 text-white p-6"}>
-      {!preview && <h1 className="text-2xl font-bold mb-6">公告欄</h1>}
+      {!preview && (
+        <div className="mb-6 flex items-center">
+          <Button 
+            onClick={handleGoBack}
+            variant="secondary"
+            className="flex items-center text-sm mr-4"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-5 w-5 mr-1" 
+              viewBox="0 0 20 20" 
+              fill="currentColor"
+            >
+              <path 
+                fillRule="evenodd" 
+                d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
+                clipRule="evenodd" 
+              />
+            </svg>
+            返回
+          </Button>
+          <h1 className="text-2xl font-bold">公告欄</h1>
+        </div>
+      )}
       
       {displayNotices.length === 0 ? (
         <p className="text-gray-400">目前沒有公告</p>
@@ -92,7 +128,11 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
                   {notice.title}
                 </h2>
                 {!notice.is_read && (
-                  <span className="text-xs bg-blue-600 text-white px-2 py-1 rounded">
+                  <span 
+                    className="text-xs bg-blue-600 text-white px-2 py-1 rounded cursor-pointer hover:bg-blue-700"
+                    onClick={(e) => handleUnreadBadgeClick(e, notice.id)}
+                    title="點擊標記為已讀"
+                  >
                     未讀
                   </span>
                 )}
