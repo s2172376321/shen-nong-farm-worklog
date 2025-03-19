@@ -7,35 +7,105 @@ const WorkLogReview = () => {
   const [workLogs, setWorkLogs] = useState([]);
   const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [processingLogIds, setProcessingLogIds] = useState([]); // 追蹤正在處理的工作日誌ID
+  const [processingGroups, setProcessingGroups] = useState([]); // 追蹤正在處理的組
   const [error, setError] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState({});
   const [filter, setFilter] = useState({
     status: 'pending',
-    date: '' // 修改：移除默認日期過濾，允許顯示所有記錄
+    date: new Date().toISOString().split('T')[0] // 預設為今天日期
   });
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [loadingTimeout, setLoadingTimeout] = useState(null);
 
   // 返回函數
   const handleGoBack = () => {
     window.history.back();
   };
 
+  // 自定義 API 調用超時處理和重試邏輯
+  const safeApiCall = async (apiFunc, params, retryCount = 3, delayMs = 1000) => {
+    let currentRetry = 0;
+    while (currentRetry <= retryCount) {
+      try {
+        return await apiFunc(...params);
+      } catch (err) {
+        console.error(`API 調用失敗 (嘗試 ${currentRetry}/${retryCount})`, err);
+        currentRetry++;
+        
+        if (currentRetry > retryCount) {
+          throw err; // 超出重試次數，往上拋出錯誤
+        }
+        
+        // 等待指定時間後重試
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  };
+
+  // 載入工作日誌 - 改進版本
+  const loadWorkLogs = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      console.log('開始載入工作日誌，過濾條件:', filter);
+      
+      // 使用改進的安全 API 調用
+      const data = await safeApiCall(searchWorkLogs, [filter], 3, 1500);
+      
+      // 確保返回數據是數組
+      if (!Array.isArray(data)) {
+        console.error('工作日誌數據格式不正確:', data);
+        setWorkLogs([]);
+        setGroupedWorkLogs({});
+        setError('返回數據格式不正確，請聯絡系統管理員');
+        setIsLoading(false);
+        return;
+      }
+      
+      // 標準化工作日誌數據
+      const normalizedLogs = data.map(log => ({
+        ...log,
+        id: log.id || `temp-${Date.now()}-${Math.random()}`, // 確保每條記錄都有唯一ID
+        user_id: log.user_id || 0,
+        username: log.username || '未知用戶',
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time,
+        created_at: log.created_at || new Date().toISOString()
+      }));
+      
+      console.log(`成功載入 ${normalizedLogs.length} 條工作日誌`);
+      setWorkLogs(normalizedLogs);
+      
+      // 將工作日誌按使用者和日期分組
+      const grouped = groupWorkLogsByUserAndDate(normalizedLogs);
+      setGroupedWorkLogs(grouped);
+      
+      // 初始化展開狀態
+      const initialExpandState = {};
+      Object.keys(grouped).forEach(key => {
+        initialExpandState[key] = true; // 預設展開所有組
+      });
+      setExpandedGroups(initialExpandState);
+      
+    } catch (err) {
+      console.error('載入工作日誌失敗:', err);
+      setError(`載入工作日誌失敗: ${err.message || '未知錯誤'}`);
+      setWorkLogs([]);
+      setGroupedWorkLogs({});
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filter]);
+
   // 將工作日誌按使用者和日期分組
-  const groupWorkLogsByUserAndDate = useCallback((logs) => {
-    if (!Array.isArray(logs)) {
-      console.error('嘗試分組非數組數據:', logs);
+  const groupWorkLogsByUserAndDate = (logs) => {
+    if (!Array.isArray(logs) || logs.length === 0) {
       return {};
     }
     
     const grouped = {};
     
     logs.forEach(log => {
-      if (!log.created_at || !log.user_id) {
-        console.warn('日誌缺少必要屬性:', log);
-        return;
-      }
-      
       try {
         // 從日期獲取年月日部分作為分組的一部分
         const date = new Date(log.created_at).toLocaleDateString();
@@ -53,124 +123,12 @@ const WorkLogReview = () => {
         
         grouped[groupKey].logs.push(log);
       } catch (err) {
-        console.error('分組過程中出錯:', err, log);
+        console.error('分組工作日誌時發生錯誤:', err, 'Log:', log);
+        // 繼續處理其他日誌，不中斷循環
       }
     });
     
     return grouped;
-  }, []);
-
-  // 刷新數據的函數
-  const refreshData = useCallback(async () => {
-    // 清除任何現有的超時計時器
-    if (loadingTimeout) {
-      clearTimeout(loadingTimeout);
-    }
-    
-    setIsLoading(true);
-    setError(null);
-    
-    // 設置新的加載超時
-    const timeoutId = setTimeout(() => {
-      setIsLoading(false);
-      setError('請求超時，請嘗試刷新或調整過濾條件');
-    }, 30000); // 30秒超時
-    
-    setLoadingTimeout(timeoutId);
-    
-    try {
-      console.log('開始加載工作日誌，過濾條件:', filter);
-      
-      // 添加請求診斷信息
-      console.log('診斷信息:', {
-        userRole: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).role : '未知',
-        tokenExists: !!localStorage.getItem('token'),
-        apiBaseUrl: process.env.REACT_APP_API_URL || '未設置',
-        networkStatus: navigator.onLine ? '在線' : '離線'
-      });
-      
-      const data = await searchWorkLogs({
-        ...filter,
-        forceRefresh: refreshTrigger // 加入強制刷新標記
-      });
-      
-      // 清除超時計時器
-      clearTimeout(timeoutId);
-      setLoadingTimeout(null);
-      
-      // 確保數據為數組
-      if (!Array.isArray(data)) {
-        console.error('返回的數據格式不正確:', data);
-        throw new Error('返回的數據格式不正確');
-      }
-      
-      console.log(`成功載入 ${data.length} 條工作日誌`);
-      
-      // 設置工作日誌數據
-      setWorkLogs(data);
-      
-      // 分組日誌數據
-      const grouped = groupWorkLogsByUserAndDate(data);
-      setGroupedWorkLogs(grouped);
-      
-      // 初始化展開狀態
-      const initialExpandState = {};
-      Object.keys(grouped).forEach(key => {
-        initialExpandState[key] = true;
-      });
-      setExpandedGroups(initialExpandState);
-      
-      setError(null);
-    } catch (err) {
-      console.error('加載工作日誌失敗:', err);
-      
-      // 清除超時計時器
-      clearTimeout(timeoutId);
-      setLoadingTimeout(null);
-      
-      // 提供更詳細的錯誤信息
-      if (err.name === 'AbortError') {
-        setError('請求超時，請稍後再試');
-      } else if (err.response) {
-        setError(`伺服器錯誤 (${err.response.status}): ${err.response.data?.message || '未知錯誤'}`);
-      } else if (err.request) {
-        setError('無法連接到伺服器，請檢查網絡連接');
-      } else {
-        setError(`載入工作日誌失敗: ${err.message}`);
-      }
-      
-      // 設置空數據，避免 UI 崩潰
-      setWorkLogs([]);
-      setGroupedWorkLogs({});
-    } finally {
-      // 確保在任何情況下都將 loading 狀態設為 false
-      setIsLoading(false);
-    }
-  }, [filter, refreshTrigger, groupWorkLogsByUserAndDate, loadingTimeout]);
-
-  // 載入工作日誌
-  useEffect(() => {
-    refreshData();
-    
-    // 組件卸載時清理
-    return () => {
-      if (loadingTimeout) {
-        clearTimeout(loadingTimeout);
-      }
-    };
-  }, [refreshData]);
-
-  // 觸發刷新
-  const handleRefresh = () => {
-    setRefreshTrigger(prev => prev + 1);
-  };
-
-  // 清除過濾條件
-  const clearFilters = () => {
-    setFilter({
-      status: 'pending',
-      date: ''
-    });
   };
 
   // 切換分組的展開/折疊狀態
@@ -189,126 +147,163 @@ const WorkLogReview = () => {
       return timeString;
     }
     // 否則嘗試提取 HH:MM 部分
-    return timeString.substring(0, 5);
+    try {
+      return timeString.substring(0, 5);
+    } catch (err) {
+      console.warn('時間格式化失敗:', timeString);
+      return timeString;
+    }
   };
 
-  // 審核工作日誌
+  // 改進的單條工作日誌審核函數
   const handleReviewWorkLog = async (workLogId, status) => {
+    // 防止重複操作同一條日誌
+    if (processingLogIds.includes(workLogId)) {
+      console.log(`工作日誌 ${workLogId} 正在處理中，請稍候`);
+      return;
+    }
+    
+    // 添加到處理中列表
+    setProcessingLogIds(prev => [...prev, workLogId]);
+    setError(null);
+    
     try {
-      setIsLoading(true);
-      console.log(`審核工作日誌 ${workLogId} 狀態變更為 ${status}`);
+      console.log(`開始審核工作日誌 ${workLogId}, 狀態: ${status}`);
       
-      await reviewWorkLog(workLogId, status);
+      // 使用改進的安全 API 調用
+      await safeApiCall(reviewWorkLog, [workLogId, status], 2, 1000);
+      
+      console.log(`工作日誌 ${workLogId} 審核成功`);
       
       // 更新本地狀態 - 移除已審核的日誌
-      const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
-      setWorkLogs(updatedWorkLogs);
+      setWorkLogs(prev => prev.filter(log => log.id !== workLogId));
       
-      // 重新分組更新後的工作日誌
-      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-      setGroupedWorkLogs(updatedGrouped);
-      
-      setError(null);
-      setIsLoading(false);
-    } catch (err) {
-      console.error('審核工作日誌失敗:', err);
-      setError('審核工作日誌失敗: ' + (err.message || '未知錯誤'));
-      setIsLoading(false);
-      
-      // 審核失敗後刷新數據
-      setTimeout(handleRefresh, 1000);
-    }
-  };
-
-  // 批量審核同一組的所有工作日誌
-  const handleBatchReview = async (groupKey, status) => {
-    try {
-      setIsLoading(true);
-      const group = groupedWorkLogs[groupKey];
-      
-      if (!group || !Array.isArray(group.logs)) {
-        throw new Error('找不到要審核的日誌組');
-      }
-      
-      console.log(`批量審核 ${group.logs.length} 條工作日誌，狀態變更為 ${status}`);
-      
-      // 依次審核該組中的所有工作日誌
-      for (const log of group.logs) {
-        await reviewWorkLog(log.id, status);
-      }
-      
-      // 更新本地狀態 - 移除已審核的組
-      const updatedWorkLogs = workLogs.filter(log => {
-        const logDate = new Date(log.created_at).toLocaleDateString();
-        const logGroupKey = `${log.user_id}_${logDate}`;
-        return logGroupKey !== groupKey;
+      // 並重新計算分組數據
+      setGroupedWorkLogs(prev => {
+        // 找出日誌所屬的組並移除該日誌
+        const newGrouped = {...prev};
+        
+        // 遍歷每個組，檢查並移除日誌
+        Object.keys(newGrouped).forEach(groupKey => {
+          const group = newGrouped[groupKey];
+          const updatedLogs = group.logs.filter(log => log.id !== workLogId);
+          
+          if (updatedLogs.length === 0) {
+            // 如果組內沒有日誌了，刪除整個組
+            delete newGrouped[groupKey];
+          } else {
+            // 否則更新組內的日誌列表
+            newGrouped[groupKey] = {
+              ...group,
+              logs: updatedLogs
+            };
+          }
+        });
+        
+        return newGrouped;
       });
       
-      setWorkLogs(updatedWorkLogs);
-      
-      // 重新分組更新後的工作日誌
-      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-      setGroupedWorkLogs(updatedGrouped);
-      
-      setError(null);
-      setIsLoading(false);
     } catch (err) {
-      console.error('批量審核工作日誌失敗:', err);
-      setError('批量審核工作日誌失敗: ' + (err.message || '未知錯誤'));
-      setIsLoading(false);
-      
-      // 審核失敗後刷新數據
-      setTimeout(handleRefresh, 1000);
+      console.error(`審核工作日誌 ${workLogId} 失敗:`, err);
+      setError(`審核工作日誌失敗: ${err.message || '未知錯誤'}`);
+    } finally {
+      // 從處理中列表移除
+      setProcessingLogIds(prev => prev.filter(id => id !== workLogId));
     }
   };
 
-  // 顯示診斷信息
-  const showDiagnosticInfo = () => {
-    const diagnosticInfo = {
-      userRole: localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')).role : '未知',
-      tokenExists: !!localStorage.getItem('token'),
-      apiBaseUrl: process.env.REACT_APP_API_URL || '未設置',
-      networkStatus: navigator.onLine ? '在線' : '離線',
-      filter: filter,
-      workLogsCount: workLogs.length,
-      groupedLogsCount: Object.keys(groupedWorkLogs).length,
-      browserInfo: navigator.userAgent
-    };
+  // 改進的批量審核函數 - 並行處理
+  const handleBatchReview = async (groupKey, status) => {
+    // 防止重複操作同一組
+    if (processingGroups.includes(groupKey)) {
+      console.log(`組 ${groupKey} 正在處理中，請稍候`);
+      return;
+    }
     
-    alert('診斷信息已複製到控制台');
-    console.log('診斷信息:', diagnosticInfo);
+    // 添加到處理中組列表
+    setProcessingGroups(prev => [...prev, groupKey]);
+    setError(null);
+    
+    try {
+      const group = groupedWorkLogs[groupKey];
+      if (!group || !Array.isArray(group.logs) || group.logs.length === 0) {
+        console.warn(`無法找到組 ${groupKey} 或組內沒有日誌`);
+        return;
+      }
+      
+      console.log(`開始批量審核組 ${groupKey}, 共 ${group.logs.length} 條日誌, 狀態: ${status}`);
+      
+      // 創建批量審核任務，但使用 Promise.all 並行處理
+      const batchPromises = group.logs.map(log => {
+        // 添加到處理中ID列表
+        setProcessingLogIds(prev => [...prev, log.id]);
+        
+        // 返回審核 Promise
+        return safeApiCall(reviewWorkLog, [log.id, status], 2, 1000)
+          .catch(err => {
+            console.error(`批量審核中的日誌 ${log.id} 失敗:`, err);
+            return { error: true, logId: log.id, message: err.message };
+          })
+          .finally(() => {
+            // 從處理中ID列表移除
+            setProcessingLogIds(prev => prev.filter(id => id !== log.id));
+          });
+      });
+      
+      // 等待所有審核任務完成
+      const results = await Promise.all(batchPromises);
+      
+      // 檢查結果，看是否有失敗的審核
+      const failures = results.filter(r => r && r.error);
+      if (failures.length > 0) {
+        console.warn(`批量審核中有 ${failures.length} 條日誌失敗`);
+        setError(`批量審核部分失敗: ${failures.length} 條日誌未審核成功`);
+      } else {
+        console.log(`組 ${groupKey} 的所有日誌審核成功`);
+      }
+      
+      // 更新本地狀態 - 移除整個組
+      setGroupedWorkLogs(prev => {
+        const newGrouped = {...prev};
+        delete newGrouped[groupKey];
+        return newGrouped;
+      });
+      
+      // 更新工作日誌列表
+      setWorkLogs(prev => prev.filter(log => {
+        try {
+          const logDate = new Date(log.created_at).toLocaleDateString();
+          const logGroupKey = `${log.user_id}_${logDate}`;
+          return logGroupKey !== groupKey;
+        } catch (err) {
+          console.warn('過濾工作日誌時出錯:', err);
+          return true; // 保留無法判斷組的日誌
+        }
+      }));
+      
+    } catch (err) {
+      console.error(`批量審核組 ${groupKey} 失敗:`, err);
+      setError(`批量審核失敗: ${err.message || '未知錯誤'}`);
+    } finally {
+      // 從處理中組列表移除
+      setProcessingGroups(prev => prev.filter(key => key !== groupKey));
+    }
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500 mb-4"></div>
-        <p className="text-white text-lg">載入工作日誌中，請稍候...</p>
-        {/* 添加超時自動重試功能 */}
-        <div className="mt-8 flex space-x-4">
-          <Button 
-            onClick={handleRefresh}
-            variant="secondary"
-            className="text-sm"
-          >
-            載入時間過長？點擊重試
-          </Button>
-          <Button 
-            onClick={clearFilters}
-            variant="secondary"
-            className="text-sm"
-          >
-            清除過濾條件
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  // 初始化時載入日誌
+  useEffect(() => {
+    loadWorkLogs();
+  }, [loadWorkLogs]);
+
+  // 當過濾條件變化時重新載入
+  useEffect(() => {
+    loadWorkLogs();
+  }, [filter, loadWorkLogs]);
 
   return (
     <div className="bg-gray-900 text-white p-6">
-      {/* 添加返回按鈕和頂部操作欄 */}
-      <div className="mb-4 flex justify-between items-center">
+      {/* 添加返回按鈕 */}
+      <div className="mb-4">
         <Button 
           onClick={handleGoBack}
           variant="secondary"
@@ -328,62 +323,22 @@ const WorkLogReview = () => {
           </svg>
           返回
         </Button>
-        
-        <div className="flex space-x-2">
-          {/* 診斷按鈕 */}
-          <Button 
-            onClick={showDiagnosticInfo}
-            variant="secondary"
-            className="text-sm"
-          >
-            診斷
-          </Button>
-          
-          {/* 清除過濾條件按鈕 */}
-          <Button 
-            onClick={clearFilters}
-            variant="secondary"
-            className="text-sm"
-          >
-            清除過濾
-          </Button>
-          
-          {/* 刷新按鈕 */}
-          <Button 
-            onClick={handleRefresh}
-            className="flex items-center text-sm"
-          >
-            <svg 
-              xmlns="http://www.w3.org/2000/svg" 
-              className="h-5 w-5 mr-1" 
-              viewBox="0 0 20 20" 
-              fill="currentColor"
-            >
-              <path 
-                fillRule="evenodd" 
-                d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" 
-                clipRule="evenodd" 
-              />
-            </svg>
-            刷新數據
-          </Button>
-        </div>
       </div>
     
       <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
 
+      {/* 錯誤提示 */}
       {error && (
-        <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          <div className="flex justify-between items-center">
-            <p>{error}</p>
-            <Button 
-              onClick={() => setError(null)}
-              variant="secondary"
-              className="text-sm px-2 py-1"
-            >
-              關閉
-            </Button>
-          </div>
+        <div className="bg-red-600 text-white p-3 rounded-lg mb-4 flex justify-between items-center">
+          <span>{error}</span>
+          <button 
+            onClick={() => setError(null)} 
+            className="text-white hover:text-gray-200"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
         </div>
       )}
 
@@ -396,6 +351,7 @@ const WorkLogReview = () => {
               value={filter.status}
               onChange={(e) => setFilter({...filter, status: e.target.value})}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
+              disabled={isLoading}
             >
               <option value="pending">待審核</option>
               <option value="approved">已核准</option>
@@ -403,149 +359,182 @@ const WorkLogReview = () => {
             </select>
           </div>
           <div>
-            <label className="block mb-2">日期 (選填)</label>
+            <label className="block mb-2">日期</label>
             <input
               type="date"
               value={filter.date}
               onChange={(e) => setFilter({...filter, date: e.target.value})}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
+              disabled={isLoading}
             />
-            <p className="text-xs text-gray-400 mt-1">留空顯示所有日期的記錄</p>
           </div>
+        </div>
+        <div className="mt-4 flex justify-between">
+          <div>
+            {/* 顯示日誌數量 */}
+            <span className="text-sm text-gray-400">
+              共找到 {Object.keys(groupedWorkLogs).length} 組，
+              {workLogs.length} 條日誌
+            </span>
+          </div>
+          <Button 
+            onClick={loadWorkLogs}
+            className="bg-green-600 hover:bg-green-700"
+            disabled={isLoading}
+          >
+            {isLoading ? '載入中...' : '重新整理'}
+          </Button>
         </div>
       </div>
 
+      {/* 載入中指示器 */}
+      {isLoading && (
+        <div className="flex justify-center p-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+      )}
+
       {/* 分組顯示的工作日誌 */}
-      <div className="bg-gray-800 p-6 rounded-lg">
-        {Object.keys(groupedWorkLogs).length === 0 ? (
-          <div className="text-center p-8">
-            <p className="text-gray-400 mb-4">目前沒有符合條件的工作日誌</p>
-            <div className="space-y-2">
-              <p className="text-sm text-gray-500">嘗試更改日期或狀態過濾器</p>
-              <div className="flex justify-center space-x-4 mt-4">
-                <Button onClick={clearFilters}>
-                  清除過濾條件
-                </Button>
-                <Button
-                  onClick={() => setFilter(prev => ({
-                    ...prev,
-                    status: prev.status === 'pending' ? 'approved' : 'pending'
-                  }))}
-                >
-                  {filter.status === 'pending' ? '查看已核准' : '查看待審核'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {Object.keys(groupedWorkLogs).map(groupKey => (
-              <div key={groupKey} className="border border-gray-700 rounded-lg overflow-hidden">
-                {/* 分組標頭 */}
-                <div 
-                  className="bg-gray-700 p-4 flex justify-between items-center cursor-pointer"
-                  onClick={() => toggleGroupExpand(groupKey)}
-                >
-                  <div>
-                    <h3 className="text-xl font-semibold">
-                      {groupedWorkLogs[groupKey].username} - {groupedWorkLogs[groupKey].date}
-                    </h3>
-                    <p className="text-gray-400">
-                      共 {groupedWorkLogs[groupKey].logs.length} 筆工作紀錄
-                    </p>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button className="text-blue-400">
-                      {expandedGroups[groupKey] ? '收起' : '展開'}
-                    </button>
-                    {filter.status === 'pending' && (
+      {!isLoading && (
+        <div className="bg-gray-800 p-6 rounded-lg">
+          {Object.keys(groupedWorkLogs).length === 0 ? (
+            <p className="text-center text-gray-400">該日期沒有符合條件的工作日誌</p>
+          ) : (
+            <div className="space-y-6">
+              {Object.keys(groupedWorkLogs).map(groupKey => {
+                const group = groupedWorkLogs[groupKey];
+                const isProcessingGroup = processingGroups.includes(groupKey);
+                
+                return (
+                  <div key={groupKey} className="border border-gray-700 rounded-lg overflow-hidden">
+                    {/* 分組標頭 */}
+                    <div 
+                      className={`p-4 flex justify-between items-center cursor-pointer
+                        ${isProcessingGroup ? 'bg-blue-900' : 'bg-gray-700'}`}
+                      onClick={() => toggleGroupExpand(groupKey)}
+                    >
+                      <div>
+                        <h3 className="text-xl font-semibold">
+                          {group.username} - {group.date}
+                        </h3>
+                        <p className="text-gray-400">
+                          共 {group.logs.length} 筆工作紀錄
+                          {isProcessingGroup && ' - 處理中...'}
+                        </p>
+                      </div>
                       <div className="flex space-x-2">
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleBatchReview(groupKey, 'approved');
-                          }}
-                          className="px-2 py-1 text-sm"
-                        >
-                          全部核准
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleBatchReview(groupKey, 'rejected');
-                          }}
-                          className="px-2 py-1 text-sm"
-                        >
-                          全部拒絕
-                        </Button>
+                        <button className="text-blue-400">
+                          {expandedGroups[groupKey] ? '收起' : '展開'}
+                        </button>
+                        {filter.status === 'pending' && !isProcessingGroup && (
+                          <div className="flex space-x-2">
+                            <Button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleBatchReview(groupKey, 'approved');
+                              }}
+                              className="px-2 py-1 text-sm"
+                              disabled={isProcessingGroup}
+                            >
+                              全部核准
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleBatchReview(groupKey, 'rejected');
+                              }}
+                              className="px-2 py-1 text-sm"
+                              disabled={isProcessingGroup}
+                            >
+                              全部拒絕
+                            </Button>
+                          </div>
+                        )}
+                        {isProcessingGroup && (
+                          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500"></div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* 分組內容 */}
+                    {expandedGroups[groupKey] && (
+                      <div className="p-4">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="bg-gray-700">
+                              <th className="p-3 text-left">時間</th>
+                              <th className="p-3 text-left">地點</th>
+                              <th className="p-3 text-left">工作類別</th>
+                              <th className="p-3 text-left">工作內容</th>
+                              <th className="p-3 text-left">操作</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.logs.map(log => {
+                              const isProcessing = processingLogIds.includes(log.id);
+                              
+                              return (
+                                <tr key={log.id} className={`border-b border-gray-700 ${
+                                  isProcessing ? 'bg-blue-900 bg-opacity-50' : ''
+                                }`}>
+                                  <td className="p-3">
+                                    {formatTime(log.start_time)} - {formatTime(log.end_time)}
+                                  </td>
+                                  <td className="p-3">{log.position_name || log.location}</td>
+                                  <td className="p-3">{log.work_category_name || log.crop}</td>
+                                  <td className="p-3">
+                                    <div>
+                                      <p><strong>詳情:</strong> {log.details || '無'}</p>
+                                      {log.harvest_quantity > 0 && (
+                                        <p><strong>採收量:</strong> {log.harvest_quantity} 台斤</p>
+                                      )}
+                                      {log.product_id && (
+                                        <p><strong>使用產品:</strong> {log.product_name} ({log.product_quantity})</p>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="p-3 space-x-2">
+                                    {filter.status === 'pending' && (
+                                      <>
+                                        {isProcessing ? (
+                                          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-blue-500"></div>
+                                        ) : (
+                                          <>
+                                            <Button
+                                              onClick={() => handleReviewWorkLog(log.id, 'approved')}
+                                              className="px-2 py-1 text-sm"
+                                              disabled={isProcessing || isProcessingGroup}
+                                            >
+                                              核准
+                                            </Button>
+                                            <Button
+                                              variant="secondary"
+                                              onClick={() => handleReviewWorkLog(log.id, 'rejected')}
+                                              className="px-2 py-1 text-sm"
+                                              disabled={isProcessing || isProcessingGroup}
+                                            >
+                                              拒絕
+                                            </Button>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </div>
-                </div>
-                
-                {/* 分組內容 */}
-                {expandedGroups[groupKey] && (
-                  <div className="p-4 overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gray-700">
-                          <th className="p-3 text-left">時間</th>
-                          <th className="p-3 text-left">地點</th>
-                          <th className="p-3 text-left">工作類別</th>
-                          <th className="p-3 text-left">工作內容</th>
-                          <th className="p-3 text-left">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {groupedWorkLogs[groupKey].logs.map(log => (
-                          <tr key={log.id} className="border-b border-gray-700">
-                            <td className="p-3">
-                              {formatTime(log.start_time)} - {formatTime(log.end_time)}
-                            </td>
-                            <td className="p-3">{log.position_name || log.location || '未指定'}</td>
-                            <td className="p-3">{log.work_category_name || log.crop || '未指定'}</td>
-                            <td className="p-3">
-                              <div>
-                                <p><strong>詳情:</strong> {log.details || '無'}</p>
-                                {log.harvest_quantity > 0 && (
-                                  <p><strong>採收量:</strong> {log.harvest_quantity} 台斤</p>
-                                )}
-                                {log.product_id && (
-                                  <p><strong>使用產品:</strong> {log.product_name || log.product_id} ({log.product_quantity || 0})</p>
-                                )}
-                              </div>
-                            </td>
-                            <td className="p-3 space-x-2">
-                              {filter.status === 'pending' && (
-                                <>
-                                  <Button
-                                    onClick={() => handleReviewWorkLog(log.id, 'approved')}
-                                    className="px-2 py-1 text-sm"
-                                  >
-                                    核准
-                                  </Button>
-                                  <Button
-                                    variant="secondary"
-                                    onClick={() => handleReviewWorkLog(log.id, 'rejected')}
-                                    className="px-2 py-1 text-sm"
-                                  >
-                                    拒絕
-                                  </Button>
-                                </>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
