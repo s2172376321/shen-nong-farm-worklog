@@ -210,10 +210,7 @@ async searchWorkLogs(req, res) {
       userRole: req.user?.role
     });
     
-    // 添加結果限制避免返回過多數據
-    const LIMIT = 100; 
-    
-    // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
+    // 加入更清晰的日期處理邏輯
     let queryText = `
       SELECT wl.id, wl.user_id, wl.location, wl.crop, 
              wl.start_time, wl.end_time, wl.work_hours, 
@@ -254,29 +251,19 @@ async searchWorkLogs(req, res) {
     }
 
     if (startDate && endDate) {
-      // 使用 DATE() 函數優化日期比較
+      // 使用 DATE() 函數確保日期比較正確
       queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
       values.push(startDate, endDate);
       paramIndex += 2;
     }
 
-    // 添加排序、限制和超時設置
-    queryText += ' ORDER BY wl.created_at DESC';
-    queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
+    // 添加排序
+    queryText += ' ORDER BY wl.created_at DESC LIMIT 100';
 
-    console.log('執行 SQL:', queryText);
+    console.log('執行查詢:', queryText);
     console.log('參數:', values);
 
-    // 添加查詢超時設定
-    const queryOptions = { 
-      text: queryText, 
-      values: values,
-      timeout: 10000  // 設置數據庫查詢超時為 10 秒
-    };
-
-    const result = await db.query(queryOptions);
-    
-    console.log(`查詢到 ${result.rows.length} 條工作日誌`);
+    const result = await db.query(queryText, values);
     
     // 標準化時間格式，確保前端能正確顯示
     const formattedResults = result.rows.map(log => ({
@@ -287,46 +274,8 @@ async searchWorkLogs(req, res) {
     
     res.json(formattedResults);
   } catch (error) {
-    console.error('查詢工作日誌失敗:', {
-      error: error.message,
-      stack: error.stack,
-      query: error.query
-    });
-    res.status(500).json({ 
-      message: '查詢工作日誌失敗，請稍後再試',
-      error: process.env.NODE_ENV === 'production' ? undefined : error.message
-    });
-  }
-},
-
-
-  // 獲取特定位置的作物列表 - 新增函數
-async getLocationCrops(req, res) {
-  const { positionCode } = req.params;
-  
-  try {
-    console.log(`獲取位置 ${positionCode} 的作物列表`);
-    
-    // 查詢指定位置曾種植的作物
-    const query = `
-      SELECT DISTINCT crop 
-      FROM work_logs 
-      WHERE position_code = $1 
-        AND work_category_name = '種植' 
-      ORDER BY crop
-    `;
-    
-    const result = await db.query(query, [positionCode]);
-    
-    console.log(`找到 ${result.rows.length} 種作物`);
-    
-    // 抽取作物名稱列表
-    const crops = result.rows.map(row => row.crop);
-    
-    res.json(crops);
-  } catch (error) {
-    console.error('獲取位置作物列表失敗:', error);
-    res.status(500).json({ message: '獲取位置作物列表失敗，請稍後再試' });
+    console.error('查詢工作日誌失敗:', error);
+    res.status(500).json({ message: '查詢工作日誌失敗，請稍後再試' });
   }
 },
 
