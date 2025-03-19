@@ -2,37 +2,53 @@
 const db = require('../config/database');
 
 const NoticeController = {
-  // 創建公告
-  async createNotice(req, res) {
-    const { title, content, expiresAt } = req.body;
-    const authorId = req.user.id;
+// 創建公告
+async createNotice(req, res) {
+  console.log('收到創建公告請求:', req.body);
+  
+  if (!req.body) {
+    console.error('沒有收到請求內容');
+    return res.status(400).json({ message: '請求內容為空' });
+  }
+  
+  if (!req.body.title || !req.body.content) {
+    console.error('缺少必填字段:', req.body);
+    return res.status(400).json({ message: '標題和內容為必填項' });
+  }
+  
+  const { title, content, expiresAt } = req.body;
+  const authorId = req.user.id;
 
-    try {
-      const query = `
-        INSERT INTO notices 
-        (title, content, author_id, expires_at)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id
-      `;
+  try {
+    const query = `
+      INSERT INTO notices 
+      (title, content, author_id, expires_at)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, title, content, author_id, expires_at, created_at
+    `;
 
-      const values = [
-        title, 
-        content, 
-        authorId, 
-        expiresAt || null
-      ];
+    const values = [
+      title, 
+      content, 
+      authorId, 
+      expiresAt || null
+    ];
 
-      const result = await db.query(query, values);
+    const result = await db.query(query, values);
+    
+    console.log('公告創建成功:', result.rows[0]);
+    
+    // 返回完整的公告對象，包括更多字段
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('創建公告失敗:', error);
+    res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+  }
+},
 
-      res.status(201).json({
-        message: '公告創建成功',
-        noticeId: result.rows[0].id
-      });
-    } catch (error) {
-      console.error('創建公告失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
-    }
-  },
+
+
+
 
   // 取得所有有效公告（添加已讀狀態）
   async getAllNotices(req, res) {
