@@ -462,6 +462,8 @@ export const createWorkLog = async (workLogData) => {
     apiCache.clear('workLogs');
     apiCache.clear('workStats');
     apiCache.clear('todayHour');
+    apiCache.clear(); // 清除所有緩存，確保獲取最新數據
+
     
     return response.data;
   } catch (error) {
@@ -600,6 +602,8 @@ export const reviewWorkLog = async (workLogId, status) => {
   // 審核後清除相關快取
   apiCache.clear('workLogs');
   apiCache.clear('workStats');
+  apiCache.set(cacheKey, normalizedData, 30000); // 縮短緩存時間至30秒
+
   
   return response.data;
 };
