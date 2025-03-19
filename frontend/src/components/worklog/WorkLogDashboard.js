@@ -1,5 +1,5 @@
 // 位置：frontend/src/components/worklog/WorkLogDashboard.js
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchLocationsByArea, fetchWorkCategories, getApiStatus } from '../../utils/api';
@@ -8,7 +8,6 @@ import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
 import ApiDiagnostic from '../common/ApiDiagnostic';
 import { useWorkLog } from '../../hooks/useWorkLog';
-import { toast } from 'react-toastify'; // 如果项目使用了 react-toastify
 
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
@@ -22,8 +21,6 @@ const WorkLogDashboard = () => {
   const [workCategories, setWorkCategories] = useState([]);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
-  const [lastRefreshTime, setLastRefreshTime] = useState(null);
-  const refreshTimerRef = useRef(null);
   
   // 過濾條件
   const [filters, setFilters] = useState({
@@ -33,33 +30,31 @@ const WorkLogDashboard = () => {
     location_code: ''
   });
 
+  // 返回函數
+  const handleGoBack = () => {
+    window.history.back();
+  };
+
   // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
   const checkServerStatus = useCallback(async () => {
     try {
       const status = await getApiStatus();
       setServerStatus(status);
       console.log('伺服器狀態檢查結果:', status);
-      return status;
     } catch (err) {
       console.error('檢查伺服器狀態失敗:', err);
       setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
-      return { status: 'offline', message: '無法連線到伺服器' };
     }
   }, []);
 
-  // 載入工作日誌 - 加強版，使用強制更新參數
-  const loadWorkLogs = useCallback(async (forceRefresh = false) => {
+  // 載入工作日誌
+  const loadWorkLogs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
     try {
       // 增加載入狀態日誌
-      console.log('開始載入工作日誌，過濾條件:', filters, '強制更新:', forceRefresh);
-      
-      // 如果要強制更新，先清除緩存
-      if (forceRefresh && typeof clearCache === 'function') {
-        clearCache();
-      }
+      console.log('開始載入工作日誌，過濾條件:', filters);
       
       // 增加診斷資訊
       const networkStatus = navigator.onLine ? '在線' : '離線';
@@ -71,7 +66,6 @@ const WorkLogDashboard = () => {
       if (Array.isArray(data)) {
         console.log(`成功載入 ${data.length} 條工作日誌`);
         setWorkLogs(data);
-        setLastRefreshTime(new Date());
       } else {
         console.error('工作日誌數據格式不正確:', data);
         setWorkLogs([]);
@@ -119,7 +113,7 @@ const WorkLogDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [filters, fetchWorkLogs, logout, navigate, clearCache]);
+  }, [filters, fetchWorkLogs, logout, navigate]);
 
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
@@ -165,24 +159,6 @@ const WorkLogDashboard = () => {
     }
   }, []);
 
-  // 設置定期自動刷新 - 添加一個新的 useEffect
-  useEffect(() => {
-    // 每45秒自動刷新一次
-    refreshTimerRef.current = setInterval(() => {
-      // 自動刷新時不顯示加載指示器，靜默更新
-      loadWorkLogs(true);
-      console.log('自動刷新工作日誌', new Date().toLocaleTimeString());
-    }, 45000);
-    
-    // 清理函數
-    return () => {
-      if (refreshTimerRef.current) {
-        clearInterval(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-    };
-  }, [loadWorkLogs]);
-
   // 組件掛載後載入數據
   useEffect(() => {
     // 檢查伺服器狀態
@@ -194,7 +170,7 @@ const WorkLogDashboard = () => {
     loadBaseData();
     
     // 載入工作日誌
-    loadWorkLogs(true); // 初始加載時強制刷新
+    loadWorkLogs();
     
     // 清理函數
     return () => clearInterval(intervalId);
@@ -217,38 +193,9 @@ const WorkLogDashboard = () => {
     }));
   };
 
-  // 刷新工作日誌列表 - 改進版，包含通知和緩存清除
+  // 刷新工作日誌列表
   const refreshWorkLogs = async () => {
-    // 強制清除緩存
-    if (typeof clearCache === 'function') {
-      clearCache(); // 清除所有工作日誌相關緩存
-    }
-    
-    // 顯示刷新提示
-    if (typeof toast !== 'undefined') {
-      toast.info('正在刷新工作日誌列表...');
-    }
-    
-    await loadWorkLogs(true); // 強制刷新
-    
-    // 顯示成功提示
-    if (typeof toast !== 'undefined') {
-      toast.success('工作日誌列表已更新');
-    }
-  };
-
-  // 處理工作日誌提交成功
-  const handleSubmitSuccess = () => {
-    // 隱藏表單
-    setShowForm(false);
-    
-    // 強制刷新列表
-    refreshWorkLogs();
-    
-    // 顯示成功消息
-    if (typeof toast !== 'undefined') {
-      toast.success('工作日誌已成功提交');
-    }
+    await loadWorkLogs();
   };
 
   // 重試按鈕的處理函數
@@ -295,6 +242,29 @@ const WorkLogDashboard = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-6xl mx-auto">
+        {/* 添加返回按鈕 */}
+        <div className="mb-4">
+          <Button 
+            onClick={handleGoBack}
+            variant="secondary"
+            className="flex items-center text-sm"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-5 w-5 mr-1" 
+              viewBox="0 0 20 20" 
+              fill="currentColor"
+            >
+              <path 
+                fillRule="evenodd" 
+                d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
+                clipRule="evenodd" 
+              />
+            </svg>
+            返回
+          </Button>
+        </div>
+        
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold">工作日誌管理</h1>
           <div>
@@ -328,7 +298,10 @@ const WorkLogDashboard = () => {
         {showForm && (
           <div className="mb-6">
             <WorkLogForm 
-              onSubmitSuccess={handleSubmitSuccess}
+              onSubmitSuccess={() => {
+                refreshWorkLogs();
+                setShowForm(false);
+              }} 
             />
           </div>
         )}
@@ -390,10 +363,7 @@ const WorkLogDashboard = () => {
               </select>
             </div>
           </div>
-          <div className="mt-4 flex justify-between items-center">
-            <div className="text-sm text-gray-400">
-              {lastRefreshTime && `上次更新: ${lastRefreshTime.toLocaleTimeString()}`}
-            </div>
+          <div className="mt-4 flex justify-end">
             <Button 
               onClick={refreshWorkLogs}
               className="bg-green-600 hover:bg-green-700"
@@ -468,7 +438,7 @@ const WorkLogDashboard = () => {
                           {typeof durationHours === 'number' ? `${durationHours.toFixed(2)} 小時` : durationHours}
                         </td>
                         <td className="p-3">
-                          {log.area_name || filters.areaName || 'N/A'}
+                          {log.area_name || 'N/A'}
                         </td>
                         <td className="p-3">
                           {log.position_name || log.location || 'N/A'}
