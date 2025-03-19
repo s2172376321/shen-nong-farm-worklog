@@ -690,7 +690,26 @@ export const fetchNotices = async () => {
 };
 
 export const createNotice = async (noticeData) => {
-  const response = await api.post('/notices', noticeData);
+  // 增加錯誤檢查和日誌
+  console.log('正在創建公告，數據:', noticeData);
+  
+  if (!noticeData) {
+    console.error('公告數據為空');
+    throw new Error('無法創建公告：數據為空');
+  }
+  
+  // 檢查必填字段
+  if (!noticeData.title || !noticeData.content) {
+    console.error('公告數據缺少必填字段:', noticeData);
+    throw new Error('公告需要標題和內容');
+  }
+  
+  // 明確指定 Content-Type 標頭
+  const response = await api.post('/notices', noticeData, {
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
   
   // 清除公告快取
   apiCache.clear('notices');
