@@ -563,29 +563,18 @@ export const uploadCSV = async (csvFile) => {
 };
 
 // 優化後的 searchWorkLogs 函數
-export const searchWorkLogs = async (filters, forceRefresh = false) => {
+export const searchWorkLogs = async (filters) => {
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
   // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters), 
-    forceRefresh ? '(強制刷新)' : '');
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
   
-  // 檢查上次更新時間
-  const lastUpdate = apiCache.get('lastWorkLogUpdate');
-  const isCacheValid = lastUpdate && (Date.now() - lastUpdate < 30000); // 30秒內更新過數據
-  
-  // 如果強制刷新或有最近的更新，不使用緩存
-  if (forceRefresh || !isCacheValid) {
-    console.log('強制刷新或有最近更新，不使用緩存');
-    apiCache.clear(cacheKey);
-  } else {
-    // 檢查快取
-    const cachedData = apiCache.get(cacheKey);
-    if (cachedData) {
-      console.log('使用快取的工作日誌數據');
-      return cachedData;
-    }
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作日誌數據');
+    return cachedData;
   }
   
   try {
@@ -604,12 +593,8 @@ export const searchWorkLogs = async (filters, forceRefresh = false) => {
         const currentTimeout = timeouts[timeoutAttempts] || 30000;
         console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
         
-        // 添加時間戳參數以防止瀏覽器緩存
-        const enhancedFilters = forceRefresh ? 
-          { ...filters, _t: Date.now() } : filters;
-          
         const response = await api.get('/work-logs/search', { 
-          params: enhancedFilters,
+          params: filters,
           timeout: currentTimeout
         });
         
@@ -624,8 +609,8 @@ export const searchWorkLogs = async (filters, forceRefresh = false) => {
             created_at: log.created_at || new Date().toISOString()
           }));
           
-          // 儲存到快取 (縮短緩存時間)
-          apiCache.set(cacheKey, normalizedData, 30000); // 緩存30秒
+          // 儲存到快取
+          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
           
           return normalizedData;
         }
