@@ -1,4 +1,4 @@
-l// 位置：frontend/src/utils/api.js
+// 位置：frontend/src/utils/api.js
 import axios from 'axios';
 
 
@@ -546,109 +546,54 @@ export const uploadCSV = async (csvFile) => {
 
 // 優化後的 searchWorkLogs 函數
 export const searchWorkLogs = async (filters) => {
+  // 由於管理員需要看到最新數據，所以管理頁面查詢時不要使用緩存
+  const isAdminRequest = filters.isAdmin === true;
+  
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
-  // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
-  
-  // 檢查快取
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log('使用快取的工作日誌數據');
-    return cachedData;
+  // 管理員查詢或明確指定不使用緩存時跳過緩存
+  if (!isAdminRequest) {
+    // 檢查快取
+    const cachedData = apiCache.get(cacheKey);
+    if (cachedData) {
+      console.log('使用快取的工作日誌數據');
+      return cachedData;
+    }
   }
   
   try {
-    console.log('開始發送工作日誌搜尋請求');
+    console.log('開始發送工作日誌搜尋請求', filters);
     
-    // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
-    let timeoutAttempts = 0;
-    const maxTimeoutAttempts = 2;
-    const timeouts = [8000, 20000]; // 第一次嘗試 8 秒，第二次 20 秒
-    
-    let lastError = null;
-    
-    while (timeoutAttempts <= maxTimeoutAttempts) {
-      try {
-        // 使用當前的超時時間
-        const currentTimeout = timeouts[timeoutAttempts] || 30000;
-        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
-        
-        const response = await api.get('/work-logs/search', { 
-          params: filters,
-          timeout: currentTimeout
-        });
-        
-        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
-        
-        // 標準化日期和時間格式
-        if (Array.isArray(response.data)) {
-          const normalizedData = response.data.map(log => ({
-            ...log,
-            start_time: log.start_time?.substring(0, 5) || log.start_time,
-            end_time: log.end_time?.substring(0, 5) || log.end_time,
-            created_at: log.created_at || new Date().toISOString()
-          }));
-          
-          // 儲存到快取
-          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
-          
-          return normalizedData;
-        }
-        
-        console.warn('API返回了非數組數據:', response.data);
-        return [];
-      } catch (error) {
-        lastError = error;
-        
-        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
-        if (error.code === 'ECONNABORTED' && timeoutAttempts < maxTimeoutAttempts) {
-          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
-          timeoutAttempts++;
-        } else {
-          // 其他錯誤或已達最大重試次數，跳出循環
-          break;
-        }
-      }
-    }
-    
-    // 所有嘗試都失敗，記錄詳細錯誤並處理
-    console.error('搜尋工作日誌失敗 (所有嘗試):', {
-      message: lastError?.message,
-      status: lastError?.response?.status,
-      statusText: lastError?.response?.statusText,
-      url: lastError?.config?.url,
-      params: JSON.stringify(lastError?.config?.params)
+    const response = await api.get('/work-logs/search', { 
+      params: filters,
+      timeout: 10000
     });
     
-    // 特殊錯誤處理
-    if (lastError?.response?.status === 404) {
-      console.log('沒有找到符合條件的工作日誌');
-      return [];
+    // 標準化數據格式
+    if (Array.isArray(response.data)) {
+      const normalizedData = response.data.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.start_time,
+        end_time: log.end_time?.substring(0, 5) || log.end_time,
+        created_at: log.created_at || new Date().toISOString()
+      }));
+      
+      // 若非管理員請求，才存到快取
+      if (!isAdminRequest) {
+        apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+      }
+      
+      return normalizedData;
     }
     
-    // 網絡離線處理
-    if (!navigator.onLine) {
-      console.warn('瀏覽器處於離線狀態');
-      return [];
-    }
-    
-    // 身份驗證錯誤處理
-    if (lastError?.response?.status === 401) {
-      console.warn('身份驗證已過期，需要重新登入');
-      // 可以在這裡添加重新導向到登入頁面的邏輯
-      return [];
-    }
-    
-    // 默認返回空數組避免UI崩潰
+    console.warn('API返回了非數組數據:', response.data);
     return [];
   } catch (error) {
-    console.error('searchWorkLogs 處理發生意外錯誤:', error);
+    console.error('搜尋工作日誌失敗:', error);
     return [];
   }
 };
-
 export const reviewWorkLog = async (workLogId, status) => {
   const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
   
