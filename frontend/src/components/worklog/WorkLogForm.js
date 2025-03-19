@@ -929,6 +929,13 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       if (onSubmitSuccess) {
         onSubmitSuccess();
       }
+      setTimeout(() => {
+        // 呼叫父元件的成功回調
+        if (onSubmitSuccess) {
+          onSubmitSuccess();
+        }
+      }, 300);
+    
     } catch (err) {
       console.error('提交工作日誌詳細錯誤:', {
         message: err.message,
