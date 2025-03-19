@@ -412,6 +412,7 @@ export const logout = () => {
   apiCache.clear();
 };
 
+
 // ----- 工作日誌 API -----
 export const createWorkLog = async (workLogData) => {
   try {
@@ -458,12 +459,27 @@ export const createWorkLog = async (workLogData) => {
     
     console.log('工作日誌提交成功, 響應:', response.data);
     
-    // 創建日誌後清除相關快取
-    apiCache.clear('workLogs');
-    apiCache.clear('workStats');
-    apiCache.clear('todayHour');
-    apiCache.clear(); // 清除所有緩存，確保獲取最新數據
-
+    // 提交成功後徹底清除所有相關的緩存
+    // 這是關鍵修改點，確保工作日誌列表會顯示最新數據
+    console.log('開始清除所有工作日誌相關緩存...');
+    
+    // 清除所有可能影響工作日誌列表的緩存
+    Object.keys(apiCache.data).forEach(key => {
+      // 清除所有工作日誌相關緩存
+      if (key.startsWith('workLogs') || 
+          key === 'todayHour' || 
+          key === 'workStats' ||
+          key.includes('work') || 
+          key.includes('logs')) {
+        console.log(`清除緩存: ${key}`);
+        apiCache.clear(key);
+      }
+    });
+    
+    // 強制初始化時間戳，確保下次獲取數據時不會使用舊數據
+    apiCache.set('lastWorkLogUpdate', Date.now(), 86400000); // 24小時有效期
+    
+    console.log('緩存清除完成，列表將顯示最新工作日誌');
     
     return response.data;
   } catch (error) {
@@ -547,15 +563,23 @@ export const uploadCSV = async (csvFile) => {
 };
 
 // 優化後的 searchWorkLogs 函數
-export const searchWorkLogs = async (filters) => {
-  // 由於管理員需要看到最新數據，所以管理頁面查詢時不要使用緩存
-  const isAdminRequest = filters.isAdmin === true;
-  
+export const searchWorkLogs = async (filters, forceRefresh = false) => {
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
-  // 管理員查詢或明確指定不使用緩存時跳過緩存
-  if (!isAdminRequest) {
+  // 詳細日誌
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters), 
+    forceRefresh ? '(強制刷新)' : '');
+  
+  // 檢查上次更新時間
+  const lastUpdate = apiCache.get('lastWorkLogUpdate');
+  const isCacheValid = lastUpdate && (Date.now() - lastUpdate < 30000); // 30秒內更新過數據
+  
+  // 如果強制刷新或有最近的更新，不使用緩存
+  if (forceRefresh || !isCacheValid) {
+    console.log('強制刷新或有最近更新，不使用緩存');
+    apiCache.clear(cacheKey);
+  } else {
     // 檢查快取
     const cachedData = apiCache.get(cacheKey);
     if (cachedData) {
@@ -565,37 +589,101 @@ export const searchWorkLogs = async (filters) => {
   }
   
   try {
-    console.log('開始發送工作日誌搜尋請求', filters);
+    console.log('開始發送工作日誌搜尋請求');
     
-    const response = await api.get('/work-logs/search', { 
-      params: filters,
-      timeout: 10000
-    });
+    // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
+    let timeoutAttempts = 0;
+    const maxTimeoutAttempts = 2;
+    const timeouts = [8000, 20000]; // 第一次嘗試 8 秒，第二次 20 秒
     
-    // 標準化數據格式
-    if (Array.isArray(response.data)) {
-      const normalizedData = response.data.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.start_time,
-        end_time: log.end_time?.substring(0, 5) || log.end_time,
-        created_at: log.created_at || new Date().toISOString()
-      }));
-      
-      // 若非管理員請求，才存到快取
-      if (!isAdminRequest) {
-        apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+    let lastError = null;
+    
+    while (timeoutAttempts <= maxTimeoutAttempts) {
+      try {
+        // 使用當前的超時時間
+        const currentTimeout = timeouts[timeoutAttempts] || 30000;
+        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
+        
+        // 添加時間戳參數以防止瀏覽器緩存
+        const enhancedFilters = forceRefresh ? 
+          { ...filters, _t: Date.now() } : filters;
+          
+        const response = await api.get('/work-logs/search', { 
+          params: enhancedFilters,
+          timeout: currentTimeout
+        });
+        
+        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
+        
+        // 標準化日期和時間格式
+        if (Array.isArray(response.data)) {
+          const normalizedData = response.data.map(log => ({
+            ...log,
+            start_time: log.start_time?.substring(0, 5) || log.start_time,
+            end_time: log.end_time?.substring(0, 5) || log.end_time,
+            created_at: log.created_at || new Date().toISOString()
+          }));
+          
+          // 儲存到快取 (縮短緩存時間)
+          apiCache.set(cacheKey, normalizedData, 30000); // 緩存30秒
+          
+          return normalizedData;
+        }
+        
+        console.warn('API返回了非數組數據:', response.data);
+        return [];
+      } catch (error) {
+        lastError = error;
+        
+        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
+        if (error.code === 'ECONNABORTED' && timeoutAttempts < maxTimeoutAttempts) {
+          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
+          timeoutAttempts++;
+        } else {
+          // 其他錯誤或已達最大重試次數，跳出循環
+          break;
+        }
       }
-      
-      return normalizedData;
     }
     
-    console.warn('API返回了非數組數據:', response.data);
+    // 所有嘗試都失敗，記錄詳細錯誤並處理
+    console.error('搜尋工作日誌失敗 (所有嘗試):', {
+      message: lastError?.message,
+      status: lastError?.response?.status,
+      statusText: lastError?.response?.statusText,
+      url: lastError?.config?.url,
+      params: JSON.stringify(lastError?.config?.params)
+    });
+    
+    // 特殊錯誤處理
+    if (lastError?.response?.status === 404) {
+      console.log('沒有找到符合條件的工作日誌');
+      return [];
+    }
+    
+    // 網絡離線處理
+    if (!navigator.onLine) {
+      console.warn('瀏覽器處於離線狀態');
+      return [];
+    }
+    
+    // 身份驗證錯誤處理
+    if (lastError?.response?.status === 401) {
+      console.warn('身份驗證已過期，需要重新登入');
+      // 可以在這裡添加重新導向到登入頁面的邏輯
+      return [];
+    }
+    
+    // 默認返回空數組避免UI崩潰
     return [];
   } catch (error) {
-    console.error('搜尋工作日誌失敗:', error);
+    console.error('searchWorkLogs 處理發生意外錯誤:', error);
     return [];
   }
 };
+
+
+
 export const reviewWorkLog = async (workLogId, status) => {
   const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
   
@@ -609,10 +697,18 @@ export const reviewWorkLog = async (workLogId, status) => {
 };
 
 // 修改後的 getTodayHour 函數，增加重試機制並優化錯誤處理
-export const getTodayHour = async () => {
+export const getTodayHour = async (forceRefresh = false) => {
   // 檢查快取
   const cachedData = apiCache.get('todayHour');
-  if (cachedData) {
+  
+  // 強制刷新或剛提交過工作日誌，不使用緩存
+  const lastUpdate = apiCache.get('lastWorkLogUpdate');
+  const isCacheValid = lastUpdate && (Date.now() - lastUpdate < 30000); // 30秒內更新過數據
+  
+  if (forceRefresh || isCacheValid) {
+    console.log('強制刷新今日工時或有最近更新，不使用緩存');
+    apiCache.clear('todayHour');
+  } else if (cachedData) {
     console.log('使用快取的今日工時數據');
     return cachedData;
   }
@@ -626,7 +722,8 @@ export const getTodayHour = async () => {
       
       // 使用增加的超時時間
       const response = await api.get('/work-logs/today-hour', {
-        timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
+        timeout: 10000 + (retryCount * 2000), // 隨著重試增加超時時間
+        params: forceRefresh ? { _t: Date.now() } : {} // 添加時間戳防止緩存
       });
       
       const data = response.data;
@@ -643,8 +740,8 @@ export const getTodayHour = async () => {
         is_complete: Boolean(data.is_complete)
       };
       
-      // 快取時間
-      apiCache.set('todayHour', formattedData, 180000); // 快取3分鐘
+      // 快取時間 (縮短為1分鐘)
+      apiCache.set('todayHour', formattedData, 60000); // 快取1分鐘
       
       console.log('成功獲取今日工時:', formattedData);
       return formattedData;
