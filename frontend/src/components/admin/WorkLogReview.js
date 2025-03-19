@@ -1,5 +1,5 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui';
 import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
 
@@ -13,82 +13,125 @@ const WorkLogReview = () => {
     status: 'pending',
     date: new Date().toISOString().split('T')[0] // 預設為今天日期
   });
+  const [refreshTrigger, setRefreshTrigger] = useState(0); // 添加刷新觸發器
 
   // 返回函數
   const handleGoBack = () => {
     window.history.back();
   };
 
-// 載入工作日誌
-useEffect(() => {
-  const loadWorkLogs = async () => {
-    try {
-      setIsLoading(true);
-      
-      // 確保日期格式正確
-      const formattedDate = filter.date ? new Date(filter.date).toISOString().split('T')[0] : '';
-      
-      const data = await searchWorkLogs({
-        status: filter.status,
-        startDate: formattedDate, // 使用選定的日期作為開始日期
-        endDate: formattedDate    // 使用選定的日期作為結束日期（同一天）
-      });
-      
-      if (Array.isArray(data)) {
-        setWorkLogs(data);
-        
-        // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(data);
-        setGroupedWorkLogs(grouped);
-        
-        // 初始化展開狀態
-        const initialExpandState = {};
-        Object.keys(grouped).forEach(key => {
-          initialExpandState[key] = true; // 預設展開所有組
-        });
-        setExpandedGroups(initialExpandState);
-      } else {
-        console.error('工作日誌資料格式不正確', data);
-        setWorkLogs([]);
-        setGroupedWorkLogs({});
-      }
-      
-      setIsLoading(false);
-    } catch (err) {
-      console.error('載入工作日誌失敗', err);
-      setError('載入工作日誌失敗');
-      setIsLoading(false);
-    }
-  };
-
-  loadWorkLogs();
-}, [filter]);
-
-
-
   // 將工作日誌按使用者和日期分組
-  const groupWorkLogsByUserAndDate = (logs) => {
+  const groupWorkLogsByUserAndDate = useCallback((logs) => {
+    if (!Array.isArray(logs)) {
+      console.error('嘗試分組非數組數據:', logs);
+      return {};
+    }
+    
     const grouped = {};
     
     logs.forEach(log => {
-      // 從日期獲取年月日部分作為分組的一部分
-      const date = new Date(log.created_at).toLocaleDateString();
-      // 創建唯一的分組鍵 (使用者ID + 日期)
-      const groupKey = `${log.user_id}_${date}`;
-      
-      if (!grouped[groupKey]) {
-        grouped[groupKey] = {
-          userId: log.user_id,
-          username: log.username || '未知使用者',
-          date: date,
-          logs: []
-        };
+      if (!log.created_at || !log.user_id) {
+        console.warn('日誌缺少必要屬性:', log);
+        return;
       }
       
-      grouped[groupKey].logs.push(log);
+      try {
+        // 從日期獲取年月日部分作為分組的一部分
+        const date = new Date(log.created_at).toLocaleDateString();
+        // 創建唯一的分組鍵 (使用者ID + 日期)
+        const groupKey = `${log.user_id}_${date}`;
+        
+        if (!grouped[groupKey]) {
+          grouped[groupKey] = {
+            userId: log.user_id,
+            username: log.username || '未知使用者',
+            date: date,
+            logs: []
+          };
+        }
+        
+        grouped[groupKey].logs.push(log);
+      } catch (err) {
+        console.error('分組過程中出錯:', err, log);
+      }
     });
     
     return grouped;
+  }, []);
+
+  // 刷新數據的函數
+  const refreshData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      console.log('開始加載工作日誌，過濾條件:', filter);
+      
+      // 使用 AbortController 處理請求取消
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超時
+      
+      const data = await searchWorkLogs({
+        ...filter,
+        forceRefresh: refreshTrigger // 加入強制刷新標記
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // 確保數據為數組
+      if (!Array.isArray(data)) {
+        console.error('返回的數據格式不正確:', data);
+        throw new Error('返回的數據格式不正確');
+      }
+      
+      console.log(`成功載入 ${data.length} 條工作日誌`);
+      
+      // 設置工作日誌數據
+      setWorkLogs(data);
+      
+      // 分組日誌數據
+      const grouped = groupWorkLogsByUserAndDate(data);
+      setGroupedWorkLogs(grouped);
+      
+      // 初始化展開狀態
+      const initialExpandState = {};
+      Object.keys(grouped).forEach(key => {
+        initialExpandState[key] = true;
+      });
+      setExpandedGroups(initialExpandState);
+      
+      setError(null);
+    } catch (err) {
+      console.error('加載工作日誌失敗:', err);
+      
+      // 提供更詳細的錯誤信息
+      if (err.name === 'AbortError') {
+        setError('請求超時，請稍後再試');
+      } else if (err.response) {
+        setError(`伺服器錯誤 (${err.response.status}): ${err.response.data?.message || '未知錯誤'}`);
+      } else if (err.request) {
+        setError('無法連接到伺服器，請檢查網絡連接');
+      } else {
+        setError(`載入工作日誌失敗: ${err.message}`);
+      }
+      
+      // 設置空數據，避免 UI 崩潰
+      setWorkLogs([]);
+      setGroupedWorkLogs({});
+    } finally {
+      // 確保在任何情況下都將 loading 狀態設為 false
+      setIsLoading(false);
+    }
+  }, [filter, refreshTrigger, groupWorkLogsByUserAndDate]);
+
+  // 載入工作日誌
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
+  // 觸發刷新
+  const handleRefresh = () => {
+    setRefreshTrigger(prev => prev + 1);
   };
 
   // 切換分組的展開/折疊狀態
@@ -110,67 +153,45 @@ useEffect(() => {
     return timeString.substring(0, 5);
   };
 
-// 審核工作日誌
-const handleReviewWorkLog = async (workLogId, status) => {
-  try {
-    await reviewWorkLog(workLogId, status);
-    
-    // 更新本地狀態 - 移除已審核的日誌
-    const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
-    setWorkLogs(updatedWorkLogs);
-    
-    // 重新分組更新後的工作日誌
-    const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-    setGroupedWorkLogs(updatedGrouped);
-    
-    // 如果使用了 useWorkLog hook 並且有 clearCache 方法就清除緩存
-    if (typeof window.apiCache !== 'undefined' && typeof window.apiCache.clear === 'function') {
-      window.apiCache.clear('workLogs');
+  // 審核工作日誌
+  const handleReviewWorkLog = async (workLogId, status) => {
+    try {
+      setIsLoading(true);
+      await reviewWorkLog(workLogId, status);
+      
+      // 更新本地狀態 - 移除已審核的日誌
+      const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
+      setWorkLogs(updatedWorkLogs);
+      
+      // 重新分組更新後的工作日誌
+      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
+      setGroupedWorkLogs(updatedGrouped);
+      
+      setError(null);
+      setIsLoading(false);
+      
+      // 觸發刷新
+      handleRefresh();
+    } catch (err) {
+      console.error('審核工作日誌失敗:', err);
+      setError('審核工作日誌失敗: ' + (err.message || '未知錯誤'));
+      setIsLoading(false);
     }
-    
-    setError(null);
-    
-    // 刷新數據 - 使用當前已有的過濾條件
-    // 我們不直接調用 loadWorkLogs 而是重新加載過濾的數據
-    const refreshData = async () => {
-      try {
-        setIsLoading(true);
-        const data = await searchWorkLogs({
-          status: filter.status,
-          startDate: filter.date,
-          endDate: filter.date,
-          forceRefresh: true // 添加強制刷新標記
-        });
-        
-        if (Array.isArray(data)) {
-          setWorkLogs(data);
-          const grouped = groupWorkLogsByUserAndDate(data);
-          setGroupedWorkLogs(grouped);
-        }
-        setIsLoading(false);
-      } catch (err) {
-        console.error('刷新數據失敗:', err);
-        setIsLoading(false);
-      }
-    };
-    
-    refreshData();
-  } catch (err) {
-    console.error('審核工作日誌失敗:', err);
-    setError('審核工作日誌失敗');
-  }
-};
-
+  };
 
   // 批量審核同一組的所有工作日誌
   const handleBatchReview = async (groupKey, status) => {
     try {
+      setIsLoading(true);
       const group = groupedWorkLogs[groupKey];
       
-      // 依次審核該組中的所有工作日誌
-      for (const log of group.logs) {
-        await reviewWorkLog(log.id, status);
+      if (!group || !Array.isArray(group.logs)) {
+        throw new Error('找不到要審核的日誌組');
       }
+      
+      // 依次審核該組中的所有工作日誌
+      const promises = group.logs.map(log => reviewWorkLog(log.id, status));
+      await Promise.all(promises);
       
       // 更新本地狀態 - 移除已審核的組
       const updatedWorkLogs = workLogs.filter(log => {
@@ -186,15 +207,32 @@ const handleReviewWorkLog = async (workLogId, status) => {
       setGroupedWorkLogs(updatedGrouped);
       
       setError(null);
+      setIsLoading(false);
+      
+      // 觸發刷新
+      handleRefresh();
     } catch (err) {
-      setError('批量審核工作日誌失敗');
+      console.error('批量審核工作日誌失敗:', err);
+      setError('批量審核工作日誌失敗: ' + (err.message || '未知錯誤'));
+      setIsLoading(false);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500"></div>
+      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
+        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+        <p className="text-white text-lg">載入工作日誌中，請稍候...</p>
+        {/* 添加超時自動重試功能 */}
+        <div className="mt-8">
+          <Button 
+            onClick={handleRefresh}
+            variant="secondary"
+            className="text-sm"
+          >
+            載入時間過長？點擊重試
+          </Button>
+        </div>
       </div>
     );
   }
@@ -202,7 +240,7 @@ const handleReviewWorkLog = async (workLogId, status) => {
   return (
     <div className="bg-gray-900 text-white p-6">
       {/* 添加返回按鈕 */}
-      <div className="mb-4">
+      <div className="mb-4 flex justify-between items-center">
         <Button 
           onClick={handleGoBack}
           variant="secondary"
@@ -222,13 +260,42 @@ const handleReviewWorkLog = async (workLogId, status) => {
           </svg>
           返回
         </Button>
+        
+        {/* 添加刷新按鈕 */}
+        <Button 
+          onClick={handleRefresh}
+          className="flex items-center text-sm"
+        >
+          <svg 
+            xmlns="http://www.w3.org/2000/svg" 
+            className="h-5 w-5 mr-1" 
+            viewBox="0 0 20 20" 
+            fill="currentColor"
+          >
+            <path 
+              fillRule="evenodd" 
+              d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" 
+              clipRule="evenodd" 
+            />
+          </svg>
+          刷新數據
+        </Button>
       </div>
     
       <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
 
       {error && (
         <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          {error}
+          <div className="flex justify-between items-center">
+            <p>{error}</p>
+            <Button 
+              onClick={() => setError(null)}
+              variant="secondary"
+              className="text-sm px-2 py-1"
+            >
+              關閉
+            </Button>
+          </div>
         </div>
       )}
 
