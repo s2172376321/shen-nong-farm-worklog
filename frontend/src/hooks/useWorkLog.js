@@ -70,11 +70,25 @@ const createThrottleManager = () => {
     clearCache: (key) => {
       if (key) {
         requestCache.delete(key);
+        console.log(`清除特定緩存: ${key}`);
       } else {
+        // 清除所有緩存
         requestCache.clear();
         throttleMap.clear();
+        console.log('清除所有緩存');
       }
-      console.log('節流快取已清除');
+    },
+    
+    // 清除所有工作日誌相關的緩存
+    clearWorkLogCaches: () => {
+      // 遍歷並刪除所有以 workLogs: 開頭的緩存鍵
+      for (const key of requestCache.keys()) {
+        if (typeof key === 'string' && key.startsWith('workLogs:')) {
+          requestCache.delete(key);
+          console.log(`清除工作日誌緩存: ${key}`);
+        }
+      }
+      console.log('所有工作日誌緩存已清除');
     }
   };
 };
@@ -109,8 +123,10 @@ export const useWorkLog = () => {
         
         const response = await createWorkLog(workLogData);
         
-        // 清除相關快取，確保最新數據
-        throttleManager.clearCache();
+        // 提交成功後徹底清除所有緩存，確保列表更新
+        throttleManager.clearCache(); // 清除所有緩存
+        console.log('工作日誌提交成功 - 所有緩存已清除，確保列表顯示最新數據');
+        
         setLastSuccessTime(Date.now());
         setIsLoading(false);
         
@@ -173,8 +189,10 @@ export const useWorkLog = () => {
         
         const response = await uploadCSV(csvFile);
         
-        // 清除相關快取，確保最新數據
-        throttleManager.clearCache();
+        // 清除所有緩存，確保列表更新
+        throttleManager.clearCache(); // 清除所有緩存
+        console.log('CSV上傳成功 - 所有緩存已清除，確保列表顯示最新數據');
+        
         setLastSuccessTime(Date.now());
         setIsLoading(false);
         
@@ -213,8 +231,8 @@ export const useWorkLog = () => {
     }
   }, []);
 
-  // 改進的工作日誌獲取函數
-  const fetchWorkLogs = useCallback(async (filters = {}) => {
+  // 改進的工作日誌獲取函數 - 增加強制刷新參數
+  const fetchWorkLogs = useCallback(async (filters = {}, forceRefresh = false) => {
     setIsLoading(true);
     setError(null);
 
@@ -222,13 +240,24 @@ export const useWorkLog = () => {
     const cacheKey = `workLogs:${JSON.stringify(filters)}`;
     
     try {
-      console.log('嘗試獲取工作日誌，過濾條件:', filters);
+      console.log('嘗試獲取工作日誌，過濾條件:', filters, 
+        forceRefresh ? '(強制刷新)' : '');
+      
+      // 如果強制刷新，先清除該緩存
+      if (forceRefresh) {
+        throttleManager.clearCache(cacheKey);
+        console.log(`強制刷新: 已清除緩存 ${cacheKey}`);
+      }
       
       const response = await throttleManager.throttle(
         cacheKey, 
         async () => {
           try {
-            const data = await searchWorkLogs(filters);
+            // 如果強制刷新，添加時間戳參數防止使用舊緩存
+            const enhancedFilters = forceRefresh ? 
+              { ...filters, _t: Date.now() } : filters;
+              
+            const data = await searchWorkLogs(enhancedFilters);
             // 確保返回的數據是數組
             return Array.isArray(data) ? data : [];
           } catch (err) {
@@ -264,10 +293,20 @@ export const useWorkLog = () => {
     }
   }, []);
 
+  // 新增函數：強制刷新工作日誌列表
+  const forceRefreshWorkLogs = useCallback(async (filters = {}) => {
+    console.log('開始強制刷新工作日誌列表');
+    // 首先清除所有工作日誌相關緩存
+    throttleManager.clearWorkLogCaches();
+    // 使用強制刷新參數獲取最新數據
+    return fetchWorkLogs(filters, true);
+  }, [fetchWorkLogs]);
+
   return {
     submitWorkLog,
     uploadCSV: submitCSV,
     fetchWorkLogs,
+    forceRefreshWorkLogs, // 新增強制刷新方法
     isLoading,
     error,
     clearCache: throttleManager.clearCache
