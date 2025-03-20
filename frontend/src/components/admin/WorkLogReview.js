@@ -7,16 +7,16 @@ const WorkLogReview = () => {
   const [workLogs, setWorkLogs] = useState([]);
   const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  const [processingLogIds, setProcessingLogIds] = useState([]); // 追蹤正在處理的工作日誌ID
-  const [processingGroups, setProcessingGroups] = useState([]); // 追蹤正在處理的組
   const [error, setError] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState({});
   const [filter, setFilter] = useState({
     status: 'pending',
-    date: new Date().toISOString().split('T')[0] // 預設為今天日期
-  });
+    // 將開始日期設為7天前，確保能看到近期所有待審核工作日誌
+    startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+    });
 
-  // 返回函數
+  // Return function
   const handleGoBack = () => {
     window.history.back();
   };
@@ -344,6 +344,10 @@ const WorkLogReview = () => {
 
       {/* 篩選器 */}
       <div className="bg-gray-800 p-4 rounded-lg mb-6">
+        <div className="bg-yellow-800 text-white p-3 rounded-lg mb-4">
+          <p>⚠️ 注意：默認僅顯示選定日期的待審核工作日誌。若找不到日誌，請調整日期範圍。</p>
+         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block mb-2">狀態</label>
