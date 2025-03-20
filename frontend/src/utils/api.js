@@ -563,25 +563,27 @@ export const uploadCSV = async (csvFile) => {
 };
 
 // 優化後的 searchWorkLogs 函數，支援分頁
+// 位置：frontend/src/utils/api.js
+// 改進 searchWorkLogs 函數
+
+// 優化後的 searchWorkLogs 函數
 export const searchWorkLogs = async (filters) => {
-  // 添加默認分頁參數
-  const params = {
-    page: filters.page || 1,
-    limit: filters.limit || 20,
-    ...filters
-  };
-  
   // 生成快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(params)}`;
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
   // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(params));
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
   
-  // 檢查快取
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log('使用快取的工作日誌數據');
-    return cachedData;
+  // 檢查是否有管理員審核狀態過濾器，如果是則清除快取
+  if (filters.status === 'pending' || filters.status === 'approved' || filters.status === 'rejected') {
+    apiCache.clear(cacheKey); // 為管理員審核視圖強制刷新
+  } else {
+    // 檢查快取
+    const cachedData = apiCache.get(cacheKey);
+    if (cachedData) {
+      console.log('使用快取的工作日誌數據');
+      return cachedData;
+    }
   }
   
   try {
@@ -600,66 +602,42 @@ export const searchWorkLogs = async (filters) => {
         const currentTimeout = timeouts[timeoutAttempts] || 30000;
         console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
         
+        // 確保所有日期參數都是字符串格式
+        const sanitizedFilters = { ...filters };
+        if (sanitizedFilters.startDate instanceof Date) {
+          sanitizedFilters.startDate = sanitizedFilters.startDate.toISOString().split('T')[0];
+        }
+        if (sanitizedFilters.endDate instanceof Date) {
+          sanitizedFilters.endDate = sanitizedFilters.endDate.toISOString().split('T')[0];
+        }
+        
         const response = await api.get('/work-logs/search', { 
-          params,
+          params: sanitizedFilters,
           timeout: currentTimeout
         });
         
-        console.log('工作日誌搜尋結果:', response.status, response.data?.items?.length || 0, '總數:', response.data?.pagination?.totalItems || 0);
+        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
         
-        // 處理新的回應格式 (含分頁資訊)
-        if (response.data && response.data.items) {
-          // 標準化日期和時間格式
-          const normalizedData = {
-            items: response.data.items.map(log => ({
-              ...log,
-              start_time: log.start_time?.substring(0, 5) || log.start_time,
-              end_time: log.end_time?.substring(0, 5) || log.end_time,
-              created_at: log.created_at || new Date().toISOString()
-            })),
-            pagination: response.data.pagination
-          };
-          
-          // 儲存到快取
-          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
-          
-          return normalizedData;
-        }
-        
-        // 兼容舊 API 回應 (無分頁)
+        // 標準化日期和時間格式
         if (Array.isArray(response.data)) {
-          console.warn('API 返回舊格式數據 (無分頁信息)');
-          const normalizedData = {
-            items: response.data.map(log => ({
-              ...log,
-              start_time: log.start_time?.substring(0, 5) || log.start_time,
-              end_time: log.end_time?.substring(0, 5) || log.end_time,
-              created_at: log.created_at || new Date().toISOString()
-            })),
-            pagination: {
-              page: params.page || 1,
-              limit: params.limit || 20,
-              totalItems: response.data.length,
-              totalPages: 1
-            }
-          };
+          const normalizedData = response.data.map(log => ({
+            ...log,
+            start_time: log.start_time?.substring(0, 5) || log.start_time,
+            end_time: log.end_time?.substring(0, 5) || log.end_time,
+            created_at: log.created_at || new Date().toISOString()
+          }));
           
-          // 儲存到快取
-          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+          // 不為管理員審核視圖設置快取
+          if (!sanitizedFilters.status) {
+            // 儲存到快取
+            apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+          }
           
           return normalizedData;
         }
         
-        console.warn('API返回了非預期數據格式:', response.data);
-        return { 
-          items: [], 
-          pagination: { 
-            page: params.page || 1, 
-            limit: params.limit || 20, 
-            totalItems: 0, 
-            totalPages: 0 
-          } 
-        };
+        console.warn('API返回了非數組數據:', response.data);
+        return [];
       } catch (error) {
         lastError = error;
         
@@ -683,40 +661,26 @@ export const searchWorkLogs = async (filters) => {
       params: JSON.stringify(lastError?.config?.params)
     });
     
-    // 特殊錯誤處理
-    if (lastError?.response?.status === 404) {
-      console.log('沒有找到符合條件的工作日誌');
-    } else if (!navigator.onLine) {
-      console.warn('瀏覽器處於離線狀態');
-    } else if (lastError?.response?.status === 401) {
-      console.warn('身份驗證已過期，需要重新登入');
-      // 可以在這裡添加重新導向到登入頁面的邏輯
+    // 身份驗證錯誤處理
+    if (lastError?.response?.status === 401 || lastError?.response?.status === 403) {
+      console.warn('管理員身份驗證可能已過期，或您沒有足夠權限');
+      // 可以觸發登出流程，但在此先返回空數組
+      return [];
     }
     
-    // 默認返回空結果但帶有分頁結構，避免UI崩潰
-    return {
-      items: [],
-      pagination: {
-        page: params.page || 1,
-        limit: params.limit || 20,
-        totalItems: 0,
-        totalPages: 0
-      }
-    };
+    // 網絡離線處理
+    if (!navigator.onLine) {
+      console.warn('瀏覽器處於離線狀態');
+      return [];
+    }
+    
+    // 默認返回空數組避免UI崩潰
+    return [];
   } catch (error) {
     console.error('searchWorkLogs 處理發生意外錯誤:', error);
-    return {
-      items: [],
-      pagination: {
-        page: params.page || 1,
-        limit: params.limit || 20,
-        totalItems: 0,
-        totalPages: 0
-      }
-    };
+    return [];
   }
 };
-
 
 
 export const reviewWorkLog = async (workLogId, status) => {
