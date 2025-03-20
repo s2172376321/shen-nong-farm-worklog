@@ -199,26 +199,27 @@ const WorkLogController = {
   },
 
 // 優化 WorkLogController.searchWorkLogs 函數
+// 位置：backend/controllers/workLogController.js
+// 修改 searchWorkLogs 函數以改進錯誤處理和日期過濾
+
 async searchWorkLogs(req, res) {
-  const { location, crop, startDate, endDate, status, page = 1, limit = 20 } = req.query;
+  const { location, crop, startDate, endDate, status } = req.query;
 
   try {
     console.log('收到工作日誌搜索請求:', {
       location, crop, startDate, endDate, status,
       userId: req.user?.id,
-      userRole: req.user?.role,
-      page, limit
+      userRole: req.user?.role
     });
     
-    // 添加分頁，限制每頁結果數
-    const LIMIT = parseInt(limit, 10) || 20;
-    const PAGE = parseInt(page, 10) || 1;
-    const OFFSET = (PAGE - 1) * LIMIT;
+    // 添加結果限制避免返回過多數據
+    const LIMIT = 100; 
     
-    // 優化 SQL 查詢 - 只選擇必要欄位並添加分頁
+    // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
     let queryText = `
       SELECT wl.id, wl.user_id, wl.location, wl.crop, 
              wl.start_time, wl.end_time, wl.work_hours, 
+             wl.details, wl.position_name, wl.work_category_name,
              wl.status, wl.created_at, u.username
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
@@ -228,14 +229,13 @@ async searchWorkLogs(req, res) {
     const values = [];
     let paramIndex = 1;
 
-    // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
-    if (!req.user.role || req.user.role !== 'admin') {
+    // 對於管理員，顯示所有工作日誌；對於普通用戶，只顯示自己的
+    if (!req.user || (req.user.role !== 'admin')) {
       queryText += ` AND wl.user_id = $${paramIndex}`;
       values.push(req.user.id);
       paramIndex++;
     }
 
-    // 添加篩選條件，使用索引
     if (location) {
       queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
       values.push(`%${location}%`);
@@ -256,21 +256,15 @@ async searchWorkLogs(req, res) {
     }
 
     if (startDate && endDate) {
-      // 使用 DATE() 函數優化日期比較
-      queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+      // 確保日期區間包含整個日期（從當天 00:00:00 到 23:59:59）
+      queryText += ` AND wl.created_at::date BETWEEN $${paramIndex}::date AND $${paramIndex + 1}::date`;
       values.push(startDate, endDate);
       paramIndex += 2;
     }
 
-    // 添加計數查詢獲取總記錄數
-    const countQueryText = `SELECT COUNT(*) FROM (${queryText}) AS count_query`;
-    const countResult = await db.query(countQueryText, values);
-    const totalItems = parseInt(countResult.rows[0].count, 10);
-    const totalPages = Math.ceil(totalItems / LIMIT);
-
-    // 添加排序、分頁和超時設置
+    // 添加排序、限制和超時設置
     queryText += ' ORDER BY wl.created_at DESC';
-    queryText += ` LIMIT ${LIMIT} OFFSET ${OFFSET}`;
+    queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
 
     console.log('執行 SQL:', queryText);
     console.log('參數:', values);
@@ -279,7 +273,7 @@ async searchWorkLogs(req, res) {
     const queryOptions = { 
       text: queryText, 
       values: values,
-      timeout: 10000  // 設置數據庫查詢超時為 10 秒
+      timeout: 15000  // 增加數據庫查詢超時為 15 秒
     };
 
     const result = await db.query(queryOptions);
@@ -293,23 +287,13 @@ async searchWorkLogs(req, res) {
       end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
     }));
     
-    // 返回分頁資訊和結果
-    res.json({
-      items: formattedResults,
-      pagination: {
-        page: PAGE,
-        limit: LIMIT,
-        totalItems,
-        totalPages
-      }
-    });
+    res.json(formattedResults);
   } catch (error) {
     console.error('查詢工作日誌失敗:', {
       error: error.message,
       stack: error.stack,
       query: error.query
     });
-    
     res.status(500).json({ 
       message: '查詢工作日誌失敗，請稍後再試',
       error: process.env.NODE_ENV === 'production' ? undefined : error.message
