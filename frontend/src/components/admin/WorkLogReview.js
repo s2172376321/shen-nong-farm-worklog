@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
 import { searchWorkLogs, reviewWorkLog, checkServerHealth } from '../../utils/api';
 import ApiDiagnostic from '../common/ApiDiagnostic';
+import AdminDiagnostic from './AdminDiagnostic';
+
 
 const WorkLogReview = () => {
   const [workLogs, setWorkLogs] = useState([]);
@@ -18,6 +20,8 @@ const WorkLogReview = () => {
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
+
+
 
   // 檢查伺服器連線狀態
   useEffect(() => {
@@ -44,36 +48,34 @@ const WorkLogReview = () => {
   };
 
   // 載入工作日誌
-  useEffect(() => {
-    const loadWorkLogs = async () => {
-      try {
-        setIsLoading(true);
-        setError(null);
-        
-        console.log('載入工作日誌，過濾條件:', filter);
-        setDebugInfo(null);
-
-        // 增加診斷資訊
-        const token = localStorage.getItem('token');
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        const networkStatus = navigator.onLine ? '在線' : '離線';
-        const diagInfo = { 
-          networkStatus, 
-          userRole: user.role,
-          hasToken: !!token,
-          filter,
-          timestamp: new Date().toISOString()
-        };
-        setDebugInfo(diagInfo);
-        console.log('載入前診斷:', diagInfo);
-        
-        const data = await searchWorkLogs({
-          status: filter.status,
-          startDate: filter.date,
-          endDate: filter.date,
-          includeUsers: true // 請求包含使用者資訊
-        });
-        
+// 載入工作日誌
+useEffect(() => {
+  const loadWorkLogs = async () => {
+    try {
+      setIsLoading(true);
+      // 確保 filter.date 被正確格式化為 ISO 格式，並設置為當天的開始和結束
+      const dateObj = filter.date ? new Date(filter.date) : new Date();
+      // 確保日期格式是 YYYY-MM-DD
+      const formattedDate = dateObj.toISOString().split('T')[0];
+      
+      console.log('正在請求工作日誌，過濾條件:', {
+        status: filter.status,
+        startDate: formattedDate,
+        endDate: formattedDate
+      });
+      
+      const data = await searchWorkLogs({
+        status: filter.status,
+        startDate: formattedDate,
+        endDate: formattedDate
+      });
+      
+      // 檢查返回的數據格式
+      if (!Array.isArray(data)) {
+        console.error('工作日誌數據格式不正確:', data);
+        setWorkLogs([]);
+        setError('返回數據格式不正確');
+      } else {
         console.log(`成功載入 ${data.length} 條工作日誌`);
         setWorkLogs(data);
         
@@ -87,45 +89,20 @@ const WorkLogReview = () => {
           initialExpandState[key] = true; // 預設展開所有組
         });
         setExpandedGroups(initialExpandState);
-        
-        setIsLoading(false);
-      } catch (err) {
-        console.error('載入工作日誌失敗:', err);
-        
-        // 詳細錯誤資訊
-        let errorMessage = '載入工作日誌失敗';
-        
-        if (!navigator.onLine) {
-          errorMessage = '網絡連接中斷，請檢查您的網絡連接';
-        } else if (err.response) {
-          // 處理HTTP錯誤
-          switch (err.response.status) {
-            case 401:
-              errorMessage = '登入狀態已失效，請重新登入';
-              break;
-            case 403:
-              errorMessage = '您沒有管理員權限，無法審核工作日誌';
-              break;
-            case 404:
-              errorMessage = '找不到符合條件的工作日誌';
-              break;
-            case 500:
-              errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
-              break;
-            default:
-              errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
-          }
-        }
-        
-        setError(errorMessage);
-        setWorkLogs([]);
-        setGroupedWorkLogs({});
-        setIsLoading(false);
       }
-    };
+      
+      setIsLoading(false);
+    } catch (err) {
+      console.error('載入工作日誌失敗:', err);
+      setError('載入工作日誌失敗: ' + (err.message || '未知錯誤'));
+      setIsLoading(false);
+      setWorkLogs([]);
+      setGroupedWorkLogs({});
+    }
+  };
 
-    loadWorkLogs();
-  }, [filter]);
+  loadWorkLogs();
+}, [filter]);
 
   // 將工作日誌按使用者和日期分組
   const groupWorkLogsByUserAndDate = (logs) => {
@@ -323,6 +300,19 @@ const WorkLogReview = () => {
             />
           </div>
         </div>
+          <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
+            <p className="mb-2">{error}</p>
+            <div className="flex justify-end">
+              <Button 
+                onClick={() => setShowDiagnostic(true)}
+                variant="secondary"
+                className="text-sm"
+              >
+                診斷問題
+              </Button>
+            </div>
+          </div>
+
         <div className="mt-4 flex justify-end">
           <Button 
             onClick={handleRefresh}
@@ -457,10 +447,10 @@ const WorkLogReview = () => {
 
       {/* 診斷工具彈窗 */}
       {showDiagnostic && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="w-full max-w-3xl">
-            <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
-          </div>
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+  <div className="w-full max-w-3xl">
+    <AdminDiagnostic onClose={() => setShowDiagnostic(false)} />
+        </div>
         </div>
       )}
     </div>
