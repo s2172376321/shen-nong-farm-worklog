@@ -198,25 +198,27 @@ const WorkLogController = {
     }
   },
 
-// 優化後的 searchWorkLogs 函數
+// 優化 WorkLogController.searchWorkLogs 函數
 async searchWorkLogs(req, res) {
-  const { location, crop, startDate, endDate, status } = req.query;
+  const { location, crop, startDate, endDate, status, page = 1, limit = 20 } = req.query;
 
   try {
     console.log('收到工作日誌搜索請求:', {
       location, crop, startDate, endDate, status,
       userId: req.user?.id,
-      userRole: req.user?.role
+      userRole: req.user?.role,
+      page, limit
     });
     
-    // 定義結果限制避免返回過多數據
-    const LIMIT = 100; 
+    // 添加分頁，限制每頁結果數
+    const LIMIT = parseInt(limit, 10) || 20;
+    const PAGE = parseInt(page, 10) || 1;
+    const OFFSET = (PAGE - 1) * LIMIT;
     
-    // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
+    // 優化 SQL 查詢 - 只選擇必要欄位並添加分頁
     let queryText = `
       SELECT wl.id, wl.user_id, wl.location, wl.crop, 
              wl.start_time, wl.end_time, wl.work_hours, 
-             wl.details, wl.position_name, wl.work_category_name,
              wl.status, wl.created_at, u.username
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
@@ -233,6 +235,7 @@ async searchWorkLogs(req, res) {
       paramIndex++;
     }
 
+    // 添加篩選條件，使用索引
     if (location) {
       queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
       values.push(`%${location}%`);
@@ -259,10 +262,15 @@ async searchWorkLogs(req, res) {
       paramIndex += 2;
     }
 
-    // 添加排序
+    // 添加計數查詢獲取總記錄數
+    const countQueryText = `SELECT COUNT(*) FROM (${queryText}) AS count_query`;
+    const countResult = await db.query(countQueryText, values);
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / LIMIT);
+
+    // 添加排序、分頁和超時設置
     queryText += ' ORDER BY wl.created_at DESC';
-    // 在排序後添加限制
-    queryText += ` LIMIT ${LIMIT}`;
+    queryText += ` LIMIT ${LIMIT} OFFSET ${OFFSET}`;
 
     console.log('執行 SQL:', queryText);
     console.log('參數:', values);
@@ -285,13 +293,23 @@ async searchWorkLogs(req, res) {
       end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
     }));
     
-    res.json(formattedResults);
+    // 返回分頁資訊和結果
+    res.json({
+      items: formattedResults,
+      pagination: {
+        page: PAGE,
+        limit: LIMIT,
+        totalItems,
+        totalPages
+      }
+    });
   } catch (error) {
     console.error('查詢工作日誌失敗:', {
       error: error.message,
       stack: error.stack,
       query: error.query
     });
+    
     res.status(500).json({ 
       message: '查詢工作日誌失敗，請稍後再試',
       error: process.env.NODE_ENV === 'production' ? undefined : error.message
