@@ -260,58 +260,54 @@ useEffect(() => {
         </div>
       )}
 
-      {error && (
-        <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          <p>{error}</p>
-          <div className="mt-3 flex space-x-4">
-            <Button onClick={handleRefresh}>重新整理</Button>
-            <Button 
-              onClick={() => setShowDiagnostic(true)}
-              variant="secondary"
-            >
-              診斷連接問題
-            </Button>
-          </div>
-        </div>
-      )}
+{error && (
+  <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
+    <p className="mb-2">{error}</p>
+    <div className="flex justify-between items-center">
+      <Button 
+        onClick={handleRefresh}
+        variant="secondary"
+        className="text-sm mr-2"
+      >
+        重新整理
+      </Button>
+      <Button 
+        onClick={() => setShowDiagnostic(true)}
+        variant="secondary"
+        className="text-sm"
+      >
+        診斷問題
+      </Button>
+    </div>
+  </div>
+)}
 
-      {/* 篩選器 - 修改為單一日期 */}
-      <div className="bg-gray-800 p-4 rounded-lg mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block mb-2">狀態</label>
-            <select
-              value={filter.status}
-              onChange={(e) => setFilter({...filter, status: e.target.value})}
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            >
-              <option value="pending">待審核</option>
-              <option value="approved">已核准</option>
-              <option value="rejected">已拒絕</option>
-            </select>
-          </div>
-          <div>
-            <label className="block mb-2">日期</label>
-            <input
-              type="date"
-              value={filter.date}
-              onChange={(e) => setFilter({...filter, date: e.target.value})}
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            />
-          </div>
-        </div>
-          <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-            <p className="mb-2">{error}</p>
-            <div className="flex justify-end">
-              <Button 
-                onClick={() => setShowDiagnostic(true)}
-                variant="secondary"
-                className="text-sm"
-              >
-                診斷問題
-              </Button>
-            </div>
-          </div>
+
+{/* 篩選器 - 修改為單一日期 */}
+<div className="bg-gray-800 p-4 rounded-lg mb-6">
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label className="block mb-2">狀態</label>
+      <select
+        value={filter.status}
+        onChange={(e) => setFilter({...filter, status: e.target.value})}
+        className="w-full bg-gray-700 text-white p-2 rounded-lg"
+      >
+        <option value="pending">待審核</option>
+        <option value="approved">已核准</option>
+        <option value="rejected">已拒絕</option>
+      </select>
+    </div>
+    <div>
+      <label className="block mb-2">日期</label>
+      <input
+        type="date"
+        value={filter.date}
+        onChange={(e) => setFilter({...filter, date: e.target.value})}
+        className="w-full bg-gray-700 text-white p-2 rounded-lg"
+      />
+    </div>
+  </div>
 
         <div className="mt-4 flex justify-end">
           <Button 
