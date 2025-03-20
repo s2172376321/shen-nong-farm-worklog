@@ -567,133 +567,46 @@ export const uploadCSV = async (csvFile) => {
 // 改進 searchWorkLogs 函數
 
 // 優化後的 searchWorkLogs 函數
-export const searchWorkLogs = async (filters) => {
-  // 生成快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
-  
-  // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
-  
-  // 檢查是否有管理員審核狀態過濾器，如果是則清除快取
-  if (filters.status === 'pending' || filters.status === 'approved' || filters.status === 'rejected') {
-    apiCache.clear(cacheKey); // 為管理員審核視圖強制刷新
-  } else {
-    // 檢查快取
-    const cachedData = apiCache.get(cacheKey);
-    if (cachedData) {
-      console.log('使用快取的工作日誌數據');
-      return cachedData;
-    }
-  }
-  
+
+
+export const searchWorkLogs = async (filters, isAdminRequest = false) => {
   try {
-    console.log('開始發送工作日誌搜尋請求');
+    console.log('搜索工作日誌，過濾條件:', filters);
     
-    // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
-    let timeoutAttempts = 0;
-    const maxTimeoutAttempts = 2;
-    const timeouts = [8000, 20000]; // 第一次嘗試 8 秒，第二次 20 秒
+    const endpoint = isAdminRequest 
+      ? '/work-logs/admin/search'  // 管理員專用端點
+      : '/work-logs/search';       // 一般使用者端點
     
-    let lastError = null;
-    
-    while (timeoutAttempts <= maxTimeoutAttempts) {
-      try {
-        // 使用當前的超時時間
-        const currentTimeout = timeouts[timeoutAttempts] || 30000;
-        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
-        
-        // 確保所有日期參數都是字符串格式
-        const sanitizedFilters = { ...filters };
-        if (sanitizedFilters.startDate instanceof Date) {
-          sanitizedFilters.startDate = sanitizedFilters.startDate.toISOString().split('T')[0];
-        }
-        if (sanitizedFilters.endDate instanceof Date) {
-          sanitizedFilters.endDate = sanitizedFilters.endDate.toISOString().split('T')[0];
-        }
-        
-        const response = await api.get('/work-logs/search', { 
-          params: sanitizedFilters,
-          timeout: currentTimeout
-        });
-        
-        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
-        
-        // 標準化日期和時間格式
-        if (Array.isArray(response.data)) {
-          const normalizedData = response.data.map(log => ({
-            ...log,
-            start_time: log.start_time?.substring(0, 5) || log.start_time,
-            end_time: log.end_time?.substring(0, 5) || log.end_time,
-            created_at: log.created_at || new Date().toISOString()
-          }));
-          
-          // 不為管理員審核視圖設置快取
-          if (!sanitizedFilters.status) {
-            // 儲存到快取
-            apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
-          }
-          
-          return normalizedData;
-        }
-        
-        console.warn('API返回了非數組數據:', response.data);
-        return [];
-      } catch (error) {
-        lastError = error;
-        
-        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
-        if (error.code === 'ECONNABORTED' && timeoutAttempts < maxTimeoutAttempts) {
-          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
-          timeoutAttempts++;
-        } else {
-          // 其他錯誤或已達最大重試次數，跳出循環
-          break;
-        }
-      }
-    }
-    
-    // 所有嘗試都失敗，記錄詳細錯誤並處理
-    console.error('搜尋工作日誌失敗 (所有嘗試):', {
-      message: lastError?.message,
-      status: lastError?.response?.status,
-      statusText: lastError?.response?.statusText,
-      url: lastError?.config?.url,
-      params: JSON.stringify(lastError?.config?.params)
+    const response = await api.get(endpoint, { 
+      params: filters,
+      timeout: 10000 // 增加超時時間
     });
     
-    // 身份驗證錯誤處理
-    if (lastError?.response?.status === 401 || lastError?.response?.status === 403) {
-      console.warn('管理員身份驗證可能已過期，或您沒有足夠權限');
-      // 可以觸發登出流程，但在此先返回空數組
-      return [];
-    }
+    // 確保返回的是數組
+    const workLogs = Array.isArray(response.data) ? response.data : [];
     
-    // 網絡離線處理
-    if (!navigator.onLine) {
-      console.warn('瀏覽器處於離線狀態');
-      return [];
-    }
-    
-    // 默認返回空數組避免UI崩潰
-    return [];
+    // 格式化時間
+    return workLogs.map(log => ({
+      ...log,
+      start_time: log.start_time?.substring(0, 5),
+      end_time: log.end_time?.substring(0, 5)
+    }));
   } catch (error) {
-    console.error('searchWorkLogs 處理發生意外錯誤:', error);
-    return [];
+    console.error('搜索工作日誌失敗:', {
+      error: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    
+    // 處理不同的錯誤情況
+    if (error.response?.status === 403) {
+      throw new Error('無管理員權限');
+    }
+    
+    throw error;
   }
 };
 
-
-export const reviewWorkLog = async (workLogId, status) => {
-  const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
-  
-  // 審核後清除相關快取
-  apiCache.clear('workLogs');
-  apiCache.clear('workStats');
-  apiCache.set(cacheKey, normalizedData, 30000); // 縮短緩存時間至30秒
-
-  
-  return response.data;
-};
 
 // 修改後的 getTodayHour 函數，增加重試機制並優化錯誤處理
 export const getTodayHour = async (forceRefresh = false) => {
