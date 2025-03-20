@@ -562,13 +562,20 @@ export const uploadCSV = async (csvFile) => {
   }
 };
 
-// 優化後的 searchWorkLogs 函數
+// 優化後的 searchWorkLogs 函數，支援分頁
 export const searchWorkLogs = async (filters) => {
+  // 添加默認分頁參數
+  const params = {
+    page: filters.page || 1,
+    limit: filters.limit || 20,
+    ...filters
+  };
+  
   // 生成快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  const cacheKey = `workLogs:${JSON.stringify(params)}`;
   
   // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(params));
   
   // 檢查快取
   const cachedData = apiCache.get(cacheKey);
@@ -594,20 +601,24 @@ export const searchWorkLogs = async (filters) => {
         console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
         
         const response = await api.get('/work-logs/search', { 
-          params: filters,
-          timeout: 30000  // 增加到 30 秒
+          params,
+          timeout: currentTimeout
         });
         
-        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
+        console.log('工作日誌搜尋結果:', response.status, response.data?.items?.length || 0, '總數:', response.data?.pagination?.totalItems || 0);
         
-        // 標準化日期和時間格式
-        if (Array.isArray(response.data)) {
-          const normalizedData = response.data.map(log => ({
-            ...log,
-            start_time: log.start_time?.substring(0, 5) || log.start_time,
-            end_time: log.end_time?.substring(0, 5) || log.end_time,
-            created_at: log.created_at || new Date().toISOString()
-          }));
+        // 處理新的回應格式 (含分頁資訊)
+        if (response.data && response.data.items) {
+          // 標準化日期和時間格式
+          const normalizedData = {
+            items: response.data.items.map(log => ({
+              ...log,
+              start_time: log.start_time?.substring(0, 5) || log.start_time,
+              end_time: log.end_time?.substring(0, 5) || log.end_time,
+              created_at: log.created_at || new Date().toISOString()
+            })),
+            pagination: response.data.pagination
+          };
           
           // 儲存到快取
           apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
@@ -615,8 +626,40 @@ export const searchWorkLogs = async (filters) => {
           return normalizedData;
         }
         
-        console.warn('API返回了非數組數據:', response.data);
-        return [];
+        // 兼容舊 API 回應 (無分頁)
+        if (Array.isArray(response.data)) {
+          console.warn('API 返回舊格式數據 (無分頁信息)');
+          const normalizedData = {
+            items: response.data.map(log => ({
+              ...log,
+              start_time: log.start_time?.substring(0, 5) || log.start_time,
+              end_time: log.end_time?.substring(0, 5) || log.end_time,
+              created_at: log.created_at || new Date().toISOString()
+            })),
+            pagination: {
+              page: params.page || 1,
+              limit: params.limit || 20,
+              totalItems: response.data.length,
+              totalPages: 1
+            }
+          };
+          
+          // 儲存到快取
+          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+          
+          return normalizedData;
+        }
+        
+        console.warn('API返回了非預期數據格式:', response.data);
+        return { 
+          items: [], 
+          pagination: { 
+            page: params.page || 1, 
+            limit: params.limit || 20, 
+            totalItems: 0, 
+            totalPages: 0 
+          } 
+        };
       } catch (error) {
         lastError = error;
         
@@ -643,27 +686,34 @@ export const searchWorkLogs = async (filters) => {
     // 特殊錯誤處理
     if (lastError?.response?.status === 404) {
       console.log('沒有找到符合條件的工作日誌');
-      return [];
-    }
-    
-    // 網絡離線處理
-    if (!navigator.onLine) {
+    } else if (!navigator.onLine) {
       console.warn('瀏覽器處於離線狀態');
-      return [];
-    }
-    
-    // 身份驗證錯誤處理
-    if (lastError?.response?.status === 401) {
+    } else if (lastError?.response?.status === 401) {
       console.warn('身份驗證已過期，需要重新登入');
       // 可以在這裡添加重新導向到登入頁面的邏輯
-      return [];
     }
     
-    // 默認返回空數組避免UI崩潰
-    return [];
+    // 默認返回空結果但帶有分頁結構，避免UI崩潰
+    return {
+      items: [],
+      pagination: {
+        page: params.page || 1,
+        limit: params.limit || 20,
+        totalItems: 0,
+        totalPages: 0
+      }
+    };
   } catch (error) {
     console.error('searchWorkLogs 處理發生意外錯誤:', error);
-    return [];
+    return {
+      items: [],
+      pagination: {
+        page: params.page || 1,
+        limit: params.limit || 20,
+        totalItems: 0,
+        totalPages: 0
+      }
+    };
   }
 };
 
