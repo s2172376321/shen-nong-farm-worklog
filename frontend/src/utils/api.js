@@ -553,15 +553,36 @@ export const uploadCSV = async (csvFile) => {
 };
 
 export const searchWorkLogs = async (filters) => {
+
+
+    // 修正參數名稱錯誤
+    const correctedFilters = { ...filters };
+  
+    // 檢查並修正日期參數名稱
+    if ('_ndDate' in correctedFilters) {
+      correctedFilters.endDate = correctedFilters._ndDate;
+      delete correctedFilters._ndDate;
+      console.log('已修正參數名稱: _ndDate -> endDate');
+    }
+    
+    if ('_tartDate' in correctedFilters) {
+      correctedFilters.startDate = correctedFilters._tartDate;
+      delete correctedFilters._tartDate;
+      console.log('已修正參數名稱: _tartDate -> startDate');
+    }
+  
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
   // 詳細日誌
-  console.log('searchWorkLogs 調用，完整過濾條件:', JSON.stringify(filters));
-  console.log('API基礎URL:', api.defaults.baseURL);
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
   
-  // 強制忽略快取進行測試
-  console.log('忽略快取，強制從伺服器獲取新數據');
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作日誌數據');
+    return cachedData;
+  }
   
   try {
     console.log('開始發送工作日誌搜尋請求');
@@ -580,17 +601,18 @@ export const searchWorkLogs = async (filters) => {
         console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
         
         const response = await api.get('/work-logs/search', { 
-          params: {
-            ...filters,
-            _t: Date.now() // 添加時間戳參數避免任何可能的快取
-          },
+          params: filters,
           timeout: currentTimeout
         });
         
-        console.log('API原始回應狀態:', response.status);
-        console.log('API原始回應數據類型:', typeof response.data);
-        console.log('API原始回應是否為數組:', Array.isArray(response.data));
-        console.log('API原始回應長度:', Array.isArray(response.data) ? response.data.length : 'N/A');
+        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
+        
+        // 檢查響應類型和內容
+        if (!response || !response.data) {
+          console.warn('API 響應無效或為空');
+          timeoutAttempts++;
+          continue;
+        }
         
         // 標準化日期和時間格式
         if (Array.isArray(response.data)) {
@@ -601,7 +623,9 @@ export const searchWorkLogs = async (filters) => {
             created_at: log.created_at || new Date().toISOString()
           }));
           
-          console.log('標準化後數據:', normalizedData);
+          // 儲存到快取
+          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+          
           return normalizedData;
         }
         
@@ -646,27 +670,16 @@ export const searchWorkLogs = async (filters) => {
     if (lastError?.response?.status === 401) {
       console.warn('身份驗證已過期，需要重新登入');
       // 可以在這裡添加重新導向到登入頁面的邏輯
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
       return [];
     }
     
     // 默認返回空數組避免UI崩潰
     return [];
   } catch (error) {
-    // 詳細錯誤日誌
-    console.error('搜尋工作日誌失敗，完整錯誤:', error);
-    
-    if (error.response) {
-      console.error('伺服器響應錯誤:', {
-        status: error.response.status,
-        headers: error.response.headers,
-        data: error.response.data
-      });
-    } else if (error.request) {
-      console.error('無伺服器響應:', error.request);
-    } else {
-      console.error('請求設置錯誤:', error.message);
-    }
-    
+    console.error('searchWorkLogs 處理發生意外錯誤:', error);
     return [];
   }
 };

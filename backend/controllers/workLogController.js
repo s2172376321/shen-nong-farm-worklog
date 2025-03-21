@@ -209,18 +209,27 @@ const WorkLogController = {
 
   // 優化後的 searchWorkLogs 函數
   async searchWorkLogs(req, res) {
-    const { location, crop, startDate, endDate, status } = req.query;
-
+  // 擴展參數處理，處理可能的參數命名錯誤
+  let { location, crop, startDate, endDate, status, _tartDate, _ndDate } = req.query;
+  
+  // 修正可能的參數命名錯誤
+  if (!startDate && _tartDate) {
+    startDate = _tartDate;
+    console.log('已修正參數: _tartDate -> startDate:', startDate);
+  }
+  
+  if (!endDate && _ndDate) {
+    endDate = _ndDate;
+    console.log('已修正參數: _ndDate -> endDate:', endDate);
+  }
+  
+  // 記錄所有收到的查詢參數，幫助診斷問題
+  console.log('收到的所有查詢參數:', req.query);  
     try {
-      // 在這裡添加日誌
-      console.log('搜尋工作日誌請求參數:', {
+      console.log('收到工作日誌搜索請求:', {
+        location, crop, startDate, endDate, status,
         userId: req.user?.id,
-        userRole: req.user?.role,
-        location, 
-        crop, 
-        startDate, 
-        endDate, 
-        status
+        userRole: req.user?.role
       });
       
       // 添加結果限制避免返回過多數據
@@ -239,70 +248,63 @@ const WorkLogController = {
       
       const values = [];
       let paramIndex = 1;
-
+  
       // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
       if (!req.user.role || req.user.role !== 'admin') {
         queryText += ` AND wl.user_id = $${paramIndex}`;
         values.push(req.user.id);
         paramIndex++;
       }
-
+  
       if (location) {
         queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
         values.push(`%${location}%`);
         paramIndex++;
       }
-
+  
       if (crop) {
         queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
         values.push(`%${crop}%`);
         paramIndex++;
       }
-
+  
       // 添加狀態過濾
       if (status) {
         queryText += ` AND wl.status = $${paramIndex}`;
         values.push(status);
         paramIndex++;
       }
-
+  
       if (startDate && endDate) {
         // 使用 DATE() 函數優化日期比較
         queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
         values.push(startDate, endDate);
         paramIndex += 2;
       }
-
+  
       // 添加排序、限制和超時設置
       queryText += ' ORDER BY wl.created_at DESC';
       queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
-
-      // 查詢後添加日誌
+  
       console.log('執行 SQL:', queryText);
       console.log('參數:', values);
-
+  
       // 添加查詢超時設定
       const queryOptions = { 
         text: queryText, 
         values: values,
         timeout: 10000  // 設置數據庫查詢超時為 10 秒
       };
-
+  
       const result = await db.query(queryOptions);
-      
-      // 在這裡添加查詢結果日誌
-      console.log('SQL查詢結果:', {
-        rowCount: result.rows.length,
-        firstRow: result.rows[0] ? JSON.stringify(result.rows[0]) : 'No data'
-      });
       
       console.log(`查詢到 ${result.rows.length} 條工作日誌`);
       
       // 標準化時間格式，確保前端能正確顯示
       const formattedResults = result.rows.map(log => ({
         ...log,
-        start_time: log.start_time ? String(log.start_time).substring(0, 5) : log.start_time,
-        end_time: log.end_time ? String(log.end_time).substring(0, 5) : log.end_time
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
       }));
       
       res.json(formattedResults);
@@ -318,7 +320,7 @@ const WorkLogController = {
       });
     }
   },
-  
+    
   // 添加內部搜索方法
   async internalSearch(params) {
     const { location, crop, startDate, endDate, status, userId } = params;

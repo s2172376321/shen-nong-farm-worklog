@@ -4,6 +4,7 @@ import axios from 'axios';
 import { useWorkLog } from '../../hooks/useWorkLog';
 import { Button, Input, Card } from '../ui';
 import { useAuth } from '../../context/AuthContext';
+import WorkLogDiagnostic from '../common/WorkLogDiagnostic';
 import { 
   fetchLocations, 
   fetchWorkCategories, 
@@ -29,6 +30,8 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   // 新增日期選擇狀態
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [dateWorkLogs, setDateWorkLogs] = useState([]);  // 存儲選定日期的日誌
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+
   
   // 基本表單數據
   const [workLog, setWorkLog] = useState({
@@ -274,7 +277,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     
     return { totalHours, remainingHours };
   }, []);
-  
+    
   // 修改後的載入日期工作日誌函數
   const loadDateWorkLogs = useCallback(async (date) => {
     if (!date) {
@@ -286,72 +289,58 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       console.log('正在載入指定日期工作日誌，日期:', date);
       setIsLoading(true);
       
-      // 修改: 確保日期格式是 YYYY-MM-DD
-      const formattedDate = new Date(date).toISOString().split('T')[0];
-      
-      // 嘗試直接使用 Axios 調用 API
-      const token = localStorage.getItem('token');
-      
-      console.log('直接從 API 獲取工作日誌數據...');
-      const directApiResponse = await axios.get(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:3002/api'}/work-logs/search`, 
-        {
-          params: {
-            startDate: formattedDate,
-            endDate: formattedDate
-          },
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          timeout: 15000
-        }
-      );
-      
-      console.log('直接 API 調用結果:', directApiResponse.data);
-      
-      // 也使用 fetchWorkLogs 函數作為備用
-      console.log('通過 fetchWorkLogs 獲取工作日誌數據...');
-      const logs = await fetchWorkLogs({ 
-        startDate: formattedDate, 
-        endDate: formattedDate 
+      // 新增診斷資訊
+      console.log('請求前診斷:', {
+        tokenExists: !!localStorage.getItem('token'),
+        networkStatus: navigator.onLine ? '在線' : '離線',
+        dateFormat: date
       });
       
-      console.log('常規 fetchWorkLogs 結果:', logs);
+      const logs = await fetchWorkLogs({ 
+        startDate: date, 
+        endDate: date 
+      });
       
-      // 優先使用直接 API 調用結果
-      const logsToUse = Array.isArray(directApiResponse.data) ? 
-        directApiResponse.data : (Array.isArray(logs) ? logs : []);
+      console.log('API返回的工作日誌原始數據:', logs);
       
-      console.log(`選擇使用的日誌數據 (${logsToUse.length} 條記錄):`, logsToUse);
-      
-      if (logsToUse.length === 0) {
-        console.log('沒有找到工作日誌記錄');
+      // 新增更強健的檢查
+      if (!logs) {
+        console.error('工作日誌資料為空');
+        setDateWorkLogs([]);
+        setRemainingHours(8);
+        setIsLoading(false);
+        return;
       }
       
+      if (!Array.isArray(logs)) {
+        console.error('工作日誌資料格式不正確', logs);
+        setDateWorkLogs([]);
+        setRemainingHours(8);
+        setIsLoading(false);
+        return;
+      }
+      
+      console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
+      
       // 標準化時間格式
-      const normalizedLogs = logsToUse.map(log => ({
+      const normalizedLogs = logs.map(log => ({
         ...log,
-        id: log.id || `temp-${Date.now()}-${Math.random()}`,
-        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || '',
-        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || '',
-        work_category_name: log.work_category_name || log.crop || '未知類別',
-        position_name: log.position_name || log.location || '未知位置'
+        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
+        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
       }));
       
       console.log('標準化後的工作日誌:', normalizedLogs);
-      
-      // 更新日誌狀態
       setDateWorkLogs(normalizedLogs);
       
       // 如果是今天的日期，同時更新todayWorkLogs
       const today = new Date().toISOString().split('T')[0];
-      if (date === today || formattedDate === today) {
+      if (date === today) {
         setTodayWorkLogs(normalizedLogs);
       }
       
       // 計算剩餘工時
-      const { totalHours, remainingHours } = calculateWorkHours(normalizedLogs);
-      console.log('工時計算結果:', { totalHours, remainingHours });
+      const { remainingHours } = calculateWorkHours(normalizedLogs);
+      console.log('剩餘工時計算結果:', remainingHours);
       setRemainingHours(remainingHours);
       
       // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
@@ -377,23 +366,22 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       }
     } catch (err) {
       console.error('載入指定日期工作日誌失敗', err);
-      // 詳細錯誤記錄
-      console.error('錯誤詳情:', {
+      // 新增更詳細的錯誤診斷
+      console.error('詳細錯誤資訊:', {
         message: err.message,
+        response: err.response?.data,
         status: err.response?.status,
-        data: err.response?.data,
         stack: err.stack
       });
-      
-      // 確保設置空陣列，而不是 undefined
       setDateWorkLogs([]);
       setRemainingHours(8);
       setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+      setIsLoading(false);
     } finally {
       setIsLoading(false);
     }
   }, [fetchWorkLogs, calculateWorkHours]);
-  
+    
   // 載入今日工作日誌
   const loadTodayWorkLogs = useCallback(async () => {
     // 直接使用loadDateWorkLogs加載當天的日誌
@@ -455,9 +443,11 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   // 日期變化時載入對應日期的工作日誌
   useEffect(() => {
     if (dataLoaded) {
+      console.log('日期變更或數據載入完成，重新載入日誌:', selectedDate);
       loadDateWorkLogs(selectedDate);
     }
   }, [loadDateWorkLogs, selectedDate, dataLoaded]);
+  
   
   // 當區域變化時更新位置列表
   useEffect(() => {
@@ -1144,6 +1134,15 @@ return (
               {selectedDate === new Date().toISOString().split('T')[0] 
                 ? '今日工作進度' 
                 : `${selectedDate} 工作進度`}
+                    {/* 在這裡添加診斷按鈕 */}
+    <Button 
+      onClick={() => setShowDiagnostic(true)}
+      variant="secondary"
+      className="text-xs py-1 px-2"
+    >
+      診斷問題
+    </Button>
+
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -1477,6 +1476,15 @@ return (
           </div>
         )}
       </div>
+      {/* 診斷組件 */}
+{showDiagnostic && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="w-full max-w-3xl">
+      <WorkLogDiagnostic onClose={() => setShowDiagnostic(false)} />
+    </div>
+  </div>
+)}
+
     </div>
   );
 };
