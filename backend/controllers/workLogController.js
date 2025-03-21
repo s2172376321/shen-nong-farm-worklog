@@ -205,22 +205,44 @@ const WorkLogController = {
 async searchWorkLogs(req, res) {
   const { location, crop, startDate, endDate, status } = req.query;
 
+  // 增加管理員角色驗證
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ 
+      message: '僅管理員可查看工作日誌',
+      code: 'UNAUTHORIZED' 
+    });
+  }
+
   try {
-    console.log('收到工作日誌搜索請求:', {
-      location, crop, startDate, endDate, status,
-      userId: req.user?.id,
-      userRole: req.user?.role
+    // 詳細的請求日誌
+    console.log('管理員查詢工作日誌:', {
+      location, 
+      crop, 
+      startDate, 
+      endDate, 
+      status,
+      adminId: req.user.id
     });
     
-    // 添加結果限制避免返回過多數據
-    const LIMIT = 100; 
+    // 更嚴格的參數驗證
+    const LIMIT = 200; // 增加返回數量限制
     
-    // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
     let queryText = `
-      SELECT wl.id, wl.user_id, wl.location, wl.crop, 
-             wl.start_time, wl.end_time, wl.work_hours, 
-             wl.details, wl.position_name, wl.work_category_name,
-             wl.status, wl.created_at, u.username
+      SELECT 
+        wl.id, 
+        wl.user_id, 
+        wl.location, 
+        wl.crop, 
+        wl.start_time, 
+        wl.end_time, 
+        wl.work_hours, 
+        wl.details, 
+        wl.position_name, 
+        wl.work_category_name,
+        wl.status, 
+        wl.created_at, 
+        u.username,
+        u.name as user_full_name
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
       WHERE 1=1
@@ -229,75 +251,103 @@ async searchWorkLogs(req, res) {
     const values = [];
     let paramIndex = 1;
 
-    // 對於管理員，顯示所有工作日誌；對於普通用戶，只顯示自己的
-    if (!req.user || (req.user.role !== 'admin')) {
-      queryText += ` AND wl.user_id = $${paramIndex}`;
-      values.push(req.user.id);
+    // 強制添加狀態過濾，預設為 pending
+    if (!status) {
+      queryText += ` AND wl.status = $${paramIndex}`;
+      values.push('pending');
       paramIndex++;
-    }
-
-    if (location) {
-      queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
-      values.push(`%${location}%`);
-      paramIndex++;
-    }
-
-    if (crop) {
-      queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
-      values.push(`%${crop}%`);
-      paramIndex++;
-    }
-
-    // 添加狀態過濾
-    if (status) {
+    } else {
       queryText += ` AND wl.status = $${paramIndex}`;
       values.push(status);
       paramIndex++;
     }
 
+    // 位置篩選（支持模糊搜索）
+    if (location) {
+      queryText += ` AND (
+        wl.location ILIKE $${paramIndex} OR 
+        wl.position_name ILIKE $${paramIndex}
+      )`;
+      values.push(`%${location}%`);
+      paramIndex++;
+    }
+
+    // 作物/工作類別篩選（支持模糊搜索）
+    if (crop) {
+      queryText += ` AND (
+        wl.crop ILIKE $${paramIndex} OR 
+        wl.work_category_name ILIKE $${paramIndex}
+      )`;
+      values.push(`%${crop}%`);
+      paramIndex++;
+    }
+
+    // 日期範圍篩選
     if (startDate && endDate) {
-      // 確保日期區間包含整個日期（從當天 00:00:00 到 23:59:59）
       queryText += ` AND wl.created_at::date BETWEEN $${paramIndex}::date AND $${paramIndex + 1}::date`;
       values.push(startDate, endDate);
       paramIndex += 2;
+    } else {
+      // 如果沒有指定日期，預設為當天
+      queryText += ` AND wl.created_at::date = CURRENT_DATE`;
     }
 
-    // 添加排序、限制和超時設置
-    queryText += ' ORDER BY wl.created_at DESC';
-    queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
+    // 排序和限制
+    queryText += ` 
+      ORDER BY 
+        wl.status = 'pending' DESC, 
+        wl.created_at DESC
+    `;
+    queryText += ` LIMIT ${LIMIT}`;
 
-    console.log('執行 SQL:', queryText);
-    console.log('參數:', values);
+    console.log('SQL查詢:', queryText);
+    console.log('查詢參數:', values);
 
-    // 添加查詢超時設定
     const queryOptions = { 
       text: queryText, 
       values: values,
-      timeout: 15000  // 增加數據庫查詢超時為 15 秒
+      timeout: 15000  // 15秒超時
     };
 
     const result = await db.query(queryOptions);
     
-    console.log(`查詢到 ${result.rows.length} 條工作日誌`);
+    // 日誌查詢結果
+    console.log(`查詢成功，找到 ${result.rows.length} 條工作日誌`);
     
-    // 標準化時間格式，確保前端能正確顯示
+    // 格式化結果
     const formattedResults = result.rows.map(log => ({
       ...log,
       start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
-      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time,
+      created_at: new Date(log.created_at).toISOString()
     }));
     
-    res.json(formattedResults);
+    res.json({
+      total: result.rows.length,
+      data: formattedResults
+    });
   } catch (error) {
+    // 詳細的錯誤日誌
     console.error('查詢工作日誌失敗:', {
-      error: error.message,
-      stack: error.stack,
-      query: error.query
+      errorMessage: error.message,
+      errorCode: error.code,
+      errorStack: error.stack,
+      queryParams: { location, crop, startDate, endDate, status }
     });
-    res.status(500).json({ 
-      message: '查詢工作日誌失敗，請稍後再試',
-      error: process.env.NODE_ENV === 'production' ? undefined : error.message
-    });
+
+    // 根據不同錯誤類型返回不同響應
+    if (error.code === '42703') {
+      res.status(400).json({ 
+        message: '查詢參數無效',
+        code: 'INVALID_PARAMS'
+      });
+    } else {
+      res.status(500).json({ 
+        message: '查詢工作日誌失敗，請稍後再試',
+        code: 'SERVER_ERROR',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+      });
+    }
   }
 },
 

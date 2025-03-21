@@ -170,36 +170,18 @@ api.interceptors.request.use(
   }
 );
 
-// 響應攔截器：統一處理錯誤
+// 添加響應攔截器
 api.interceptors.response.use(
-  response => {
-    console.log('API響應成功:', response.config.url);
-    return response;
-  },
+  response => response,
   error => {
-    // 詳細記錄錯誤信息
-    console.error('API響應錯誤:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message
-    });
-    
-    // 處理特定錯誤類型
-    if (error.response && error.response.status === 401) {
-      // 處理未授權錯誤，可能是token過期
-      console.warn('授權已過期或無效，將重定向到登入頁面');
+    if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
-      return Promise.reject(new Error('認證已過期，請重新登入'));
     }
-    
     return Promise.reject(error);
   }
 );
-
 
 
 
@@ -592,18 +574,74 @@ export const searchWorkLogs = async (filters, isAdminRequest = false) => {
       end_time: log.end_time?.substring(0, 5)
     }));
   } catch (error) {
-    console.error('搜索工作日誌失敗:', {
-      error: error.message,
-      status: error.response?.status,
-      data: error.response?.data
-    });
+        console.error('搜索工作日誌失敗:', {
+          error: error.message,
+          status: error.response?.status,
+          data: error.response?.data
+        });
+      }
+    };
+
+
     
-    // 處理不同的錯誤情況
-    if (error.response?.status === 403) {
-      throw new Error('無管理員權限');
+// 審核工作日誌
+// 工作日誌審核函數
+export const reviewWorkLog = async (workLogId, status) => {
+  try {
+    console.log(`開始審核工作日誌 (ID: ${workLogId}, 狀態: ${status})`);
+
+    // 驗證參數
+    if (!workLogId) {
+      throw new Error('工作日誌 ID 不能為空');
     }
     
-    throw error;
+    if (!['approved', 'rejected'].includes(status)) {
+      throw new Error('無效的審核狀態');
+    }
+
+    // 發送審核請求
+    const response = await api.patch(`/work-logs/${workLogId}/review`, { 
+      status,
+      reviewedAt: new Date().toISOString()
+    });
+
+    // 審核成功後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear(`workLog:${workLogId}`);
+
+    console.log('工作日誌審核成功:', response.data);
+    
+    return {
+      success: true,
+      message: response.data.message || '審核成功',
+      workLogId,
+      status,
+      ...response.data
+    };
+  } catch (error) {
+    console.error('審核工作日誌失敗:', {
+      workLogId,
+      status,
+      error: error.message,
+      response: error.response?.data
+    });
+
+    // 處理特定錯誤情況
+    if (error.response?.status === 404) {
+      throw new Error('找不到指定的工作日誌');
+    }
+    
+    if (error.response?.status === 403) {
+      throw new Error('您沒有權限審核工作日誌');
+    }
+
+    if (error.response?.status === 401) {
+      throw new Error('您的登入已過期，請重新登入');
+    }
+
+    // 其他錯誤情況
+    throw new Error(error.response?.data?.message || '審核工作日誌失敗，請稍後再試');
   }
 };
 

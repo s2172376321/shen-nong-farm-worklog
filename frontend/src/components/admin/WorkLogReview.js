@@ -47,77 +47,139 @@ const WorkLogReview = () => {
     window.history.back();
   };
 
-  // 載入工作日誌
+
 // 載入工作日誌
 useEffect(() => {
   const loadWorkLogs = async () => {
+    // 重置狀態
+    setIsLoading(true);
+    setError(null);
+    setWorkLogs([]);
+    setGroupedWorkLogs({});
+
     try {
-      setIsLoading(true);
-      // 確保 filter.date 被正確格式化為 ISO 格式，並設置為當天的開始和結束
+      // 日期處理：確保使用當天日期，並格式化為 YYYY-MM-DD
       const dateObj = filter.date ? new Date(filter.date) : new Date();
-      // 確保日期格式是 YYYY-MM-DD
       const formattedDate = dateObj.toISOString().split('T')[0];
       
-      console.log('正在請求工作日誌，過濾條件:', {
-        status: filter.status,
+      // 預設狀態為 'pending'
+      const status = filter.status || 'pending';
+
+      // 詳細的日誌記錄
+      console.log('工作日誌查詢參數:', {
+        status,
         startDate: formattedDate,
         endDate: formattedDate
       });
       
+      // 發送請求，增加超時和錯誤處理
       const data = await searchWorkLogs({
-        status: filter.status,
+        status,
         startDate: formattedDate,
         endDate: formattedDate
       });
       
-      // 檢查返回的數據格式
-      if (!Array.isArray(data)) {
-        console.error('工作日誌數據格式不正確:', data);
-        setWorkLogs([]);
-        setError('返回數據格式不正確');
-      } else {
-        console.log(`成功載入 ${data.length} 條工作日誌`);
-        setWorkLogs(data);
-        
-        // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(data);
-        setGroupedWorkLogs(grouped);
-        
-        // 初始化展開狀態
-        const initialExpandState = {};
-        Object.keys(grouped).forEach(key => {
-          initialExpandState[key] = true; // 預設展開所有組
-        });
-        setExpandedGroups(initialExpandState);
+      // 數據驗證
+      if (!data || (!Array.isArray(data) && !Array.isArray(data.data))) {
+        throw new Error('無效的工作日誌數據格式');
       }
+
+      // 處理不同的響應格式
+      const workLogsData = Array.isArray(data) ? data : data.data;
+
+      if (workLogsData.length === 0) {
+        console.warn('未找到符合條件的工作日誌');
+        setWorkLogs([]);
+        setGroupedWorkLogs({});
+        return;
+      }
+
+      // 詳細日誌
+      console.log(`成功載入 ${workLogsData.length} 條工作日誌`);
+
+      // 設置工作日誌
+      setWorkLogs(workLogsData);
       
-      setIsLoading(false);
+      // 按使用者和日期分組
+      const grouped = groupWorkLogsByUserAndDate(workLogsData);
+      setGroupedWorkLogs(grouped);
+      
+      // 初始化展開狀態
+      const initialExpandState = Object.keys(grouped).reduce((acc, key) => {
+        acc[key] = true; // 預設展開所有組
+        return acc;
+      }, {});
+      setExpandedGroups(initialExpandState);
+
     } catch (err) {
-      console.error('載入工作日誌失敗:', err);
-      setError('載入工作日誌失敗: ' + (err.message || '未知錯誤'));
-      setIsLoading(false);
+      // 詳細的錯誤處理和日誌記錄
+      console.error('載入工作日誌失敗:', {
+        errorMessage: err.message,
+        errorCode: err.code,
+        requestParams: {
+          status: filter.status,
+          date: filter.date
+        }
+      });
+
+      // 根據不同錯誤類型設置不同的錯誤訊息
+      let errorMessage = '載入工作日誌失敗';
+      
+      if (err.response) {
+        // API 返回的錯誤
+        switch (err.response.status) {
+          case 403:
+            errorMessage = '您沒有權限查看工作日誌';
+            break;
+          case 401:
+            errorMessage = '登入狀態已過期，請重新登入';
+            break;
+          case 500:
+            errorMessage = '伺服器內部錯誤，請稍後再試';
+            break;
+          default:
+            errorMessage = err.response.data?.message || errorMessage;
+        }
+      } else if (!navigator.onLine) {
+        // 網路連線問題
+        errorMessage = '網路連線已斷開，請檢查您的網路';
+      }
+
+      setError(errorMessage);
+      
+      // 重置數據
       setWorkLogs([]);
       setGroupedWorkLogs({});
+      setExpandedGroups({});
+
+    } finally {
+      // 確保載入狀態被重置
+      setIsLoading(false);
     }
   };
 
-  loadWorkLogs();
-}, [filter]);
+  // 只有在某些關鍵參數變化時才觸發
+  if (filter.date || filter.status) {
+    loadWorkLogs();
+  }
+}, [
+  filter.date, 
+  filter.status
+]);
 
   // 將工作日誌按使用者和日期分組
   const groupWorkLogsByUserAndDate = (logs) => {
     const grouped = {};
     
     logs.forEach(log => {
-      // 從日期獲取年月日部分作為分組的一部分
+      // 使用創建日期作為日期標識
       const date = new Date(log.created_at).toLocaleDateString();
-      // 創建唯一的分組鍵 (使用者ID + 日期)
       const groupKey = `${log.user_id}_${date}`;
       
       if (!grouped[groupKey]) {
         grouped[groupKey] = {
           userId: log.user_id,
-          username: log.username || '未知使用者',
+          username: log.username || log.user_full_name || '未知使用者',
           date: date,
           logs: []
         };
@@ -128,7 +190,7 @@ useEffect(() => {
     
     return grouped;
   };
-
+  
   // 切換分組的展開/折疊狀態
   const toggleGroupExpand = (groupKey) => {
     setExpandedGroups(prev => ({
