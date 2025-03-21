@@ -1,17 +1,22 @@
 // 位置：backend/server.js
 require('dotenv').config();
 const express = require('express');
+const http = require('http'); // 显式引入http模块
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const fileUpload = require('express-fileupload'); // 添加文件上傳中間件
+const fileUpload = require('express-fileupload');
 const routes = require('./routes');
-const db = require('./config/database'); // 引入資料庫連接
+const db = require('./config/database'); // 引入资料库连接
+const websocket = require('./websocket'); // 引入WebSocket模块
 
 const app = express();
-const PORT = process.env.PORT || 3002; // 確保使用正確端口
+const PORT = process.env.PORT || 3002; // 确保使用正确端口
 
-// CORS 配置更寬鬆
+// 创建HTTP服务器（不再让express隐式创建）
+const server = http.createServer(app);
+
+// CORS 配置更宽松
 const corsOptions = {
   origin: [
     'http://localhost:3000', 
@@ -32,39 +37,38 @@ app.use((req, res, next) => {
   next();
 });
 
-
-// 中間件配置
+// 中间件配置
 app.use(cors(corsOptions));
 
-// 安全中間件
+// 安全中间件
 app.use(helmet());
 
 // 速率限制
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分鐘
-  max: 100 // 每個IP每15分鐘最多100次請求
+  windowMs: 15 * 60 * 1000, // 15分钟
+  max: 100 // 每个IP每15分钟最多100次请求
 });
 app.use(limiter);
 
-// 解析中間件
+// 解析中间件
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 文件上傳中間件
+// 文件上传中间件
 app.use(fileUpload({
-  limits: { fileSize: 5 * 1024 * 1024 }, // 限制文件大小為5MB
-  createParentPath: true, // 自動創建文件上傳目錄
-  useTempFiles: false, // 不使用臨時文件，直接將文件存放在內存中
-  debug: process.env.NODE_ENV !== 'production' // 在非生產環境下啟用調試
+  limits: { fileSize: 5 * 1024 * 1024 }, // 限制文件大小为5MB
+  createParentPath: true, // 自动创建文件上传目录
+  useTempFiles: false, // 不使用临时文件，直接将文件存放在内存中
+  debug: process.env.NODE_ENV !== 'production' // 在非生产环境下启用调试
 }));
 
-// 回應 OPTIONS 請求
+// 回应 OPTIONS 请求
 app.options('*', cors(corsOptions));
 
-// 添加健康檢查路由
+// 添加健康检查路由
 app.get('/api/db-status', async (req, res) => {
   try {
-    // 簡單查詢測試
+    // 简单查询测试
     const result = await db.query('SELECT NOW()');
     res.json({ 
       status: 'connected', 
@@ -72,7 +76,7 @@ app.get('/api/db-status', async (req, res) => {
       poolStats: db.getPoolStats()
     });
   } catch (err) {
-    console.error('資料庫連接測試失敗:', err);
+    console.error('资料库连接测试失败:', err);
     res.status(500).json({ 
       status: 'error', 
       message: err.message,
@@ -84,128 +88,112 @@ app.get('/api/db-status', async (req, res) => {
 // 在路由初始化前添加
 app.get('/api/health-check', async (req, res) => {
   try {
-    // 簡單查詢測試
+    // 简单查询测试
     const result = await db.query('SELECT NOW()');
     res.json({ 
       status: 'online', 
-      message: '服務正常運行中',
+      message: '服务正常运行中',
       serverTime: result.rows[0].now,
       poolStats: db.getPoolStats()
     });
   } catch (err) {
-    console.error('健康檢查失敗:', err);
+    console.error('健康检查失败:', err);
     res.status(500).json({ 
       status: 'error', 
-      message: '服務異常',
+      message: '服务异常',
       error: process.env.NODE_ENV === 'production' ? undefined : err.message
     });
   }
 });
 
-// 添加資料庫狀態端點
-app.get('/api/db-status', async (req, res) => {
-  try {
-    // 簡單查詢測試
-    const result = await db.query('SELECT NOW()');
-    res.json({ 
-      status: 'connected', 
-      time: result.rows[0].now,
-      poolStats: db.getPoolStats()
-    });
-  } catch (err) {
-    console.error('資料庫連接測試失敗:', err);
-    res.status(500).json({ 
-      status: 'error', 
-      message: err.message,
-      code: err.code
-    });
-  }
-});
-
-
-// 初始化數據庫架構
+// 初始化数据库架构
 async function initDbSchema() {
   try {
-    console.log('檢查並更新數據庫架構...');
+    console.log('检查并更新数据库架构...');
     await db.query(`
       DO $$
       BEGIN
-          -- 添加 location_code 欄位
+          -- 添加 location_code 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='location_code') THEN
               ALTER TABLE work_logs ADD COLUMN location_code VARCHAR(50);
           END IF;
 
-          -- 添加 position_code 欄位
+          -- 添加 position_code 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='position_code') THEN
               ALTER TABLE work_logs ADD COLUMN position_code VARCHAR(50);
           END IF;
 
-          -- 添加 position_name 欄位
+          -- 添加 position_name 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='position_name') THEN
               ALTER TABLE work_logs ADD COLUMN position_name VARCHAR(100);
           END IF;
 
-          -- 添加 work_category_code 欄位
+          -- 添加 work_category_code 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='work_category_code') THEN
               ALTER TABLE work_logs ADD COLUMN work_category_code VARCHAR(50);
           END IF;
 
-          -- 添加 work_category_name 欄位
+          -- 添加 work_category_name 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='work_category_name') THEN
               ALTER TABLE work_logs ADD COLUMN work_category_name VARCHAR(100);
           END IF;
 
-          -- 添加 product_id 欄位
+          -- 添加 product_id 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='product_id') THEN
               ALTER TABLE work_logs ADD COLUMN product_id VARCHAR(50);
           END IF;
 
-          -- 添加 product_name 欄位
+          -- 添加 product_name 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='product_name') THEN
               ALTER TABLE work_logs ADD COLUMN product_name VARCHAR(100);
           END IF;
 
-          -- 添加 product_quantity 欄位
+          -- 添加 product_quantity 栏位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
                       WHERE table_name='work_logs' AND column_name='product_quantity') THEN
               ALTER TABLE work_logs ADD COLUMN product_quantity DECIMAL(10, 2) DEFAULT 0;
           END IF;
       END $$;
     `);
-    console.log('數據庫架構檢查完成');
+    console.log('数据库架构检查完成');
   } catch (error) {
-    console.error('更新數據庫架構失敗:', error);
+    console.error('更新数据库架构失败:', error);
   }
 }
 
 // 路由
 app.use('/api', routes);
 
-// 錯誤處理中間件
+// 错误处理中间件
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ 
-    message: '伺服器發生未預期錯誤',
+    message: '伺服器发生未预期错误',
     error: process.env.NODE_ENV === 'production' ? {} : err.message
   });
 });
 
-// 先初始化數據庫架構，再啟動伺服器
+// 先初始化数据库架构，再启动服务器
 initDbSchema()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`伺服器已啟動，監聽端口 ${PORT}`);
+    // 启动HTTP服务器
+    server.listen(PORT, () => {
+      console.log(`HTTP服务器已启动，监听端口 ${PORT}`);
+      
+      // 初始化WebSocket服务器
+      const wss = websocket.initWebSocketServer(server);
+      console.log(`WebSocket服务器已初始化`);
     });
   })
   .catch(err => {
-    console.error('啟動失敗:', err);
+    console.error('启动失败:', err);
   });
 
 module.exports = app;

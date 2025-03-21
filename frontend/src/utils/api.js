@@ -186,7 +186,7 @@ api.interceptors.response.use(
 
 
 // ----- WebSocket API -----
-// WebSocket 連接類
+// WebSocket 连接类
 export class WebSocketService {
   constructor() {
     this.socket = null;
@@ -197,81 +197,94 @@ export class WebSocketService {
     this.reconnectTimeout = null;
   }
 
-  // 連接到 WebSocket 伺服器
+  // 连接到 WebSocket 伺服器
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
-      console.log('WebSocket 已連接或正在連接中');
+      console.log('WebSocket 已连接或正在连接中');
       return;
     }
 
     try {
-      console.log('嘗試連接 WebSocket...');
+      // 获取token
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.warn('WebSocket连接失败: 未找到认证token');
+        return;
+      }
+
+      console.log('尝试连接 WebSocket...');
       const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3002/ws';
-      this.socket = new WebSocket(wsUrl);
+      
+      // 添加token作为查询参数
+      const wsUrlWithToken = `${wsUrl}?token=${encodeURIComponent(token)}`;
+      this.socket = new WebSocket(wsUrlWithToken);
 
       this.socket.onopen = this.onOpen.bind(this);
       this.socket.onmessage = this.onMessage.bind(this);
       this.socket.onerror = this.onError.bind(this);
       this.socket.onclose = this.onClose.bind(this);
     } catch (error) {
-      console.error('WebSocket 連接錯誤:', error);
+      console.error('WebSocket 连接错误:', error);
       this.attemptReconnect();
     }
   }
 
-  // 連接成功回調
+  // 连接成功回调
   onOpen() {
-    console.log('WebSocket 連接成功');
+    console.log('WebSocket 连接成功');
     this.isConnected = true;
     this.reconnectAttempts = 0;
     this.emit('connected');
+    
+    // 发送初始ping消息以测试连接
+    this.send('ping', { timestamp: Date.now() });
   }
 
-  // 收到消息回調
+  // 收到消息回调
   onMessage(event) {
     try {
       const data = JSON.parse(event.data);
       console.log('收到 WebSocket 消息:', data);
       this.emit(data.type, data.data);
     } catch (error) {
-      console.error('解析 WebSocket 消息錯誤:', error);
+      console.error('解析 WebSocket 消息错误:', error);
     }
   }
 
-  // 錯誤回調
+  // 错误回调
   onError(error) {
-    console.error('WebSocket 錯誤:', error);
+    console.error('WebSocket 错误:', error);
     this.emit('error', error);
   }
 
-  // 連接關閉回調
+  // 连接关闭回调
   onClose(event) {
-    console.log('WebSocket 連接關閉:', event);
+    console.log('WebSocket 连接关闭:', event);
     this.isConnected = false;
     this.emit('disconnected');
     this.attemptReconnect();
   }
 
-  // 嘗試重新連接
+  // 尝试重新连接
   attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('重連次數已達上限，停止重連');
+      console.log('重连次数已达上限，停止重连');
       return;
     }
 
     this.reconnectAttempts++;
-    console.log(`嘗試重連 (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    console.log(`尝试重连 (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
     
     clearTimeout(this.reconnectTimeout);
     this.reconnectTimeout = setTimeout(() => {
       this.connect();
-    }, 3000); // 3秒後重連
+    }, 3000); // 3秒后重连
   }
 
-  // 發送消息
+  // 发送消息
   send(type, data) {
     if (!this.isConnected) {
-      console.warn('WebSocket 未連接，無法發送消息');
+      console.warn('WebSocket 未连接，无法发送消息');
       return false;
     }
 
@@ -280,12 +293,12 @@ export class WebSocketService {
       this.socket.send(message);
       return true;
     } catch (error) {
-      console.error('發送 WebSocket 消息錯誤:', error);
+      console.error('发送 WebSocket 消息错误:', error);
       return false;
     }
   }
 
-  // 關閉連接
+  // 关闭连接
   disconnect() {
     if (this.socket) {
       this.socket.close();
@@ -295,7 +308,7 @@ export class WebSocketService {
     clearTimeout(this.reconnectTimeout);
   }
 
-  // 註冊事件監聽
+  // 注册事件监听
   on(event, callback) {
     if (!this.listeners[event]) {
       this.listeners[event] = [];
@@ -303,14 +316,14 @@ export class WebSocketService {
     this.listeners[event].push(callback);
   }
 
-  // 發送事件通知
+  // 发送事件通知
   emit(event, data) {
     if (this.listeners[event]) {
       this.listeners[event].forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          console.error(`執行 ${event} 監聽器錯誤:`, error);
+          console.error(`执行 ${event} 监听器错误:`, error);
         }
       });
     }
