@@ -248,7 +248,6 @@ async searchWorkLogs(req, res) {
       queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
       values.push(`%${location}%`);
       paramIndex++;
-      console.log(`添加位置篩選: ${location}`);
     }
 
     // 作物/工作類別過濾
@@ -256,7 +255,6 @@ async searchWorkLogs(req, res) {
       queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
       values.push(`%${crop}%`);
       paramIndex++;
-      console.log(`添加作物/工作類別篩選: ${crop}`);
     }
 
     // 狀態過濾
@@ -264,33 +262,19 @@ async searchWorkLogs(req, res) {
       queryText += ` AND wl.status = $${paramIndex}`;
       values.push(status);
       paramIndex++;
-      console.log(`添加狀態篩選: ${status}`);
     }
 
-    // 日期範圍過濾
+    // 日期範圍過濾 - 修正日期格式問題
     if (startDate && endDate) {
-      console.log(`添加日期範圍篩選: ${startDate} 至 ${endDate}`);
-      console.log('原始日期格式:', { startDate, endDate });
-      
-      // 嘗試標準化日期格式
-      const formattedStartDate = new Date(startDate).toISOString().split('T')[0];
-      const formattedEndDate = new Date(endDate).toISOString().split('T')[0];
-      
-      console.log('格式化後日期:', { formattedStartDate, formattedEndDate });
-      
-      // 使用格式化後的日期範圍
-      queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-      values.push(formattedStartDate, formattedEndDate);
+      // 使用 DATE() 函數只比較日期部分，忽略時間
+      queryText += ` AND DATE(wl.created_at) BETWEEN DATE($${paramIndex}) AND DATE($${paramIndex + 1})`;
+      values.push(startDate, endDate);
       paramIndex += 2;
+      console.log(`日期範圍查詢: 從 ${startDate} 到 ${endDate}`);
     }
 
-    // 添加排序、限制和超時設置
-    queryText += ' ORDER BY wl.created_at DESC';
     queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
 
-    // 輸出完整SQL查詢和參數，方便診斷
-    console.log('最終 SQL 查詢:', queryText);
-    console.log('SQL 參數:', values);
 
     // 添加查詢超時設定
     const queryOptions = { 

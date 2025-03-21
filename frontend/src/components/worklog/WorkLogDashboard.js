@@ -54,17 +54,16 @@ const WorkLogDashboard = () => {
     
     try {
       // 增加載入狀態日誌
-      console.log('開始載入工作日誌，過濾條件:', filters);
-      
-      // 增加診斷資訊
-      const networkStatus = navigator.onLine ? '在線' : '離線';
-      const token = localStorage.getItem('token') ? '存在' : '不存在';
-      console.log('診斷資訊:', { networkStatus, token, timestamp: new Date().toISOString() });
+      console.log('開始載入工作日誌，詳細過濾條件:', JSON.stringify(filters));
+      console.log('網路狀態:', navigator.onLine ? '在線' : '離線');
+      console.log('認證狀態:', localStorage.getItem('token') ? '已認證' : '未認證');
       
       const data = await fetchWorkLogs(filters);
       
+      console.log('API返回結果:', data);
+      console.log(`成功載入 ${data.length} 條工作日誌`);
+      
       if (Array.isArray(data)) {
-        console.log(`成功載入 ${data.length} 條工作日誌`);
         setWorkLogs(data);
       } else {
         console.error('工作日誌數據格式不正確:', data);
@@ -72,7 +71,7 @@ const WorkLogDashboard = () => {
         setError('返回數據格式不正確，請聯繫系統管理員');
       }
     } catch (err) {
-      console.error('載入工作日誌失敗:', err);
+      console.error('載入工作日誌失敗，詳細錯誤:', err);
       
       // 提供更有用的錯誤訊息
       let errorMessage = '載入工作日誌失敗，請稍後再試';
@@ -86,11 +85,6 @@ const WorkLogDashboard = () => {
         switch (err.response.status) {
           case 401:
             errorMessage = '登入狀態已失效，請重新登入';
-            // 可選：自動登出並重定向
-            setTimeout(() => {
-              logout();
-              navigate('/login');
-            }, 2000);
             break;
           case 403:
             errorMessage = '您沒有權限查看工作日誌';
@@ -113,8 +107,8 @@ const WorkLogDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [filters, fetchWorkLogs, logout, navigate]);
-
+  }, [filters, fetchWorkLogs]);
+  
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
     setIsLoading(true);
@@ -210,6 +204,28 @@ const WorkLogDashboard = () => {
     
     await loadWorkLogs();
   };
+
+  // 在這裡添加 handleTestQuery 函數
+  const handleTestQuery = async () => {
+    try {
+      console.log('執行測試查詢...');
+      // 使用最簡單的查詢參數
+      const simpleFilters = {
+        startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0], // 30天前
+        endDate: new Date().toISOString().split('T')[0]
+      };
+      console.log('測試查詢參數:', simpleFilters);
+      
+      const data = await fetchWorkLogs(simpleFilters);
+      console.log('測試查詢結果:', data);
+      
+      alert(`測試查詢結果: 找到 ${data.length} 條記錄`);
+    } catch (error) {
+      console.error('測試查詢失敗:', error);
+      alert('測試查詢失敗: ' + error.message);
+    }
+  };
+
 
   // 格式化時間顯示
   const formatTime = (timeString) => {
@@ -366,13 +382,21 @@ const WorkLogDashboard = () => {
             </div>
           </div>
           <div className="mt-4 flex justify-end">
-            <Button 
-              onClick={refreshWorkLogs}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              重新整理
-            </Button>
-          </div>
+  <Button 
+    onClick={refreshWorkLogs}
+    className="bg-green-600 hover:bg-green-700"
+  >
+    重新整理
+  </Button>
+  
+  {/* 添加測試查詢按鈕 */}
+  <Button 
+    onClick={handleTestQuery}
+    className="bg-blue-600 hover:bg-blue-700 ml-4"
+  >
+    測試查詢
+  </Button>
+</div>
         </Card>
 
         {/* 工作日誌列表 */}

@@ -553,33 +553,123 @@ export const uploadCSV = async (csvFile) => {
 };
 
 export const searchWorkLogs = async (filters) => {
-  // 標準化日期格式，確保與後端格式一致
-  const normalizedFilters = {
-    ...filters,
-    startDate: filters.startDate || new Date().toISOString().split('T')[0],
-    endDate: filters.endDate || new Date().toISOString().split('T')[0]
-  };
+  // 生成快取鍵
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  // 詳細日誌
+  console.log('searchWorkLogs 調用，完整過濾條件:', JSON.stringify(filters));
+  console.log('API基礎URL:', api.defaults.baseURL);
+  
+  // 強制忽略快取進行測試
+  console.log('忽略快取，強制從伺服器獲取新數據');
   
   try {
-    const response = await api.get('/work-logs/search', { 
-      params: normalizedFilters
+    console.log('開始發送工作日誌搜尋請求');
+    
+    // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
+    let timeoutAttempts = 0;
+    const maxTimeoutAttempts = 2;
+    const timeouts = [8000, 20000]; // 第一次嘗試 8 秒，第二次 20 秒
+    
+    let lastError = null;
+    
+    while (timeoutAttempts <= maxTimeoutAttempts) {
+      try {
+        // 使用當前的超時時間
+        const currentTimeout = timeouts[timeoutAttempts] || 30000;
+        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
+        
+        const response = await api.get('/work-logs/search', { 
+          params: {
+            ...filters,
+            _t: Date.now() // 添加時間戳參數避免任何可能的快取
+          },
+          timeout: currentTimeout
+        });
+        
+        console.log('API原始回應狀態:', response.status);
+        console.log('API原始回應數據類型:', typeof response.data);
+        console.log('API原始回應是否為數組:', Array.isArray(response.data));
+        console.log('API原始回應長度:', Array.isArray(response.data) ? response.data.length : 'N/A');
+        
+        // 標準化日期和時間格式
+        if (Array.isArray(response.data)) {
+          const normalizedData = response.data.map(log => ({
+            ...log,
+            start_time: log.start_time?.substring(0, 5) || log.start_time,
+            end_time: log.end_time?.substring(0, 5) || log.end_time,
+            created_at: log.created_at || new Date().toISOString()
+          }));
+          
+          console.log('標準化後數據:', normalizedData);
+          return normalizedData;
+        }
+        
+        console.warn('API返回了非數組數據:', response.data);
+        return [];
+      } catch (error) {
+        lastError = error;
+        
+        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
+        if (error.code === 'ECONNABORTED' && timeoutAttempts < maxTimeoutAttempts) {
+          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
+          timeoutAttempts++;
+        } else {
+          // 其他錯誤或已達最大重試次數，跳出循環
+          break;
+        }
+      }
+    }
+    
+    // 所有嘗試都失敗，記錄詳細錯誤並處理
+    console.error('搜尋工作日誌失敗 (所有嘗試):', {
+      message: lastError?.message,
+      status: lastError?.response?.status,
+      statusText: lastError?.response?.statusText,
+      url: lastError?.config?.url,
+      params: JSON.stringify(lastError?.config?.params)
     });
     
-    // 確保返回的是標準化格式的數據
-    if (Array.isArray(response.data)) {
-      return response.data.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.start_time,
-        end_time: log.end_time?.substring(0, 5) || log.end_time
-      }));
+    // 特殊錯誤處理
+    if (lastError?.response?.status === 404) {
+      console.log('沒有找到符合條件的工作日誌');
+      return [];
+    }
+    
+    // 網絡離線處理
+    if (!navigator.onLine) {
+      console.warn('瀏覽器處於離線狀態');
+      return [];
+    }
+    
+    // 身份驗證錯誤處理
+    if (lastError?.response?.status === 401) {
+      console.warn('身份驗證已過期，需要重新登入');
+      // 可以在這裡添加重新導向到登入頁面的邏輯
+      return [];
+    }
+    
+    // 默認返回空數組避免UI崩潰
+    return [];
+  } catch (error) {
+    // 詳細錯誤日誌
+    console.error('搜尋工作日誌失敗，完整錯誤:', error);
+    
+    if (error.response) {
+      console.error('伺服器響應錯誤:', {
+        status: error.response.status,
+        headers: error.response.headers,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無伺服器響應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
     }
     
     return [];
-  } catch (error) {
-    console.error('搜索工作日誌失敗:', error);
-    return [];
   }
-}
+};
 
 
 
