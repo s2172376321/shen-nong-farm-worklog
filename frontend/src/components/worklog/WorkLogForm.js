@@ -807,171 +807,159 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   };
 
   // 提交表單
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    // 檢查伺服器連線狀態
-    if (serverStatus.status === 'offline') {
-      alert('無法連線至伺服器，請稍後再試。');
-      return;
-    }
-    
-    // 驗證認證狀態
-    const token = localStorage.getItem('token');
-    if (!token) {
-      alert('您的登入狀態已失效，請重新登入');
-      logout(); // 導向登入頁面
-      return;
-    }
-    
-    console.log('正在提交工作日誌，認證令牌存在:', !!token);
-    
-    // 表單驗證
-    if (!validateForm()) {
-      // 滾動到第一個錯誤欄位
-      const firstError = document.querySelector('.border-red-500');
-      if (firstError) {
-        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-      console.log('表單驗證失敗，錯誤:', formErrors);
-      return;
-    }
-    
-    try {
-      // 提交前禁用重複提交
-      if (isLoading) return;
-      setIsLoading(true);
-      
-      // 確保提交數據包含所有必要欄位
-      const submitData = {
-        location_code: workLog.location_code || '',
-        position_code: workLog.position_code || '',
-        position_name: workLog.position_name || '',
-        work_category_code: workLog.work_category_code || '',
-        work_category_name: workLog.work_category_name || '',
-        startTime: workLog.startTime || '',  // 保持與後端一致的字段名
-        endTime: workLog.endTime || '',      // 保持與後端一致的字段名
-        details: workLog.details || '',
-        harvestQuantity: workLog.harvestQuantity || 0,
-        product_id: workLog.product_id || '',
-        product_name: workLog.product_name || '',
-        product_quantity: workLog.product_quantity || 0,
-        crop: workLog.crop || '',
-        date: selectedDate  // 明確添加日期字段
-      };    
-      console.log('提交工作日誌數據:', JSON.stringify(submitData, null, 2));
-      
-      const response = await submitWorkLog(submitData);
-      console.log('工作日誌提交成功:', response);
+  // 在表單提交部分
 
-    // 清除所有相關緩存，確保管理員可以看到最新數據
-    if (typeof window.clearApiCache === 'function') {
-      window.clearApiCache();
-    } else if (typeof clearCache === 'function') {
-      clearCache();
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  
+  // 檢查伺服器連線狀態
+  if (serverStatus.status === 'offline') {
+    alert('無法連線至伺服器，請稍後再試。');
+    return;
+  }
+  
+  // 驗證認證狀態
+  const token = localStorage.getItem('token');
+  if (!token) {
+    alert('您的登入狀態已失效，請重新登入');
+    logout(); // 導向登入頁面
+    return;
+  }
+  
+  console.log('正在提交工作日誌，認證令牌存在:', !!token);
+  
+  // 表單驗證
+  if (!validateForm()) {
+    // 滾動到第一個錯誤欄位
+    const firstError = document.querySelector('.border-red-500');
+    if (firstError) {
+      firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-
-      
-      // 立即將成功提交的日誌添加到當前顯示的日誌列表中
-      const submittedLog = {
-        ...submitData,
-        id: response.workLogId || Date.now(), // 使用返回的ID或臨時生成一個
-        start_time: submitData.startTime,
-        end_time: submitData.endTime,
-        position_name: submitData.position_name,
-        work_category_name: submitData.work_category_name,
-        details: submitData.details,
-        created_at: new Date().toISOString()
-      };
-      
-      // 添加到日誌列表中
-      const updatedLogs = [...dateWorkLogs, submittedLog];
-      setDateWorkLogs(updatedLogs);
-      
-      // 如果是今天的日期，也更新 todayWorkLogs
-      const today = new Date().toISOString().split('T')[0];
-      if (selectedDate === today) {
-        setTodayWorkLogs(updatedLogs);
-      }
-      
-      // 重新計算剩餘工時
-      const { remainingHours } = calculateWorkHours(updatedLogs);
-      setRemainingHours(remainingHours);
-      
-      // 為確保數據一致性，仍然從服務器重新載入日誌
-      await loadDateWorkLogs(selectedDate);
-      
-      // 重置表單，但保留位置和工作類別
-      const resetForm = {
-        location_code: workLog.location_code,
-        position_code: workLog.position_code,
-        position_name: workLog.position_name,
-        work_category_code: workLog.work_category_code,
-        work_category_name: workLog.work_category_name,
-        crop: workLog.crop, // 保留作物選擇
-        startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
-        endTime: '',
-        details: '',
-        harvestQuantity: 0,
-        product_id: '',
-        product_name: '',
-        product_quantity: 0
-      };
-      
-      setWorkLog(resetForm);
-      setFormErrors({});
-      setIsLoading(false);
-      
-      // 顯示成功訊息
-      alert('工作日誌提交成功！');
-
-      // 呼叫父元件的成功回調
-      if (typeof onSubmitSuccess === 'function') {
-        onSubmitSuccess();
-          }
-      setTimeout(() => {
-        // 呼叫父元件的成功回調
-        if (typeof onSubmitSuccess === 'function') {
-          onSubmitSuccess();
-              }
-      }, 300);
+    console.log('表單驗證失敗，錯誤:', formErrors);
+    return;
+  }
+  
+  try {
+    // 提交前禁用重複提交
+    if (isLoading) return;
+    setIsLoading(true);
     
-    } catch (err) {
-      console.error('提交工作日誌詳細錯誤:', {
-        message: err.message,
-        userMessage: err.userMessage,
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        data: err.response?.data,
-        config: {
-          url: err.config?.url,
-          method: err.config?.method,
-          headers: err.config?.headers ? '存在' : '不存在'
-        }
-      });
-      
-      // 處理特殊錯誤情況
-      if (err.response?.status === 403) {
-        alert('權限錯誤：您可能沒有提交工作日誌的權限或登入狀態已失效，請重新登入');
-        // 可選：登出並重定向到登入頁面
-        // logout();
-      } else if (err.response?.status === 401) {
-        alert('登入狀態已失效，請重新登入');
-        logout(); // 登出並重定向到登入頁面
-      } else {
-        // 顯示錯誤訊息
-        const errorMessage = err.userMessage || err.response?.data?.message || err.message || '提交工作日誌失敗，請檢查網路連線';
-        alert(`提交失敗: ${errorMessage}`);
-      }
-      
-      // 如果是驗證錯誤，更新表單錯誤
-      if (err.validationErrors) {
-        setFormErrors(prev => ({ ...prev, ...err.validationErrors }));
-      }
-      
-      setIsLoading(false);
+    // 確保提交數據包含所有必要欄位並格式正確
+    const submitData = {
+      location_code: workLog.location_code || '',
+      position_code: workLog.position_code || '',
+      position_name: workLog.position_name || workLog.location || '',
+      work_category_code: workLog.work_category_code || '',
+      work_category_name: workLog.work_category_name || workLog.crop || '',
+      startTime: workLog.startTime || '',  // 保持與後端一致的字段名
+      endTime: workLog.endTime || '',      // 保持與後端一致的字段名
+      details: workLog.details || '',
+      harvestQuantity: workLog.harvestQuantity || 0,
+      product_id: workLog.product_id || '',
+      product_name: workLog.product_name || '',
+      product_quantity: workLog.product_quantity || 0,
+      crop: workLog.crop || workLog.work_category_name || '',
+      location: workLog.position_name || workLog.location || '',
+      date: selectedDate  // 明確添加日期字段
+    };
+    
+    console.log('提交工作日誌數據:', JSON.stringify(submitData, null, 2));
+    
+    const response = await submitWorkLog(submitData);
+    console.log('工作日誌提交成功:', response);
+    
+    // 立即將成功提交的日誌添加到當前顯示的日誌列表中
+    const submittedLog = {
+      ...submitData,
+      id: response.workLogId || Date.now(), // 使用返回的ID或臨時生成一個
+      start_time: submitData.startTime,
+      end_time: submitData.endTime,
+      position_name: submitData.position_name,
+      work_category_name: submitData.work_category_name,
+      details: submitData.details,
+      created_at: new Date().toISOString()
+    };
+    
+    // 添加到日誌列表中
+    const updatedLogs = [...dateWorkLogs, submittedLog];
+    setDateWorkLogs(updatedLogs);
+    
+    // 如果是今天的日期，也更新 todayWorkLogs
+    const today = new Date().toISOString().split('T')[0];
+    if (selectedDate === today) {
+      setTodayWorkLogs(updatedLogs);
     }
-  };
+    
+    // 重新計算剩餘工時
+    const { remainingHours } = calculateWorkHours(updatedLogs);
+    setRemainingHours(remainingHours);
+    
+    // 為確保數據一致性，仍然從服務器重新載入日誌
+    await loadDateWorkLogs(selectedDate);
+    
+    // 重置表單，但保留位置和工作類別
+    const resetForm = {
+      location_code: workLog.location_code,
+      position_code: workLog.position_code,
+      position_name: workLog.position_name,
+      work_category_code: workLog.work_category_code,
+      work_category_name: workLog.work_category_name,
+      crop: workLog.crop, // 保留作物選擇
+      startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
+      endTime: '',
+      details: '',
+      harvestQuantity: 0,
+      product_id: '',
+      product_name: '',
+      product_quantity: 0
+    };
+    
+    setWorkLog(resetForm);
+    setFormErrors({});
+    setIsLoading(false);
+    
+    // 顯示成功訊息
+    alert('工作日誌提交成功！');
+
+    // 呼叫父元件的成功回調
+    if (onSubmitSuccess) {
+      onSubmitSuccess();
+    }
+  } catch (err) {
+    console.error('提交工作日誌詳細錯誤:', {
+      message: err.message,
+      userMessage: err.userMessage,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      data: err.response?.data,
+      config: {
+        url: err.config?.url,
+        method: err.config?.method,
+        headers: err.config?.headers ? '存在' : '不存在'
+      }
+    });
+    
+    // 處理特殊錯誤情況
+    if (err.response?.status === 403) {
+      alert('權限錯誤：您可能沒有提交工作日誌的權限或登入狀態已失效，請重新登入');
+    } else if (err.response?.status === 401) {
+      alert('登入狀態已失效，請重新登入');
+      logout(); // 登出並重定向到登入頁面
+    } else {
+      // 顯示錯誤訊息
+      const errorMessage = err.userMessage || err.response?.data?.message || err.message || '提交工作日誌失敗，請檢查網路連線';
+      alert(`提交失敗: ${errorMessage}`);
+    }
+    
+    // 如果是驗證錯誤，更新表單錯誤
+    if (err.validationErrors) {
+      setFormErrors(prev => ({ ...prev, ...err.validationErrors }));
+    }
+    
+    setIsLoading(false);
+  }
+};
+
     
   // 渲染欄位錯誤訊息
   const renderFieldError = (fieldName) => {
