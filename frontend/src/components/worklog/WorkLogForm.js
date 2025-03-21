@@ -315,64 +315,66 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       if (!Array.isArray(logs)) {
         console.error('工作日誌資料格式不正確', logs);
         setDateWorkLogs([]);
+        setTodayWorkLogs([]); // 確保也清空今日日誌
         setRemainingHours(8);
         setIsLoading(false);
         return;
       }
       
       console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
-      
-      // 標準化時間格式
-      const normalizedLogs = logs.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
-        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
-      }));
+        
+    // 標準化時間格式
+    const normalizedLogs = logs.map(log => ({
+      ...log,
+      start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
+      end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
+    }));
       
       console.log('標準化後的工作日誌:', normalizedLogs);
       setDateWorkLogs(normalizedLogs);
       
-      // 如果是今天的日期，同時更新todayWorkLogs
-      const today = new Date().toISOString().split('T')[0];
-      if (date === today) {
-        setTodayWorkLogs(normalizedLogs);
-      }
+    // 如果是今天的日期，同時更新todayWorkLogs
+    const today = new Date().toISOString().split('T')[0];
+    if (date === today) {
+      setTodayWorkLogs(normalizedLogs);
+    }
+    
+    // 計算剩餘工時
+    const { remainingHours } = calculateWorkHours(normalizedLogs);
+    console.log('剩餘工時計算結果:', remainingHours);
+    setRemainingHours(remainingHours);
       
-      // 計算剩餘工時
-      const { remainingHours } = calculateWorkHours(normalizedLogs);
-      console.log('剩餘工時計算結果:', remainingHours);
-      setRemainingHours(remainingHours);
+    // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
+    if (normalizedLogs.length > 0) {
+      // 根據結束時間排序日誌，找出最晚的結束時間
+      const sortedLogs = [...normalizedLogs].sort((a, b) => {
+        const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
+        const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
+        return timeB - timeA; // 降序排列，最新的在前面
+      });
       
-      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
-      if (normalizedLogs.length > 0) {
-        const sortedLogs = [...normalizedLogs].sort((a, b) => {
-          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
-          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
-          return timeB - timeA; // 降序排列，最新的在前面
-        });
-        
-        const latestLog = sortedLogs[0];
-        if (latestLog && latestLog.end_time) {
-          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
-          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
-          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-          console.log('設置下一個開始時間為:', nextStartTime);
-        } else {
-          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-        }
+      const latestLog = sortedLogs[0];
+      if (latestLog && latestLog.end_time) {
+        // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
+        const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
+        setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+        console.log('設置下一個開始時間為:', nextStartTime);
       } else {
-        // 沒有紀錄，從工作開始時間開始
         setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
       }
-    } catch (err) {
-      console.error('載入指定日期工作日誌失敗', err);
-      setDateWorkLogs([]);
-      setRemainingHours(8);
+    } else {
+      // 沒有紀錄，從工作開始時間開始
       setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-    } finally {
-      setIsLoading(false);
     }
-  }, [fetchWorkLogs, calculateWorkHours]);
+  } catch (err) {
+    console.error('載入指定日期工作日誌失敗', err);
+    setDateWorkLogs([]);
+    setRemainingHours(8);
+    setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+  } finally {
+    setIsLoading(false);
+  }
+}, [fetchWorkLogs, calculateWorkHours]);
   
   // 載入今日工作日誌
   const loadTodayWorkLogs = useCallback(async () => {
@@ -681,7 +683,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       const fileInput = document.getElementById('csv-file-input');
       if (fileInput) fileInput.value = '';
       setIsLoading(false); // 結束加載
-
+  
       // 呼叫父元件的成功回調
       if (onSubmitSuccess) {
         onSubmitSuccess();
@@ -692,7 +694,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       setIsLoading(false); // 確保錯誤時也結束加載
     }
   };
-
+  
   // 驗證時間選擇
   const validateTimeSelection = (startTime, endTime) => {
     if (!startTime || !endTime) {
@@ -877,25 +879,26 @@ const handleSubmit = async (e) => {
       position_name: submitData.position_name,
       work_category_name: submitData.work_category_name,
       details: submitData.details,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      status: 'pending' // 新提交的日誌狀態為待審核
     };
-    
-    // 添加到日誌列表中
-    const updatedLogs = [...dateWorkLogs, submittedLog];
-    setDateWorkLogs(updatedLogs);
-    
-    // 如果是今天的日期，也更新 todayWorkLogs
-    const today = new Date().toISOString().split('T')[0];
-    if (selectedDate === today) {
-      setTodayWorkLogs(updatedLogs);
-    }
-    
-    // 重新計算剩餘工時
-    const { remainingHours } = calculateWorkHours(updatedLogs);
-    setRemainingHours(remainingHours);
-    
-    // 為確保數據一致性，仍然從服務器重新載入日誌
-    await loadDateWorkLogs(selectedDate);
+      
+  // 更新日誌列表，確保顯示新提交的日誌
+  const updatedLogs = [...dateWorkLogs, submittedLog];
+  setDateWorkLogs(updatedLogs);
+  
+  // 如果是今天的日期，也更新 todayWorkLogs
+  const today = new Date().toISOString().split('T')[0];
+  if (selectedDate === today) {
+    setTodayWorkLogs(updatedLogs);
+  }
+  
+  // 重新計算剩餘工時
+  const { remainingHours } = calculateWorkHours(updatedLogs);
+  setRemainingHours(remainingHours);
+  
+  // 為確保數據一致性，從服務器重新載入日誌
+  await loadDateWorkLogs(selectedDate);
     
     // 重置表單，但保留位置和工作類別
     const resetForm = {
@@ -1089,39 +1092,39 @@ const handleSubmit = async (e) => {
         {/* 手動填寫區域 */}
         {uploadMethod === 'manual' && (
           <div>
-            {/* 通知區域 */}
-            <Card className="mb-4 p-4 bg-blue-900">
-              <h3 className="text-lg font-semibold mb-2">
-                {selectedDate === new Date().toISOString().split('T')[0] 
-                  ? '今日工作進度' 
-                  : `${selectedDate} 工作進度`}
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-300">已提交時段：</p>
-                  {dateWorkLogs.length > 0 ? (
-                    <ul className="list-disc list-inside">
-                      {dateWorkLogs.map((log, index) => (
-                        <li key={index} className="text-gray-300 text-sm">
-                          {log.start_time} - {log.end_time} ({log.work_category_name || '未知類別'} @ {log.position_name || '未知位置'})
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-gray-400 text-sm">尚未提交任何工作時段</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm text-gray-300">剩餘工時：</p>
-                  <p className="text-2xl font-bold text-yellow-400">{remainingHours} 小時</p>
-                  {parseFloat(remainingHours) > 0 && (
-                    <p className="text-red-400 text-sm mt-1">
-                      {parseFloat(remainingHours) < 8 ? '繼續加油！' : '請確保每日工作時間達到8小時'}
-                    </p>
-                  )}
-                </div>
-              </div>
-            </Card>
+{/* 通知區域 */}
+<Card className="mb-4 p-4 bg-blue-900">
+  <h3 className="text-lg font-semibold mb-2">
+    {selectedDate === new Date().toISOString().split('T')[0] 
+      ? '今日工作進度' 
+      : `${selectedDate} 工作進度`}
+  </h3>
+  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <p className="text-sm text-gray-300">已提交時段：</p>
+      {dateWorkLogs.length > 0 ? (
+        <ul className="list-disc list-inside max-h-48 overflow-y-auto">
+          {dateWorkLogs.map((log, index) => (
+            <li key={log.id || index} className="text-gray-300 text-sm">
+              {log.start_time} - {log.end_time} ({log.work_category_name || '未知類別'} @ {log.position_name || '未知位置'})
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-gray-400 text-sm">尚未提交任何工作時段</p>
+      )}
+    </div>
+    <div>
+      <p className="text-sm text-gray-300">剩餘工時：</p>
+      <p className="text-2xl font-bold text-yellow-400">{remainingHours} 小時</p>
+      {parseFloat(remainingHours) > 0 && (
+        <p className="text-red-400 text-sm mt-1">
+          {parseFloat(remainingHours) < 8 ? '繼續加油！' : '請確保每日工作時間達到8小時'}
+        </p>
+      )}
+    </div>
+  </div>
+</Card>
 
             {/* 全局錯誤顯示 */}
             {error && (
