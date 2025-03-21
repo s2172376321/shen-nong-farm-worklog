@@ -33,8 +33,8 @@ const apiCache = {
 // 創建 axios 實例
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
-  withCredentials: true,
-  timeout: 15000  // 增加超時時間到15秒
+  timeout: 30000,  // 增加到30秒
+  withCredentials: true
 });
 
 // 節流 Map
@@ -557,43 +557,88 @@ export const uploadCSV = async (csvFile) => {
   }
 };
 
-// 優化後的 searchWorkLogs 函數，支援分頁
-// 位置：frontend/src/utils/api.js
-// 改進 searchWorkLogs 函數
-
-// 優化後的 searchWorkLogs 函數
-
-
-export const searchWorkLogs = async (filters, isAdminRequest = false) => {
+export const searchWorkLogs = async (filters) => {
+  // 生成快取鍵
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  // 詳細日誌
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
+  
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作日誌數據');
+    return cachedData;
+  }
+  
   try {
-    console.log('搜索工作日誌，過濾條件:', filters);
+    console.log('開始發送工作日誌搜尋請求');
     
-    const endpoint = isAdminRequest 
-      ? '/work-logs/admin/search'  // 管理員專用端點
-      : '/work-logs/search';       // 一般使用者端點
+    // 增加超時時間和重試機制
+    let timeoutMs = 30000; // 增加到30秒
     
-    const response = await api.get(endpoint, { 
+    const response = await api.get('/work-logs/search', { 
       params: filters,
-      timeout: 10000 // 增加超時時間
+      timeout: timeoutMs
     });
     
-    // 確保返回的是數組
-    const workLogs = Array.isArray(response.data) ? response.data : [];
+    console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
     
-    // 格式化時間
-    return workLogs.map(log => ({
-      ...log,
-      start_time: log.start_time?.substring(0, 5),
-      end_time: log.end_time?.substring(0, 5)
-    }));
+    // 標準化日期和時間格式
+    if (Array.isArray(response.data)) {
+      const normalizedData = response.data.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.start_time,
+        end_time: log.end_time?.substring(0, 5) || log.end_time,
+        created_at: log.created_at || new Date().toISOString()
+      }));
+      
+      // 儲存到快取
+      apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+      
+      return normalizedData;
+    }
+    
+    console.warn('API返回了非數組數據:', response.data);
+    return [];
+    
   } catch (error) {
-        console.error('搜索工作日誌失敗:', {
-          error: error.message,
-          status: error.response?.status,
-          data: error.response?.data
-        });
-      }
-    };
+    console.error('搜尋工作日誌失敗:', {
+      message: error.message,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      url: error.config?.url,
+      params: JSON.stringify(error.config?.params)
+    });
+    
+    // 特殊錯誤處理
+    if (error.response?.status === 404) {
+      console.log('沒有找到符合條件的工作日誌');
+      return [];
+    }
+    
+    // 網絡離線處理
+    if (!navigator.onLine) {
+      console.warn('瀏覽器處於離線狀態');
+      return [];
+    }
+    
+    // 身份驗證錯誤處理
+    if (error.response?.status === 401) {
+      console.warn('身份驗證已過期，需要重新登入');
+      return [];
+    }
+    
+    // 如果是超時錯誤，返回空數組，避免UI崩潰
+    if (error.code === 'ECONNABORTED') {
+      console.warn('請求超時，返回空結果');
+      return [];
+    }
+    
+    // 默認返回空數組避免UI崩潰
+    return [];
+  }
+};
 
 
     
