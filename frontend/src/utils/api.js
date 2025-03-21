@@ -200,23 +200,17 @@ export class WebSocketService {
   // 连接到 WebSocket 伺服器
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
-      console.log('WebSocket 已连接或正在连接中');
+      console.log('WebSocket 已連接或正在連接中');
       return;
     }
 
     try {
-      // 获取token
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.warn('WebSocket连接失败: 未找到认证token');
-        return;
-      }
-
-      console.log('尝试连接 WebSocket...');
+      console.log('嘗試連接 WebSocket...');
       const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3002/ws';
+      const token = localStorage.getItem('token');
       
-      // 添加token作为查询参数
-      const wsUrlWithToken = `${wsUrl}?token=${encodeURIComponent(token)}`;
+      // 修改：將 token 添加到 WebSocket URL 的查詢參數中
+      const wsUrlWithToken = `${wsUrl}?token=${token}`;
       this.socket = new WebSocket(wsUrlWithToken);
 
       this.socket.onopen = this.onOpen.bind(this);
@@ -224,11 +218,12 @@ export class WebSocketService {
       this.socket.onerror = this.onError.bind(this);
       this.socket.onclose = this.onClose.bind(this);
     } catch (error) {
-      console.error('WebSocket 连接错误:', error);
+      console.error('WebSocket 連接錯誤:', error);
       this.attemptReconnect();
     }
   }
 
+  
   // 连接成功回调
   onOpen() {
     console.log('WebSocket 连接成功');
@@ -574,12 +569,25 @@ export const searchWorkLogs = async (filters) => {
   try {
     console.log('開始發送工作日誌搜尋請求');
     
-    // 增加超時時間和重試機制
-    let timeoutMs = 30000; // 增加到30秒
+    // 確保日期範圍格式正確
+    let queryParams = { ...filters };
     
+    if (filters.startDate) {
+      // 確保是 YYYY-MM-DD 格式
+      queryParams.startDate = new Date(filters.startDate).toISOString().split('T')[0];
+    }
+    
+    if (filters.endDate) {
+      // 確保是 YYYY-MM-DD 格式
+      queryParams.endDate = new Date(filters.endDate).toISOString().split('T')[0];
+    }
+    
+    console.log('處理後的查詢參數:', queryParams);
+    
+    // 使用當前的超時時間
     const response = await api.get('/work-logs/search', { 
-      params: filters,
-      timeout: timeoutMs
+      params: queryParams,
+      timeout: 15000
     });
     
     console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
@@ -601,44 +609,20 @@ export const searchWorkLogs = async (filters) => {
     
     console.warn('API返回了非數組數據:', response.data);
     return [];
-    
   } catch (error) {
     console.error('搜尋工作日誌失敗:', {
-      message: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      url: error.config?.url,
-      params: JSON.stringify(error.config?.params)
+      message: error?.message,
+      status: error?.response?.status,
+      statusText: error?.response?.statusText,
+      url: error?.config?.url,
+      params: JSON.stringify(error?.config?.params)
     });
-    
-    // 特殊錯誤處理
-    if (error.response?.status === 404) {
-      console.log('沒有找到符合條件的工作日誌');
-      return [];
-    }
-    
-    // 網絡離線處理
-    if (!navigator.onLine) {
-      console.warn('瀏覽器處於離線狀態');
-      return [];
-    }
-    
-    // 身份驗證錯誤處理
-    if (error.response?.status === 401) {
-      console.warn('身份驗證已過期，需要重新登入');
-      return [];
-    }
-    
-    // 如果是超時錯誤，返回空數組，避免UI崩潰
-    if (error.code === 'ECONNABORTED') {
-      console.warn('請求超時，返回空結果');
-      return [];
-    }
     
     // 默認返回空數組避免UI崩潰
     return [];
   }
 };
+
 
 
     
