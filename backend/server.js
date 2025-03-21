@@ -109,64 +109,26 @@ app.get('/api/health-check', async (req, res) => {
 // 初始化数据库架构
 async function initDbSchema() {
   try {
-    console.log('检查并更新数据库架构...');
     await db.query(`
       DO $$
       BEGIN
-          -- 添加 location_code 栏位
+          -- 檢查並添加必要欄位
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='location_code') THEN
-              ALTER TABLE work_logs ADD COLUMN location_code VARCHAR(50);
+                      WHERE table_name='work_logs' AND column_name='work_hours') THEN
+              ALTER TABLE work_logs ADD COLUMN work_hours DECIMAL(5, 2) DEFAULT 0;
           END IF;
 
-          -- 添加 position_code 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='position_code') THEN
-              ALTER TABLE work_logs ADD COLUMN position_code VARCHAR(50);
-          END IF;
-
-          -- 添加 position_name 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='position_name') THEN
-              ALTER TABLE work_logs ADD COLUMN position_name VARCHAR(100);
-          END IF;
-
-          -- 添加 work_category_code 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='work_category_code') THEN
-              ALTER TABLE work_logs ADD COLUMN work_category_code VARCHAR(50);
-          END IF;
-
-          -- 添加 work_category_name 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='work_category_name') THEN
-              ALTER TABLE work_logs ADD COLUMN work_category_name VARCHAR(100);
-          END IF;
-
-          -- 添加 product_id 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='product_id') THEN
-              ALTER TABLE work_logs ADD COLUMN product_id VARCHAR(50);
-          END IF;
-
-          -- 添加 product_name 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='product_name') THEN
-              ALTER TABLE work_logs ADD COLUMN product_name VARCHAR(100);
-          END IF;
-
-          -- 添加 product_quantity 栏位
-          IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                      WHERE table_name='work_logs' AND column_name='product_quantity') THEN
-              ALTER TABLE work_logs ADD COLUMN product_quantity DECIMAL(10, 2) DEFAULT 0;
+          -- 確保 created_at 有適當的索引
+          IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_work_logs_created_at') THEN
+              CREATE INDEX idx_work_logs_created_at ON work_logs(created_at);
           END IF;
       END $$;
     `);
-    console.log('数据库架构检查完成');
   } catch (error) {
-    console.error('更新数据库架构失败:', error);
+    console.error('更新資料庫結構失敗:', error);
   }
 }
+
 
 // 路由
 app.use('/api', routes);

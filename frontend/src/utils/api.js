@@ -553,75 +553,33 @@ export const uploadCSV = async (csvFile) => {
 };
 
 export const searchWorkLogs = async (filters) => {
-  // 生成快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
-  
-  // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
-  
-  // 檢查快取
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log('使用快取的工作日誌數據');
-    return cachedData;
-  }
+  // 標準化日期格式，確保與後端格式一致
+  const normalizedFilters = {
+    ...filters,
+    startDate: filters.startDate || new Date().toISOString().split('T')[0],
+    endDate: filters.endDate || new Date().toISOString().split('T')[0]
+  };
   
   try {
-    console.log('開始發送工作日誌搜尋請求');
-    
-    // 確保日期範圍格式正確
-    let queryParams = { ...filters };
-    
-    if (filters.startDate) {
-      // 確保是 YYYY-MM-DD 格式
-      queryParams.startDate = new Date(filters.startDate).toISOString().split('T')[0];
-    }
-    
-    if (filters.endDate) {
-      // 確保是 YYYY-MM-DD 格式
-      queryParams.endDate = new Date(filters.endDate).toISOString().split('T')[0];
-    }
-    
-    console.log('處理後的查詢參數:', queryParams);
-    
-    // 使用當前的超時時間
     const response = await api.get('/work-logs/search', { 
-      params: queryParams,
-      timeout: 15000
+      params: normalizedFilters
     });
     
-    console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
-    
-    // 標準化日期和時間格式
+    // 確保返回的是標準化格式的數據
     if (Array.isArray(response.data)) {
-      const normalizedData = response.data.map(log => ({
+      return response.data.map(log => ({
         ...log,
         start_time: log.start_time?.substring(0, 5) || log.start_time,
-        end_time: log.end_time?.substring(0, 5) || log.end_time,
-        created_at: log.created_at || new Date().toISOString()
+        end_time: log.end_time?.substring(0, 5) || log.end_time
       }));
-      
-      // 儲存到快取
-      apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
-      
-      return normalizedData;
     }
     
-    console.warn('API返回了非數組數據:', response.data);
     return [];
   } catch (error) {
-    console.error('搜尋工作日誌失敗:', {
-      message: error?.message,
-      status: error?.response?.status,
-      statusText: error?.response?.statusText,
-      url: error?.config?.url,
-      params: JSON.stringify(error?.config?.params)
-    });
-    
-    // 默認返回空數組避免UI崩潰
+    console.error('搜索工作日誌失敗:', error);
     return [];
   }
-};
+}
 
 
 

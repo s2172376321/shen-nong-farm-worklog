@@ -203,21 +203,25 @@ async searchWorkLogs(req, res) {
   const { location, crop, startDate, endDate, status } = req.query;
 
   try {
+    // 詳細記錄請求信息
     console.log('收到工作日誌搜索請求:', {
       location, crop, startDate, endDate, status,
       userId: req.user?.id,
-      userRole: req.user?.role
+      userRole: req.user?.role,
+      requestTime: new Date().toISOString()
     });
     
     // 添加結果限制避免返回過多數據
     const LIMIT = 100; 
     
-    // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
+    // 優化 SQL 查詢 - 確保選擇所有必要欄位
     let queryText = `
       SELECT wl.id, wl.user_id, wl.location, wl.crop, 
              wl.start_time, wl.end_time, wl.work_hours, 
              wl.details, wl.position_name, wl.work_category_name,
-             wl.status, wl.created_at, u.username
+             wl.status, wl.created_at, wl.location_code, wl.position_code,
+             wl.work_category_code, wl.product_id, wl.product_name,
+             wl.product_quantity, wl.harvest_quantity, u.username
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
       WHERE 1=1
@@ -226,36 +230,57 @@ async searchWorkLogs(req, res) {
     const values = [];
     let paramIndex = 1;
 
+    // 記錄過濾條件處理
+    console.log('開始構建查詢條件');
+    
     // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
     if (!req.user.role || req.user.role !== 'admin') {
       queryText += ` AND wl.user_id = $${paramIndex}`;
       values.push(req.user.id);
       paramIndex++;
+      console.log(`添加用戶篩選：user_id = ${req.user.id}`);
+    } else {
+      console.log('管理員查詢，不限制用戶ID');
     }
 
+    // 位置過濾
     if (location) {
       queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
       values.push(`%${location}%`);
       paramIndex++;
+      console.log(`添加位置篩選: ${location}`);
     }
 
+    // 作物/工作類別過濾
     if (crop) {
       queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
       values.push(`%${crop}%`);
       paramIndex++;
+      console.log(`添加作物/工作類別篩選: ${crop}`);
     }
 
-    // 添加狀態過濾
+    // 狀態過濾
     if (status) {
       queryText += ` AND wl.status = $${paramIndex}`;
       values.push(status);
       paramIndex++;
+      console.log(`添加狀態篩選: ${status}`);
     }
 
+    // 日期範圍過濾
     if (startDate && endDate) {
-      // 使用 DATE() 函數優化日期比較
+      console.log(`添加日期範圍篩選: ${startDate} 至 ${endDate}`);
+      console.log('原始日期格式:', { startDate, endDate });
+      
+      // 嘗試標準化日期格式
+      const formattedStartDate = new Date(startDate).toISOString().split('T')[0];
+      const formattedEndDate = new Date(endDate).toISOString().split('T')[0];
+      
+      console.log('格式化後日期:', { formattedStartDate, formattedEndDate });
+      
+      // 使用格式化後的日期範圍
       queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-      values.push(startDate, endDate);
+      values.push(formattedStartDate, formattedEndDate);
       paramIndex += 2;
     }
 
@@ -263,43 +288,100 @@ async searchWorkLogs(req, res) {
     queryText += ' ORDER BY wl.created_at DESC';
     queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
 
-    console.log('執行 SQL:', queryText);
-    console.log('參數:', values);
+    // 輸出完整SQL查詢和參數，方便診斷
+    console.log('最終 SQL 查詢:', queryText);
+    console.log('SQL 參數:', values);
 
     // 添加查詢超時設定
     const queryOptions = { 
       text: queryText, 
       values: values,
-      timeout: 30000  // 增加到30秒
+      timeout: 10000  // 設置數據庫查詢超時為 10 秒
     };
 
+    // 記錄查詢開始時間
+    const queryStartTime = Date.now();
+    console.log(`開始執行數據庫查詢: ${new Date(queryStartTime).toISOString()}`);
+    
     const result = await db.query(queryOptions);
     
-    console.log(`查詢到 ${result.rows.length} 條工作日誌`);
+    // 記錄查詢耗時
+    const queryEndTime = Date.now();
+    const queryDuration = queryEndTime - queryStartTime;
+    console.log(`查詢完成，耗時 ${queryDuration}ms`);
+    console.log(`查詢結果: ${result.rows.length} 條記錄`);
     
-    // 確保結果是數組
-    if (!Array.isArray(result.rows)) {
-      console.error('查詢結果不是數組:', result.rows);
-      return res.json([]);
+    // 記錄前幾條記錄的 ID 和創建時間，以便診斷
+    if (result.rows.length > 0) {
+      const sampleData = result.rows.slice(0, Math.min(5, result.rows.length)).map(row => ({
+        id: row.id,
+        created_at: row.created_at,
+        user_id: row.user_id,
+        username: row.username
+      }));
+      console.log('樣本數據:', sampleData);
+    } else {
+      console.log('查詢未返回任何記錄');
+      // 如果沒有返回記錄，顯示更多查詢條件信息
+      console.log('可能原因分析:', {
+        noUserMatch: values.includes(req.user?.id) && req.user?.id ? '用戶ID可能限制了結果' : '未按用戶ID過濾',
+        dateRangeIssue: startDate && endDate ? '日期範圍可能沒有匹配記錄' : '未使用日期過濾',
+        otherFilters: { location, crop, status }
+      });
     }
     
-    // 標準化時間格式，確保前端能正確顯示
+    // 標準化時間格式
     const formattedResults = result.rows.map(log => ({
       ...log,
       start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
       end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
     }));
     
+    console.log(`返回格式化後的 ${formattedResults.length} 條記錄`);
+    
+    // 記錄完整的響應大小以檢查是否超大
+    console.log(`響應大小約為 ${JSON.stringify(formattedResults).length} 字節`);
+    
     res.json(formattedResults);
   } catch (error) {
+    // 詳細記錄錯誤信息
     console.error('查詢工作日誌失敗:', {
       error: error.message,
       stack: error.stack,
-      query: error.query
+      query: error.query,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+      position: error.position
     });
-    res.status(500).json({ 
-      message: '查詢工作日誌失敗，請稍後再試',
-      error: process.env.NODE_ENV === 'production' ? undefined : error.message
+    
+    // 根據錯誤類型提供更精確的響應
+    let statusCode = 500;
+    let errorMessage = '查詢工作日誌失敗，請稍後再試';
+    
+    // 數據庫連接錯誤
+    if (error.code === 'ECONNREFUSED' || error.code === '08006' || error.code === '08001') {
+      errorMessage = '數據庫連接失敗，請稍後再試';
+    }
+    // 查詢超時
+    else if (error.code === '57014' || error.code === '57P01') {
+      errorMessage = '查詢超時，請縮小搜索範圍';
+      statusCode = 408;
+    }
+    // 表不存在
+    else if (error.code === '42P01') {
+      errorMessage = '工作日誌數據表不存在，請聯繫系統管理員';
+    }
+    // 列不存在
+    else if (error.code === '42703') {
+      errorMessage = '查詢引用了不存在的欄位，請聯繫系統管理員';
+    }
+    
+    res.status(statusCode).json({ 
+      message: errorMessage,
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message,
+      code: error.code,
+      timestamp: new Date().toISOString()
     });
   }
 },
