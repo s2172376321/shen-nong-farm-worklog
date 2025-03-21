@@ -230,10 +230,12 @@ const WorkLogDashboard = () => {
   // 格式化時間顯示
   const formatTime = (timeString) => {
     if (!timeString) return 'N/A';
-    if (timeString.length <= 5) return timeString;
-    return timeString.substring(0, 5);
+    // 確保處理字符串
+    const timeStr = String(timeString);
+    // 只取 HH:MM 部分
+    return timeStr.length >= 5 ? timeStr.substring(0, 5) : timeStr;
   };
-
+  
   // 計算工作時長
   const calculateDuration = (startTime, endTime) => {
     if (!startTime || !endTime) return "N/A";
