@@ -785,20 +785,21 @@ const validateTimeSelection = (startTime, endTime) => {
     if (!log.start_time || !log.end_time) continue;
     
     // 去除時間字串中可能的秒數部分
-    const logStartStr = log.start_time.substring(0, 5);
-    const logEndStr = log.end_time.substring(0, 5);
-    
+    const logStartStr = String(log.start_time).substring(0, 5);
+    const logEndStr = String(log.end_time).substring(0, 5);
+      
     const logStart = new Date(`2000-01-01T${logStartStr}`);
     const logEnd = new Date(`2000-01-01T${logEndStr}`);
     
     // 檢查所有可能的重疊情況
     if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
-        (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
-        (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
-      
-      return { 
-        valid: false, 
-        message: `所選時間與已存在的時段「${logStartStr}-${logEndStr}」重疊` 
+    (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
+    (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
+  
+  return { 
+    valid: false, 
+    message: `所選時間與已存在的時段「${logStartStr}-${logEndStr}」重疊` 
+
       };
     }
   }
@@ -894,23 +895,24 @@ const handleSubmit = async (e) => {
     if (isLoading) return;
     setIsLoading(true);
     
-    // 確保提交數據包含所有必要欄位
-    const submitData = {
-      location_code: workLog.location_code || '',
-      position_code: workLog.position_code || '',
-      position_name: workLog.position_name || '',
-      work_category_code: workLog.work_category_code || '',
-      work_category_name: workLog.work_category_name || '',
-      startTime: workLog.startTime || '',
-      endTime: workLog.endTime || '',
-      details: workLog.details || '',
-      harvestQuantity: workLog.harvestQuantity || 0,
-      product_id: workLog.product_id || '',
-      product_name: workLog.product_name || '',
-      product_quantity: workLog.product_quantity || 0,
-      crop: workLog.crop || '',
-      date: selectedDate
-    };
+// 確保提交數據包含所有必要欄位
+const submitData = {
+  location_code: workLog.location_code || '',
+  position_code: workLog.position_code || '',
+  position_name: workLog.position_name || '',
+  work_category_code: workLog.work_category_code || '',
+  work_category_name: workLog.work_category_name || '',
+  // 確保時間格式正確 - 只需傳遞 HH:MM 部分，後端會添加秒數
+  startTime: workLog.startTime ? workLog.startTime.substring(0, 5) : '',
+  endTime: workLog.endTime ? workLog.endTime.substring(0, 5) : '',
+  details: workLog.details || '',
+  harvestQuantity: workLog.harvestQuantity || 0,
+  product_id: workLog.product_id || '',
+  product_name: workLog.product_name || '',
+  product_quantity: workLog.product_quantity || 0,
+  crop: workLog.crop || '',
+  date: selectedDate  // 明確添加日期字段
+};
     
     console.log('提交工作日誌數據:', JSON.stringify(submitData, null, 2));
     
