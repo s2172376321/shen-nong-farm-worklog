@@ -2,20 +2,32 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Input, Card } from '../ui';
 import { fetchLocationsByArea, fetchWorkCategories, fetchLocationCrops } from '../../utils/api';
+import { useWorkLog } from '../../hooks/useWorkLog';
+
+
+
+
 
 const WorkLogForm = ({ onSubmitSuccess }) => {
   // 表單狀態
-  const [formData, setFormData] = useState({
+  const { submitWorkLog } = useWorkLog();
+
+  const [workLog, setWorkLog] = useState({
+    location_code: '',
     position_code: '',
     position_name: '',
     work_category_code: '',
     work_category_name: '',
-    start_time: '',
-    end_time: '',
+    startTime: '',
+    endTime: '',
     details: '',
-    crop: '',
-    harvest_quantity: 0
+    harvestQuantity: 0,
+    product_id: '',
+    product_name: '',
+    product_quantity: 0,
+    crop: ''  // 確保包含 crop 欄位
   });
+  
   
   // UI狀態
   const [isLoading, setIsLoading] = useState(false);
@@ -28,7 +40,29 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   const [crops, setCrops] = useState([]);
   const [selectedArea, setSelectedArea] = useState('');
   const [formErrors, setFormErrors] = useState({});
+  const [showProductSelector, setShowProductSelector] = useState(false);
+  const [availableCrops, setAvailableCrops] = useState([]);
   const [showHarvestQuantity, setShowHarvestQuantity] = useState(false);
+// 在 WorkLogForm 組件中，狀態定義部分
+const [formData, setFormData] = useState({
+  // 工作日誌基本信息
+  location_code: '',
+  position_code: '',
+  position_name: '',
+  work_category_code: '',
+  work_category_name: '',
+  startTime: '',
+  endTime: '',
+  details: '',
+  
+  // 選項性欄位
+  harvestQuantity: 0,
+  product_id: '',
+  product_name: '',
+  product_quantity: 0,
+  crop: ''
+});
+
   
   // 載入基礎數據
   useEffect(() => {
@@ -124,82 +158,126 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     setFormErrors(prev => ({ ...prev, area: null }));
   };
   
-  // 處理位置選擇
-  const handlePositionChange = (e) => {
-    const positionCode = e.target.value;
-    setFormErrors(prev => ({ ...prev, position: null }));
-    
-    if (!positionCode) {
-      setFormData(prev => ({ ...prev, position_code: '', position_name: '' }));
-      return;
-    }
-    
-    console.log('選擇位置:', positionCode);
-    
-    // 從位置列表中找到選擇的位置
-    const selectedPosition = positions.find(p => p.locationCode === positionCode);
-    
-    if (selectedPosition) {
-      console.log('找到位置資料:', selectedPosition);
-      setFormData(prev => ({
-        ...prev,
-        position_code: positionCode,
-        position_name: selectedPosition.locationName || ''
-      }));
-    } else {
-      console.warn('找不到匹配的位置:', positionCode);
-      setFormData(prev => ({ ...prev, position_code: positionCode, position_name: '' }));
-    }
-  };
+// 處理位置選擇變更
+const handlePositionChange = async (e) => {
+  const positionCode = e.target.value;
+  setFormErrors(prev => ({ ...prev, position: null }));
   
-  // 處理工作類別選擇
-  const handleWorkCategoryChange = (e) => {
-    const categoryCode = e.target.value;
-    setFormErrors(prev => ({ ...prev, work_category: null }));
+  if (!positionCode) {
+    setFormData(prev => ({ 
+      ...prev, 
+      position_code: '', 
+      position_name: '', 
+      location_code: '' 
+    }));
+    setAvailableCrops([]);
+    return;
+  }
+  
+  // 從篩選後的位置列表中找到選擇的位置
+  const selectedPosition = positions.find(p => p.位置代號 === positionCode);
+  
+  if (selectedPosition) {
+    setFormData(prev => ({
+      ...prev,
+      position_code: positionCode,
+      position_name: selectedPosition.位置名稱 || '',
+      location_code: selectedPosition.區域代號 || '',
+      // 清除作物選擇
+      crop: ''
+    }));
     
-    if (!categoryCode) {
-      setFormData(prev => ({ ...prev, work_category_code: '', work_category_name: '' }));
-      setShowHarvestQuantity(false);
-      return;
+    // 加載該位置的作物列表
+    try {
+      const crops = await fetchLocationCrops(positionCode);
+      setAvailableCrops(crops);
+    } catch (err) {
+      console.error('加載作物列表失敗:', err);
+      setAvailableCrops([]);
     }
+  }
+};
+  
+// 處理特定選擇欄位的變更
+const handleWorkCategoryChange = (e) => {
+  const categoryCode = e.target.value;
+  setFormErrors(prev => ({ ...prev, work_category: null }));
+  
+  if (!categoryCode) {
+    setFormData(prev => ({ 
+      ...prev, 
+      work_category_code: '', 
+      work_category_name: '' 
+    }));
+    setShowProductSelector(false);
+    setShowHarvestQuantity(false);
+    return;
+  }
+  
+  // 從工作類別列表中找到選擇的類別
+  const selectedCategory = workCategories.find(c => c.工作內容代號 === categoryCode);
+  
+  if (selectedCategory) {
+    setFormData(prev => ({
+      ...prev,
+      work_category_code: categoryCode,
+      work_category_name: selectedCategory.工作內容名稱 || ''
+    }));
     
-    // 從工作類別列表中找到選擇的類別
-    const selectedCategory = workCategories.find(c => c.工作內容代號 === categoryCode);
+    // 檢查是否需要顯示產品選擇器
+    const isPlanting = selectedCategory.工作內容名稱 === '種植';
+    const costCategory = parseInt(selectedCategory.成本類別);
+    const isProductNeeded = costCategory === 2 || isPlanting;
     
-    if (selectedCategory) {
-      setFormData(prev => ({
-        ...prev,
-        work_category_code: categoryCode,
-        work_category_name: selectedCategory.工作內容名稱 || ''
-      }));
-      
-      // 檢查是否為採收類別
-      const isHarvest = selectedCategory.工作內容名稱 === '採收';
-      setShowHarvestQuantity(isHarvest);
-    }
-  };
+    setShowProductSelector(isProductNeeded);
+    
+    // 檢查是否為採收類別
+    const isHarvest = selectedCategory.工作內容名稱 === '採收';
+    setShowHarvestQuantity(isHarvest);
+  }
+};    
+// 處理作物選擇
+const handleCropChange = (e) => {
+  const crop = e.target.value;
+  setFormData(prev => ({ ...prev, crop }));
+  setFormErrors(prev => ({ ...prev, crop: null }));
+};
   
-  // 處理作物選擇
-  const handleCropChange = (e) => {
-    const crop = e.target.value;
-    setFormData(prev => ({ ...prev, crop }));
-    setFormErrors(prev => ({ ...prev, crop: null }));
-  };
+// 處理一般輸入欄位變更
+const handleInputChange = (e) => {
+  const { name, value } = e.target;
+  setFormData(prev => ({
+    ...prev,
+    [name]: value
+  }));
   
-  // 處理文本輸入
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    setFormErrors(prev => ({ ...prev, [name]: null }));
-  };
+  // 同時清除相關錯誤
+  if (formErrors[name]) {
+    setFormErrors(prev => ({
+      ...prev,
+      [name]: null
+    }));
+  }
+};
   
-  // 處理數字輸入
-  const handleNumberChange = (e) => {
-    const { name, value } = e.target;
-    const numValue = value === '' ? 0 : Number(value);
-    setFormData(prev => ({ ...prev, [name]: numValue }));
-    setFormErrors(prev => ({ ...prev, [name]: null }));
-  };
+// 處理數值輸入欄位變更
+const handleNumberChange = (e) => {
+  const { name, value } = e.target;
+  const numValue = value === '' ? 0 : Number(value);
+  
+  setFormData(prev => ({
+    ...prev,
+    [name]: numValue
+  }));
+  
+  // 清除相關錯誤
+  if (formErrors[name]) {
+    setFormErrors(prev => ({
+      ...prev,
+      [name]: null
+    }));
+  }
+};
   
   // 驗證時間選擇
   const validateTimeSelection = (start_time, end_time) => {
@@ -233,97 +311,112 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     return { valid: true, message: '' };
   };
   
-  // 表單驗證
-  const validateForm = () => {
-    const errors = {};
-    
-    // 必填欄位驗證
-    if (!selectedArea) {
-      errors.area = '請選擇區域';
-    }
-    
-    if (!formData.position_code) {
-      errors.position = '請選擇位置';
-    }
-    
-    if (!formData.work_category_code) {
-      errors.work_category = '請選擇工作類別';
-    }
-    
-    if (!formData.crop) {
-      errors.crop = '請選擇或輸入作物名稱';
-    }
-    
-    // 時間欄位驗證
-    const timeValidation = validateTimeSelection(formData.start_time, formData.end_time);
-    if (!timeValidation.valid) {
-      errors.time = timeValidation.message;
-    }
-    
-    // 採收數量驗證
-    if (showHarvestQuantity && formData.harvest_quantity <= 0) {
-      errors.harvest_quantity = '請填寫採收重量';
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
+// 驗證表單
+// 驗證表單
+const validateForm = () => {
+  const errors = {};
   
-  // 提交表單
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!validateForm()) {
-      return;
+  // 必填欄位驗證
+  if (!selectedArea) {
+    errors.area = '請選擇區域';
+  }
+  
+  if (!formData.position_code) {
+    errors.position = '請選擇位置';
+  }
+  
+  if (!formData.work_category_code) {
+    errors.work_category = '請選擇工作類別';
+  }
+
+  // 作物驗證
+  if (!formData.crop) {
+    errors.crop = '請選擇或輸入作物名稱';
+  }
+  
+  // 時間欄位驗證
+  const timeValidation = validateTimeSelection(formData.startTime, formData.endTime);
+  if (!timeValidation.valid) {
+    errors.time = timeValidation.message;
+  }
+  
+  // 採收數量驗證
+  if (showHarvestQuantity && (!formData.harvestQuantity || formData.harvestQuantity <= 0)) {
+    errors.harvestQuantity = '請填寫採收重量';
+  }
+  
+  // 產品相關驗證
+  if (showProductSelector) {
+    if (!formData.product_id) {
+      errors.product = '請選擇產品';
     }
     
+    if (!formData.product_quantity || formData.product_quantity <= 0) {
+      errors.product_quantity = '請填寫產品數量';
+    }
+  }
+  
+  setFormErrors(errors);
+  return Object.keys(errors).length === 0;
+};
+
+// 提交表單
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  
+  // 表單驗證
+  if (!validateForm()) {
+    // 滾動到第一個錯誤欄位
+    const firstError = document.querySelector('.border-red-500');
+    if (firstError) {
+      firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+  
+  try {
     setIsLoading(true);
-    setError(null);
-    setSuccess(null);
     
-    try {
-      // API由props傳入或直接引入
-      const response = await fetch('/api/work-logs', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify(formData)
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '提交工作日誌失敗');
-      }
-      
-      const data = await response.json();
-      
-      // 重置表單
-      setFormData({
-        position_code: formData.position_code, // 保留位置
-        position_name: formData.position_name,
-        work_category_code: formData.work_category_code, // 保留工作類別
-        work_category_name: formData.work_category_name,
-        crop: formData.crop, // 保留作物
-        start_time: formData.end_time, // 下一次開始時間為前一次的結束時間
-        end_time: '',
-        details: '',
-        harvest_quantity: 0
-      });
-      
-      setSuccess('工作日誌提交成功！');
-      
-      // 呼叫成功回調
-      if (onSubmitSuccess) {
-        onSubmitSuccess(data);
-      }
-    } catch (err) {
-      setError(err.message || '提交工作日誌失敗，請稍後再試');
-    } finally {
-      setIsLoading(false);
+    // 提交資料
+    const response = await submitWorkLog(formData);
+    
+    // 重置表單，但保留位置和工作類別
+    const resetForm = {
+      location_code: formData.location_code,
+      position_code: formData.position_code,
+      position_name: formData.position_name,
+      work_category_code: formData.work_category_code,
+      work_category_name: formData.work_category_name,
+      crop: formData.crop, // 保留作物選擇
+      startTime: formData.endTime, // 下一次開始時間為前一次的結束時間
+      endTime: '',
+      details: '',
+      harvestQuantity: 0,
+      product_id: '',
+      product_name: '',
+      product_quantity: 0
+    };
+    
+    setFormData(resetForm);
+    setFormErrors({});
+    setIsLoading(false);
+    
+    // 顯示成功訊息
+    alert('工作日誌提交成功！');
+
+    // 呼叫父元件的成功回調
+    if (onSubmitSuccess) {
+      onSubmitSuccess();
     }
-  };
+    
+  } catch (err) {
+    console.error('提交工作日誌失敗:', err);
+    
+    // 顯示錯誤訊息
+    alert(`提交失敗: ${err.message || '請檢查網路連線'}`);
+    setIsLoading(false);
+  }
+};
   
   // 渲染欄位錯誤訊息
   const renderFieldError = (fieldName) => {
@@ -417,71 +510,68 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
             {renderFieldError('work_category')}
           </div>
           
-          <div>
-            <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
-            <select
-              value={formData.crop}
-              onChange={handleCropChange}
-              className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                formErrors.crop ? 'border border-red-500' : ''
-              }`}
-              disabled={isLoading || (!formData.position_code || crops.length === 0)}
-            >
-              <option value="">選擇作物</option>
-              {crops.map(crop => (
-                <option key={crop} value={crop}>{crop}</option>
-              ))}
-            </select>
-            {renderFieldError('crop')}
-            
-            {/* 當沒有預設作物時，顯示手動輸入欄位 */}
-            {formData.position_code && crops.length === 0 && (
-              <Input
-                type="text"
-                name="crop"
-                value={formData.crop}
-                onChange={handleInputChange}
-                placeholder="請手動輸入作物名稱"
-                className="mt-2"
-                disabled={isLoading}
-              />
-            )}
-          </div>
+{/* 作物欄位 */}
+<div>
+  <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
+  
+  {formData.position_code && availableCrops.length > 0 ? (
+    <select
+      name="crop"
+      value={formData.crop}
+      onChange={handleCropChange}  
+      className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+        formErrors.crop ? 'border border-red-500' : ''
+      }`}
+    >
+      <option value="">選擇作物</option>
+      {availableCrops.map(crop => (
+        <option key={crop} value={crop}>{crop}</option>
+      ))}
+    </select>
+  ) : (
+    <Input
+      type="text"
+      name="crop"
+      value={formData.crop}
+      onChange={handleInputChange}
+      placeholder="請輸入作物名稱"
+      className={formErrors.crop ? 'border border-red-500' : ''}
+    />
+  )}
+  
+  {renderFieldError('crop')}
+</div>
+
+
         </div>
         
-        {/* 時間選擇 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block mb-2">開始時間 <span className="text-red-500">*</span></label>
-            <Input 
-              type="time"
-              name="start_time"
-              value={formData.start_time}
-              onChange={handleInputChange}
-              min="07:30"
-              max="16:30"
-              className={formErrors.time ? 'border border-red-500' : ''}
-              disabled={isLoading}
-            />
-            <p className="text-xs text-gray-400 mt-1">工作時間: 07:30-16:30</p>
-          </div>
-          
-          <div>
-            <label className="block mb-2">結束時間 <span className="text-red-500">*</span></label>
-            <Input 
-              type="time"
-              name="end_time"
-              value={formData.end_time}
-              onChange={handleInputChange}
-              min="07:30"
-              max="16:30"
-              className={formErrors.time ? 'border border-red-500' : ''}
-              disabled={isLoading}
-            />
-            <p className="text-xs text-gray-400 mt-1">午休時間(12:00-13:00)不可選</p>
-          </div>
-          {renderFieldError('time')}
-        </div>
+  <div>
+    <label className="block mb-2">開始時間 <span className="text-red-500">*</span></label>
+    <Input 
+      type="time"
+      name="startTime"
+      value={formData.startTime}
+      onChange={handleInputChange}
+      min="07:30"
+      max="16:30"
+      className={formErrors.time ? 'border border-red-500' : ''}
+    />
+  </div>
+  <div>
+    <label className="block mb-2">結束時間 <span className="text-red-500">*</span></label>
+    <Input 
+      type="time"
+      name="endTime"
+      value={formData.endTime}
+      onChange={handleInputChange}
+      min="07:30"
+      max="16:30"
+      className={formErrors.time ? 'border border-red-500' : ''}
+    />
+  </div>
+  {renderFieldError('time')}
+</div>
         
         {/* 採收重量（條件性顯示） */}
         {showHarvestQuantity && (
@@ -504,17 +594,16 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
         
         {/* 備註 */}
         <div>
-          <label className="block mb-2">作業備註</label>
-          <textarea 
-            name="details"
-            value={formData.details}
-            onChange={handleInputChange}
-            className="w-full p-2 bg-gray-700 text-white rounded-lg"
-            placeholder="請輸入作業細節 (選填)"
-            rows={3}
-            disabled={isLoading}
-          />
-        </div>
+  <label className="block mb-2">作業備註</label>
+  <textarea 
+    name="details"
+    value={formData.details}
+    onChange={handleInputChange}
+    className="w-full p-2 bg-gray-700 text-white rounded-lg"
+    placeholder="請輸入作業細節 (選填)"
+    rows={3}
+  />
+</div>
         
         {/* 必填欄位提示 */}
         <div className="text-sm text-gray-400">

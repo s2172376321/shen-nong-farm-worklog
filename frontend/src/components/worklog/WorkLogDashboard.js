@@ -4,6 +4,8 @@ import { getTodayHour, checkServerHealth } from '../../utils/api';
 import { Button, Card } from '../ui';
 import WorkLogForm from './WorkLogForm';
 import WorkLogList from './WorkLogList';
+import { getApiStatus } from '../../utils/api';
+
 
 const WorkLogDashboard = () => {
   const [showForm, setShowForm] = useState(false);
@@ -15,25 +17,42 @@ const WorkLogDashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
+  
+  
+  // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
+  const checkServerStatus = useCallback(async () => {
+    try {
+      const status = await getApiStatus();
+      setServerStatus(status);
+      console.log('伺服器狀態檢查結果:', status);
+    } catch (err) {
+      console.error('檢查伺服器狀態失敗:', err);
+      setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
+    }
+  }, []);
+
 
   // 檢查伺服器連線
   useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const status = await checkServerHealth();
-        setServerStatus(status);
-      } catch (err) {
-        console.error('檢查伺服器狀態失敗:', err);
-        setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
-      }
-    };
-
-    checkConnection();
-    const interval = setInterval(checkConnection, 30000); // 每30秒檢查一次
+    // 檢查令牌
+    console.log('Dashboard掛載時 - Token存在:', localStorage.getItem('token') ? '是' : '否');
     
-    return () => clearInterval(interval);
-  }, []);
-
+    // 檢查伺服器狀態
+    checkServerStatus();
+    // 每30秒檢查一次
+    const intervalId = setInterval(checkServerStatus, 30000);
+    
+    // 載入基礎數據
+    loadBaseData();
+    
+    // 載入工作日誌
+    loadWorkLogs();
+    
+    // 清理函數
+    return () => clearInterval(intervalId);
+  }, [checkServerStatus, loadBaseData, loadWorkLogs]);
+  
+  
   // 載入今日工時
   useEffect(() => {
     const loadTodayHour = async () => {

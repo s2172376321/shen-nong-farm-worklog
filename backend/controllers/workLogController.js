@@ -302,32 +302,34 @@ const WorkLogController = {
 
   // 獲取位置的作物列表
   async getLocationCrops(req, res) {
+    const { positionCode } = req.params;
+    
     try {
-      const { positionCode } = req.params;
+      console.log(`獲取位置 ${positionCode} 的作物列表`);
       
-      // 查詢該位置所有種植記錄中的作物
+      // 查詢指定位置曾種植的作物
       const query = `
-        SELECT DISTINCT crop
-        FROM work_logs
-        WHERE position_code = $1 AND crop != ''
+        SELECT DISTINCT crop 
+        FROM work_logs 
+        WHERE position_code = $1 
+          AND work_category_name = '種植' 
         ORDER BY crop
       `;
       
       const result = await db.query(query, [positionCode]);
       
-      // 提取作物名稱列表
-      const crops = result.rows.map(row => row.crop);
+      console.log(`找到 ${result.rows.length} 種作物`);
+      
+      // 抽取作物名稱列表
+      const crops = result.rows.map(row => row.crop).filter(Boolean); // 過濾掉空值
       
       res.json(crops);
     } catch (error) {
       console.error('獲取位置作物列表失敗:', error);
-      res.status(500).json({
-        message: '伺服器錯誤，請稍後再試',
-        error: process.env.NODE_ENV === 'production' ? undefined : error.message
-      });
+      res.status(500).json({ message: '獲取位置作物列表失敗，請稍後再試' });
     }
   },
-
+  
   // 獲取工作日誌統計
   async getWorkLogStats(req, res) {
     try {

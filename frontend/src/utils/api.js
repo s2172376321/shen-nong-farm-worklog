@@ -105,20 +105,11 @@ export const fetchLocationCrops = async (positionCode) => {
   } catch (error) {
     console.error(`獲取位置 ${positionCode} 的作物列表失敗:`, error);
     
-    // 详细记录错误
-    if (error.response) {
-      console.error('服務器響應:', {
-        status: error.response.status,
-        data: error.response.data
-      });
-    } else if (error.request) {
-      console.error('無服務器響應:', error.request);
-    }
-    
-    // 返回空數组，确保UI不会崩溃
+    // 返回空數组
     return [];
   }
-};
+}
+
 
 export const testAuth = async () => {
   try {
@@ -147,21 +138,17 @@ export const getUnreadNoticeCount = async () => {
   return response.data;
 };
 
+// 在攔截器配置前添加
+console.log('Token存在:', localStorage.getItem('token') ? '是' : '否');
 
-// 攔截器：為每個請求添加 Token
+
+// 攔截// 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
-    
-    // 對於文件上傳請求，不設置 Content-Type，讓瀏覽器自動設置
-    if (config.data instanceof FormData) {
-      delete config.headers['Content-Type'];
-    }
-    
-    console.log('發送API請求:', config.url);
     return config;
   },
   error => {
@@ -170,15 +157,58 @@ api.interceptors.request.use(
   }
 );
 
-// 添加響應攔截器
+
+
+// 響應攔截器：統一處理錯誤
 api.interceptors.response.use(
-  response => response,
+  response => {
+    console.log('API響應成功:', response.config.url);
+    return response;
+  },
   error => {
-    if (error.response?.status === 401) {
+    // 檢查是否返回HTML而非JSON
+    if (error.response && 
+        error.response.data && 
+        typeof error.response.data === 'string' && 
+        error.response.data.includes('<!DOCTYPE html>')) {
+      
+      console.error('API返回了HTML而非JSON:', {
+        url: error.config?.url,
+        status: error.response?.status,
+        data: error.response?.data.substring(0, 200) + '...'
+      });
+      
+      // 判斷是否為登入頁面
+      if (error.response.data.includes('login') || error.response.status === 401) {
+        console.warn('返回的HTML可能是登入頁面，用戶認證可能已過期');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+        return Promise.reject(new Error('認證已過期，請重新登入'));
+      }
+      
+      return Promise.reject(new Error('伺服器回應了HTML而非JSON，可能發生了內部錯誤'));
+    }
+    
+    // 原有的錯誤處理邏輯...
+    console.error('API響應錯誤:', {
+      url: error.config?.url,
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      message: error.message
+    });
+    
+    // 處理特定錯誤類型
+    if (error.response && error.response.status === 401) {
+      // 處理未授權錯誤，可能是token過期
+      console.warn('授權已過期或無效，將重定向到登入頁面');
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
+      return Promise.reject(new Error('認證已過期，請重新登入'));
     }
+    
     return Promise.reject(error);
   }
 );
@@ -464,7 +494,9 @@ export const uploadCSV = async (csvFile) => {
 };
 
 export const searchWorkLogs = async (filters) => {
+  console.log('搜尋工作日誌前 - Token存在:', localStorage.getItem('token') ? '是' : '否');
 
+  
 
     // 修正參數名稱錯誤
     const correctedFilters = { ...filters };
@@ -1049,32 +1081,24 @@ export const checkServerHealth = async () => {
 
 export const getApiStatus = async () => {
   try {
-    // 使用現有的健康檢查函數
-    const healthStatus = await checkServerHealth();
-    
-    // 擴展傳回的狀態資訊
+    const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3002/api'}/health-check`, {
+      timeout: 5000
+    });
+    const data = await response.json();
     return {
-      ...healthStatus,
-      cacheStatus: {
-        size: Object.keys(apiCache.data).length,
-        keys: Object.keys(apiCache.data)
-      },
-      throttleStatus: {
-        size: throttleMap.size,
-        keys: Array.from(throttleMap.keys())
-      },
-      timestamp: new Date().toISOString()
+      status: 'online',
+      message: data?.message || '伺服器連線正常',
+      serverTime: data?.serverTime
     };
   } catch (error) {
-    console.error('獲取API狀態失敗:', error);
     return {
-      status: 'error',
-      message: '無法獲取API狀態資訊',
-      error: error.message,
-      timestamp: new Date().toISOString()
+      status: 'offline',
+      message: '無法連線到伺服器',
+      error: error.message
     };
   }
 };
+
 
 export { apiCache, throttle };
 export default api;

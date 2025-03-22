@@ -1,7 +1,8 @@
 // 位置：frontend/src/App.js
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+
 
 // 導入頁面組件
 import LoginPage from './components/auth/LoginPage';
@@ -15,6 +16,11 @@ import GoogleCallback from './components/auth/GoogleCallback';
 import NotificationBadge from './components/common/NotificationBadge'; // 新增未讀通知組件
 
 function App() {
+  useEffect(() => {
+    // 應用初始化時檢查令牌
+    console.log('應用啟動時 - Token存在:', localStorage.getItem('token') ? '是' : '否');
+  }, []);
+
   const { user, isLoading } = useAuth();
 
   // 載入中狀態
