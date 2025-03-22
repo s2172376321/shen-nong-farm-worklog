@@ -164,15 +164,12 @@ const handlePositionChange = async (e) => {
   setFormErrors(prev => ({ ...prev, position: null }));
   
   if (!positionCode) {
-    setFormData(prev => ({ 
-      ...prev, 
-      position_code: '', 
-      position_name: '', 
-      location_code: '' 
-    }));
+    setWorkLog(prev => ({ ...prev, position_code: '', position_name: '', location_code: '' }));
     setAvailableCrops([]);
     return;
   }
+  
+  console.log('選擇位置:', positionCode);
   
   // 從篩選後的位置列表中找到選擇的位置
   const selectedPosition = positions.find(p => p.位置代號 === positionCode);
@@ -188,14 +185,23 @@ const handlePositionChange = async (e) => {
     }));
     
     // 加載該位置的作物列表
+    // 加載該位置的作物列表
     try {
+      console.log('開始載入位置作物列表...');
       const crops = await fetchLocationCrops(positionCode);
+      console.log(`位置 ${positionCode} 的作物列表:`, crops);
       setAvailableCrops(crops);
     } catch (err) {
       console.error('加載作物列表失敗:', err);
       setAvailableCrops([]);
     }
+  } else {
+    console.warn('找不到匹配的位置:', positionCode);
+    setWorkLog(prev => ({ ...prev, position_code: positionCode, position_name: '', location_code: '' }));
+    setAvailableCrops([]);
   }
+};
+
 };
   
 // 處理特定選擇欄位的變更
@@ -446,7 +452,7 @@ const handleSubmit = async (e) => {
         </div>
       )}
       
-      <form onSubmit={handleSubmit} className="space-y-4">
+  <form onSubmit={handleSubmit} className="space-y-4 bg-gray-800 p-4 rounded-lg">
         {/* 區域和位置選擇 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -470,8 +476,8 @@ const handleSubmit = async (e) => {
           <div>
             <label className="block mb-2">位置 <span className="text-red-500">*</span></label>
             <select
-              value={formData.position_code}
-              onChange={handlePositionChange}
+          value={workLog.position_code || ''}
+          onChange={handlePositionChange}
               className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
                 formErrors.position ? 'border border-red-500' : ''
               }`}
@@ -550,7 +556,7 @@ const handleSubmit = async (e) => {
     <label className="block mb-2">開始時間 <span className="text-red-500">*</span></label>
     <Input 
       type="time"
-      name="startTime"
+      name="start_Time"
       value={formData.startTime}
       onChange={handleInputChange}
       min="07:30"
@@ -562,7 +568,7 @@ const handleSubmit = async (e) => {
     <label className="block mb-2">結束時間 <span className="text-red-500">*</span></label>
     <Input 
       type="time"
-      name="endTime"
+      name="end_Time"
       value={formData.endTime}
       onChange={handleInputChange}
       min="07:30"
