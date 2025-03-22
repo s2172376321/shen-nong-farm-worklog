@@ -1,7 +1,7 @@
 // 位置：frontend/src/components/worklog/WorkLogForm.js
 import React, { useState, useEffect } from 'react';
 import { Button, Input, Card } from '../ui';
-import { fetchLocations, fetchWorkCategories, fetchLocationCrops } from '../../utils/api';
+import { fetchLocationsByArea, fetchWorkCategories, fetchLocationCrops } from '../../utils/api';
 
 const WorkLogForm = ({ onSubmitSuccess }) => {
   // 表單狀態
@@ -22,6 +22,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [areas, setAreas] = useState([]);
+  const [allLocationsData, setAllLocationsData] = useState([]);
   const [positions, setPositions] = useState([]);
   const [workCategories, setWorkCategories] = useState([]);
   const [crops, setCrops] = useState([]);
@@ -34,18 +35,25 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     const loadBaseData = async () => {
       setIsLoading(true);
       try {
-        // 讀取位置資料
-        const locationData = await fetchLocations();
+        // 讀取位置資料 - 使用 fetchLocationsByArea 替代 fetchLocations
+        const locationData = await fetchLocationsByArea();
         if (Array.isArray(locationData)) {
-          // 提取唯一的區域名稱
-          const uniqueAreas = [...new Set(locationData.map(item => item.區域名稱))].filter(Boolean);
-          setAreas(uniqueAreas);
+          // 設置區域列表
+          setAreas(locationData.map(area => area.areaName));
+          // 保存完整位置數據供後續使用
+          setAllLocationsData(locationData);
+          console.log(`成功載入 ${locationData.length} 個區域數據`);
+        } else {
+          console.error('位置資料格式不正確', locationData);
         }
         
         // 讀取工作類別
         const categoryData = await fetchWorkCategories();
         if (Array.isArray(categoryData)) {
           setWorkCategories(categoryData);
+          console.log(`成功載入 ${categoryData.length} 個工作類別`);
+        } else {
+          console.error('工作類別資料格式不正確', categoryData);
         }
       } catch (err) {
         console.error('載入基礎數據失敗:', err);
@@ -60,19 +68,26 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   
   // 當區域變更時載入位置
   useEffect(() => {
-    if (!selectedArea) {
+    if (!selectedArea || !allLocationsData.length) {
       setPositions([]);
       return;
     }
     
-    // 使用本地過濾減少API調用
-    const filteredPositions = areas.length > 0 ? 
-      positions.filter(pos => pos.區域名稱 === selectedArea) : [];
+    // 從完整數據中篩選當前區域的位置
+    const areaData = allLocationsData.find(area => area.areaName === selectedArea);
+    if (areaData && areaData.locations) {
+      setPositions(areaData.locations);
+      console.log(`區域 "${selectedArea}" 有 ${areaData.locations.length} 個位置`);
+    } else {
+      setPositions([]);
+      console.warn(`未找到區域 "${selectedArea}" 的位置數據`);
+    }
     
-    setPositions(filteredPositions);
     // 清除已選位置
-    setFormData(prev => ({ ...prev, position_code: '', position_name: '' }));
-  }, [selectedArea, areas]);
+    setFormData(prev => ({ ...prev, position_code: '', position_name: '', crop: '' }));
+    // 清除作物列表
+    setCrops([]);
+  }, [selectedArea, allLocationsData]);
   
   // 當位置變更時載入作物
   useEffect(() => {
@@ -83,9 +98,14 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     
     const loadCrops = async () => {
       try {
+        console.log(`開始載入位置 ${formData.position_code} 的作物列表...`);
         const cropData = await fetchLocationCrops(formData.position_code);
         if (Array.isArray(cropData)) {
           setCrops(cropData);
+          console.log(`位置 ${formData.position_code} 有 ${cropData.length} 種作物`);
+        } else {
+          console.error('作物資料格式不正確', cropData);
+          setCrops([]);
         }
       } catch (err) {
         console.error('載入作物列表失敗:', err);
@@ -99,6 +119,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   // 處理區域選擇
   const handleAreaChange = (e) => {
     const areaName = e.target.value;
+    console.log('選擇區域:', areaName);
     setSelectedArea(areaName);
     setFormErrors(prev => ({ ...prev, area: null }));
   };
@@ -113,15 +134,21 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
       return;
     }
     
+    console.log('選擇位置:', positionCode);
+    
     // 從位置列表中找到選擇的位置
-    const selectedPosition = positions.find(p => p.位置代號 === positionCode);
+    const selectedPosition = positions.find(p => p.locationCode === positionCode);
     
     if (selectedPosition) {
+      console.log('找到位置資料:', selectedPosition);
       setFormData(prev => ({
         ...prev,
         position_code: positionCode,
-        position_name: selectedPosition.位置名稱 || ''
+        position_name: selectedPosition.locationName || ''
       }));
+    } else {
+      console.warn('找不到匹配的位置:', positionCode);
+      setFormData(prev => ({ ...prev, position_code: positionCode, position_name: '' }));
     }
   };
   
@@ -359,8 +386,8 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
             >
               <option value="">選擇位置</option>
               {positions.map(pos => (
-                <option key={pos.位置代號} value={pos.位置代號}>
-                  {pos.位置名稱}
+                <option key={pos.locationCode} value={pos.locationCode}>
+                  {pos.locationName}
                 </option>
               ))}
             </select>
@@ -398,7 +425,7 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
               className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
                 formErrors.crop ? 'border border-red-500' : ''
               }`}
-              disabled={isLoading || crops.length === 0}
+              disabled={isLoading || (!formData.position_code || crops.length === 0)}
             >
               <option value="">選擇作物</option>
               {crops.map(crop => (
