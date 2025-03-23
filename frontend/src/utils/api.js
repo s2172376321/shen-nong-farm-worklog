@@ -1,15 +1,8 @@
 // 位置：frontend/src/utils/api.js
-// frontend/src/utils/api.js 的開頭部分修改
-
 import axios from 'axios';
 
-console.log('API 模組初始化', {
-  baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
-  env: process.env.NODE_ENV
-});
-
 // 快取存儲
-export const apiCache = {
+const apiCache = {
   data: {},
   set: function(key, value, ttl = 300000) { // 預設快取5分鐘 (300000毫秒)
     this.data[key] = {
@@ -38,6 +31,7 @@ export const apiCache = {
 // 創建 axios 實例
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
+  withCredentials: true,
   timeout: 15000  // 增加超時時間到15秒
 });
 
@@ -45,13 +39,13 @@ const api = axios.create({
 const throttleMap = new Map();
 
 // 節流函數
-export const throttle = (key, fn, delay = 3000) => {
+const throttle = (key, fn, delay = 3000) => {
   const now = Date.now();
   
   if (throttleMap.has(key)) {
     const { timestamp } = throttleMap.get(key);
     if (now - timestamp < delay) {
-      console.log(`[API] 請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
+      console.log(`請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
       return Promise.reject(new Error('Request throttled'));
     }
   }
@@ -67,15 +61,11 @@ export const throttle = (key, fn, delay = 3000) => {
 };
 
 
-
-
-
 // 標記公告為已讀
 export const markNoticeAsRead = async (noticeId) => {
   const response = await api.post(`/notices/${noticeId}/read`);
   return response.data;
 };
-
 
 
 // 修改 fetchLocationCrops 函數，增強錯誤處理
@@ -109,11 +99,20 @@ export const fetchLocationCrops = async (positionCode) => {
   } catch (error) {
     console.error(`獲取位置 ${positionCode} 的作物列表失敗:`, error);
     
-    // 返回空數组
+    // 详细记录错误
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
+    
+    // 返回空數组，确保UI不会崩溃
     return [];
   }
-}
-
+};
 
 export const testAuth = async () => {
   try {
@@ -135,18 +134,14 @@ export const testAuth = async () => {
 };
 
 
-
 // 獲取未讀公告數量
 export const getUnreadNoticeCount = async () => {
   const response = await api.get('/notices/unread-count');
   return response.data;
 };
 
-// 在攔截器配置前添加
-console.log('Token存在:', localStorage.getItem('token') ? '是' : '否');
 
-
-// 攔截// 攔截器：為每個請求添加 Token
+// 攔截器：為每個請求添加 Token
 api.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token');
@@ -159,28 +154,25 @@ api.interceptors.request.use(
       delete config.headers['Content-Type'];
     }
     
-    console.log(`[API] 發送請求: ${config.method?.toUpperCase()} ${config.url}`);
+    console.log('發送API請求:', config.url);
     return config;
   },
   error => {
-    console.error('[API] 請求配置錯誤:', error);
+    console.error('API請求錯誤:', error);
     return Promise.reject(error);
   }
 );
 
-
-
 // 響應攔截器：統一處理錯誤
 api.interceptors.response.use(
   response => {
-    console.log(`[API] 請求成功: ${response.config.url}`);
+    console.log('API響應成功:', response.config.url);
     return response;
   },
   error => {
     // 詳細記錄錯誤信息
-    console.error('[API] 請求失敗:', {
+    console.error('API響應錯誤:', {
       url: error.config?.url,
-      method: error.config?.method,
       status: error.response?.status,
       statusText: error.response?.statusText,
       data: error.response?.data,
@@ -190,14 +182,10 @@ api.interceptors.response.use(
     // 處理特定錯誤類型
     if (error.response && error.response.status === 401) {
       // 處理未授權錯誤，可能是token過期
-      console.warn('[API] 授權已過期或無效，將重定向到登入頁面');
+      console.warn('授權已過期或無效，將重定向到登入頁面');
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      
-      // 避免循環重定向
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
+      window.location.href = '/login';
       return Promise.reject(new Error('認證已過期，請重新登入'));
     }
     
@@ -206,9 +194,8 @@ api.interceptors.response.use(
 );
 
 
-
 // ----- WebSocket API -----
-// WebSocket 连接类
+// WebSocket 連接類
 export class WebSocketService {
   constructor() {
     this.socket = null;
@@ -219,7 +206,7 @@ export class WebSocketService {
     this.reconnectTimeout = null;
   }
 
-  // 连接到 WebSocket 伺服器
+  // 連接到 WebSocket 伺服器
   connect() {
     if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
       console.log('WebSocket 已連接或正在連接中');
@@ -229,11 +216,7 @@ export class WebSocketService {
     try {
       console.log('嘗試連接 WebSocket...');
       const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3002/ws';
-      const token = localStorage.getItem('token');
-      
-      // 修改：將 token 添加到 WebSocket URL 的查詢參數中
-      const wsUrlWithToken = `${wsUrl}?token=${token}`;
-      this.socket = new WebSocket(wsUrlWithToken);
+      this.socket = new WebSocket(wsUrl);
 
       this.socket.onopen = this.onOpen.bind(this);
       this.socket.onmessage = this.onMessage.bind(this);
@@ -245,63 +228,59 @@ export class WebSocketService {
     }
   }
 
-  
-  // 连接成功回调
+  // 連接成功回調
   onOpen() {
-    console.log('WebSocket 连接成功');
+    console.log('WebSocket 連接成功');
     this.isConnected = true;
     this.reconnectAttempts = 0;
     this.emit('connected');
-    
-    // 发送初始ping消息以测试连接
-    this.send('ping', { timestamp: Date.now() });
   }
 
-  // 收到消息回调
+  // 收到消息回調
   onMessage(event) {
     try {
       const data = JSON.parse(event.data);
       console.log('收到 WebSocket 消息:', data);
       this.emit(data.type, data.data);
     } catch (error) {
-      console.error('解析 WebSocket 消息错误:', error);
+      console.error('解析 WebSocket 消息錯誤:', error);
     }
   }
 
-  // 错误回调
+  // 錯誤回調
   onError(error) {
-    console.error('WebSocket 错误:', error);
+    console.error('WebSocket 錯誤:', error);
     this.emit('error', error);
   }
 
-  // 连接关闭回调
+  // 連接關閉回調
   onClose(event) {
-    console.log('WebSocket 连接关闭:', event);
+    console.log('WebSocket 連接關閉:', event);
     this.isConnected = false;
     this.emit('disconnected');
     this.attemptReconnect();
   }
 
-  // 尝试重新连接
+  // 嘗試重新連接
   attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('重连次数已达上限，停止重连');
+      console.log('重連次數已達上限，停止重連');
       return;
     }
 
     this.reconnectAttempts++;
-    console.log(`尝试重连 (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    console.log(`嘗試重連 (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
     
     clearTimeout(this.reconnectTimeout);
     this.reconnectTimeout = setTimeout(() => {
       this.connect();
-    }, 3000); // 3秒后重连
+    }, 3000); // 3秒後重連
   }
 
-  // 发送消息
+  // 發送消息
   send(type, data) {
     if (!this.isConnected) {
-      console.warn('WebSocket 未连接，无法发送消息');
+      console.warn('WebSocket 未連接，無法發送消息');
       return false;
     }
 
@@ -310,12 +289,12 @@ export class WebSocketService {
       this.socket.send(message);
       return true;
     } catch (error) {
-      console.error('发送 WebSocket 消息错误:', error);
+      console.error('發送 WebSocket 消息錯誤:', error);
       return false;
     }
   }
 
-  // 关闭连接
+  // 關閉連接
   disconnect() {
     if (this.socket) {
       this.socket.close();
@@ -325,7 +304,7 @@ export class WebSocketService {
     clearTimeout(this.reconnectTimeout);
   }
 
-  // 注册事件监听
+  // 註冊事件監聽
   on(event, callback) {
     if (!this.listeners[event]) {
       this.listeners[event] = [];
@@ -333,14 +312,14 @@ export class WebSocketService {
     this.listeners[event].push(callback);
   }
 
-  // 发送事件通知
+  // 發送事件通知
   emit(event, data) {
     if (this.listeners[event]) {
       this.listeners[event].forEach(callback => {
         try {
           callback(data);
         } catch (error) {
-          console.error(`执行 ${event} 监听器错误:`, error);
+          console.error(`執行 ${event} 監聽器錯誤:`, error);
         }
       });
     }
@@ -351,65 +330,50 @@ export class WebSocketService {
 export const websocket = new WebSocketService();
 
 // ----- 認證相關 API -----
-// 一般登入
 export const loginUser = async (username, password) => {
   try {
-    console.log('[API] 嘗試登入用戶:', username);
+    console.log('嘗試登入用戶:', username);
     const response = await api.post('/auth/login', { username, password });
-    console.log('[API] 登入成功:', response.data);
+    console.log('登入成功:', response.data);
+    
+    // 登入成功後連接 WebSocket
+    websocket.connect();
+    
     return response.data;
   } catch (error) {
-    console.error('[API] 登入失敗:', error);
+    console.error('登入失敗:', error);
     throw error;
   }
 };
 
 export const googleLogin = async (credential) => {
   try {
-    console.log('[API] 調用 googleLogin API 函數', { 
-      credentialLength: credential?.length,
-      credentialSubstr: credential ? `${credential.substring(0, 10)}...` : 'missing'
-    });
+    console.log('調用 API: 發送Google憑證，長度:', credential?.length);
     
-    if (!credential) {
-      console.error('[API] googleLogin: 缺少必要的 Google 憑證');
-      throw new Error('缺少 Google 憑證');
-    }
+    // 使用'token'參數名稱，與後端對應
+    const response = await api.post('/auth/google-login', { token: credential });
     
-    // 嘗試繞過 axios 實例，直接使用瀏覽器的 fetch API 
-    console.log('[API] 使用 fetch 發送 Google 登入請求');
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3002/api';
-    const response = await fetch(`${baseUrl}/auth/google-login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ token: credential })
-    });
+    console.log('Google登入API成功');
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error('[API] Google 登入失敗', {
-        status: response.status,
-        data: errorData
-      });
-      throw new Error(errorData.message || '伺服器拒絕 Google 登入請求');
-    }
+    // 連接WebSocket
+    websocket.connect();
     
-    const data = await response.json();
-    console.log('[API] Google 登入成功', {
-      hasToken: !!data.token,
-      hasUser: !!data.user
-    });
-    
-    if (!data.token || !data.user) {
-      console.error('[API] 伺服器響應缺少必要資訊', data);
-      throw new Error('伺服器響應格式不正確');
-    }
-    
-    return data;
+    return response.data;
   } catch (error) {
-    console.error('[API] Google 登入失敗:', error);
+    console.error('Google登入API失敗:', error);
+    
+    // 詳細日誌
+    if (error.response) {
+      console.error('伺服器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到伺服器回應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
+    }
+    
     throw error;
   }
 };
@@ -439,51 +403,102 @@ export const logout = () => {
   apiCache.clear();
 };
 
-
 // ----- 工作日誌 API -----
 export const createWorkLog = async (workLogData) => {
   try {
-    console.log('提交工作日誌數據:', workLogData);
+    console.log('準備提交工作日誌數據:', workLogData);
+
+    // 檢查必填欄位
+    if (!workLogData.startTime && !workLogData.start_time) {
+      throw new Error('缺少開始時間');
+    }
+    if (!workLogData.endTime && !workLogData.end_time) {
+      throw new Error('缺少結束時間');
+    }
     
-    // 確保通過一致的鍵名傳遞數據
-    const standardizedData = {
-      // 使用工作日誌的標準欄位名稱
-      position_code: workLogData.position_code || '',
-      position_name: workLogData.position_name || '',
-      work_category_code: workLogData.work_category_code || '',
-      work_category_name: workLogData.work_category_name || '',
-      start_time: workLogData.start_time || workLogData.startTime || '',
-      end_time: workLogData.end_time || workLogData.endTime || '',
-      details: workLogData.details || '',
-      crop: workLogData.crop || '',
-      harvest_quantity: workLogData.harvest_quantity || workLogData.harvestQuantity || 0,
-      product_id: workLogData.product_id || '',
-      product_name: workLogData.product_name || '',
-      product_quantity: workLogData.product_quantity || 0
+    // 確保至少有位置或位置名稱
+    if (!workLogData.location && !workLogData.position_name) {
+      throw new Error('缺少位置資訊');
+    }
+    
+    // 確保至少有作物或工作類別名稱
+    if (!workLogData.crop && !workLogData.work_category_name) {
+      throw new Error('缺少作物或工作類別資訊');
+    }
+
+    // 直接使用原始數據並添加適當的默認值
+    // 不進行欄位重命名，避免在轉換過程中丟失數據
+    const payload = {
+      ...workLogData,
+      // 確保必要欄位總是有值
+      location: workLogData.location || workLogData.position_name || '',
+      crop: workLogData.crop || workLogData.work_category_name || '',
+      start_time: workLogData.startTime || workLogData.start_time || '',
+      end_time: workLogData.endTime || workLogData.end_time || '',
+      harvest_quantity: workLogData.harvestQuantity || workLogData.harvest_quantity || 0,
+      details: workLogData.details || ''
     };
     
-    const response = await api.post('/work-logs', standardizedData);
+    // 顯示完整的發送數據，方便調試
+    console.log('最終發送到後端的數據:', JSON.stringify(payload, null, 2));
+    
+    // 增加超時時間處理大請求
+    const response = await api.post('/work-logs', payload, {
+      timeout: 10000 // 10秒超時
+    });
+    
+    console.log('工作日誌提交成功, 響應:', response.data);
+    
+    // 創建日誌後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear('todayHour');
+    
     return response.data;
   } catch (error) {
     console.error('提交工作日誌錯誤:', error);
     
-    // 提供有用的錯誤信息
-    let errorMessage = '提交工作日誌失敗';
+    // 檢查錯誤類型並提供更好的錯誤訊息
+    let userMessage = '提交工作日誌失敗';
     
     if (error.response) {
-      errorMessage = error.response.data?.message || errorMessage;
+      // 服務器回應了錯誤
+      console.error('服務器錯誤數據:', error.response.data);
+      
+      userMessage = error.response.data?.message || userMessage;
+      
+      if (error.response.status === 400) {
+        userMessage = `提交數據格式有誤: ${error.response.data?.details || userMessage}`;
+      } else if (error.response.status === 401) {
+        userMessage = '您的登入已過期，請重新登入';
+      } else if (error.response.status === 500) {
+        userMessage = '伺服器內部錯誤，請稍後再試';
+      }
+    } else if (error.request) {
+      // 請求已發送但沒有回應
+      userMessage = '無法連接到伺服器，請檢查網路連接';
+    } else {
+      // 請求設置時出現問題
+      userMessage = error.message || userMessage;
     }
     
-    throw new Error(errorMessage);
+    // 包裝錯誤信息
+    const enhancedError = {
+      ...error,
+      userMessage,
+      originalMessage: error.message
+    };
+    
+    throw enhancedError;
   }
 };
-
 
 
 // CSV 上傳工作日誌
 export const uploadCSV = async (csvFile) => {
   try {
-    // 創建 FormData 物件
+    console.log('開始上傳 CSV 檔案:', csvFile.name);
+    
     const formData = new FormData();
     formData.append('csvFile', csvFile);
     
@@ -493,34 +508,34 @@ export const uploadCSV = async (csvFile) => {
       }
     });
     
+    // 上傳後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    apiCache.clear('todayHour');
+    
+    console.log('CSV 上傳成功:', response.data);
     return response.data;
   } catch (error) {
-    console.error('上傳 CSV 工作日誌失敗:', error);
+    console.error('CSV 上傳失敗:', error);
+    
+    // 詳細錯誤日誌
+    if (error.response) {
+      console.error('伺服器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到伺服器回應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
+    }
+    
     throw error;
   }
 };
 
+// 優化後的 searchWorkLogs 函數
 export const searchWorkLogs = async (filters) => {
-  console.log('搜尋工作日誌前 - Token存在:', localStorage.getItem('token') ? '是' : '否');
-
-  
-
-    // 修正參數名稱錯誤
-    const correctedFilters = { ...filters };
-  
-    // 檢查並修正日期參數名稱
-    if ('_ndDate' in correctedFilters) {
-      correctedFilters.endDate = correctedFilters._ndDate;
-      delete correctedFilters._ndDate;
-      console.log('已修正參數名稱: _ndDate -> endDate');
-    }
-    
-    if ('_tartDate' in correctedFilters) {
-      correctedFilters.startDate = correctedFilters._tartDate;
-      delete correctedFilters._tartDate;
-      console.log('已修正參數名稱: _tartDate -> startDate');
-    }
- 
   // 生成快取鍵
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
@@ -556,13 +571,6 @@ export const searchWorkLogs = async (filters) => {
         });
         
         console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
-        
-        // 檢查響應類型和內容
-        if (!response || !response.data) {
-          console.warn('API 響應無效或為空');
-          timeoutAttempts++;
-          continue;
-        }
         
         // 標準化日期和時間格式
         if (Array.isArray(response.data)) {
@@ -620,9 +628,6 @@ export const searchWorkLogs = async (filters) => {
     if (lastError?.response?.status === 401) {
       console.warn('身份驗證已過期，需要重新登入');
       // 可以在這裡添加重新導向到登入頁面的邏輯
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
       return [];
     }
     
@@ -634,43 +639,83 @@ export const searchWorkLogs = async (filters) => {
   }
 };
 
-
-
-    
-// 審核工作日誌
-// 工作日誌審核函數
 export const reviewWorkLog = async (workLogId, status) => {
-  try {
-    const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
-    return response.data;
-  } catch (error) {
-    console.error('審核工作日誌失敗:', error);
-    throw error;
-  }
+  const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+  
+  // 審核後清除相關快取
+  apiCache.clear('workLogs');
+  apiCache.clear('workStats');
+  
+  return response.data;
 };
-
 
 // 修改後的 getTodayHour 函數，增加重試機制並優化錯誤處理
 export const getTodayHour = async () => {
-  try {
-    const response = await api.get('/work-logs/today-hour');
-    
-    // 確保返回數據格式一致
-    return {
-      total_hours: response.data.total_hours || '0.00',
-      remaining_hours: response.data.remaining_hours || '8.00',
-      is_complete: !!response.data.is_complete
-    };
-  } catch (error) {
-    console.error('獲取今日工時失敗:', error);
-    
-    // 返回默認值
-    return {
-      total_hours: '0.00',
-      remaining_hours: '8.00',
-      is_complete: false
-    };
+  // 檢查快取
+  const cachedData = apiCache.get('todayHour');
+  if (cachedData) {
+    console.log('使用快取的今日工時數據');
+    return cachedData;
   }
+  
+  let retryCount = 0;
+  const maxRetries = 3;
+  
+  while (retryCount <= maxRetries) {
+    try {
+      console.log(`嘗試獲取今日工時 (${retryCount}/${maxRetries})`);
+      
+      // 使用增加的超時時間
+      const response = await api.get('/work-logs/today-hour', {
+        timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
+      });
+      
+      const data = response.data;
+      
+      // 檢查數據格式
+      if (!data || typeof data.total_hours === 'undefined') {
+        throw new Error('回應數據格式不正確');
+      }
+      
+      // 確保數據格式一致
+      const formattedData = {
+        total_hours: parseFloat(data.total_hours || 0).toFixed(2),
+        remaining_hours: parseFloat(data.remaining_hours || 8).toFixed(2),
+        is_complete: Boolean(data.is_complete)
+      };
+      
+      // 快取時間
+      apiCache.set('todayHour', formattedData, 180000); // 快取3分鐘
+      
+      console.log('成功獲取今日工時:', formattedData);
+      return formattedData;
+    } catch (error) {
+      retryCount++;
+      console.error(`獲取今日工時失敗 (${retryCount}/${maxRetries}):`, error.message);
+      
+      // 重試邏輯
+      if (retryCount <= maxRetries) {
+        const delay = 2000 * retryCount; // 隨著重試次數增加延遲
+        console.log(`等待 ${delay}ms 後重試...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        // 所有重試都失敗，返回默認值
+        console.warn('多次重試後仍無法獲取今日工時，返回默認值');
+        return {
+          total_hours: "0.00",
+          remaining_hours: "8.00",
+          is_complete: false
+        };
+      }
+    }
+  }
+  
+  // 防止異常情況，確保返回默認值
+  return {
+    total_hours: "0.00",
+    remaining_hours: "8.00",
+    is_complete: false
+  };
 };
 
 // ----- 公告 API -----
@@ -690,26 +735,7 @@ export const fetchNotices = async () => {
 };
 
 export const createNotice = async (noticeData) => {
-  // 增加錯誤檢查和日誌
-  console.log('正在創建公告，數據:', noticeData);
-  
-  if (!noticeData) {
-    console.error('公告數據為空');
-    throw new Error('無法創建公告：數據為空');
-  }
-  
-  // 檢查必填字段
-  if (!noticeData.title || !noticeData.content) {
-    console.error('公告數據缺少必填字段:', noticeData);
-    throw new Error('公告需要標題和內容');
-  }
-  
-  // 明確指定 Content-Type 標頭
-  const response = await api.post('/notices', noticeData, {
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  });
+  const response = await api.post('/notices', noticeData);
   
   // 清除公告快取
   apiCache.clear('notices');
@@ -985,19 +1011,14 @@ export const fetchLocationsByArea = async () => {
 };
 
 // 匯出工作日誌
-export const exportWorkLogs = async (filters) => {
-  try {
-    // 構建查詢參數
-    const queryString = new URLSearchParams(filters).toString();
-    
-    // 使用瀏覽器直接下載檔案
-    window.location.href = `${api.defaults.baseURL}/work-logs/export?${queryString}`;
-    
-    return true;
-  } catch (error) {
-    console.error('匯出工作日誌失敗:', error);
-    throw error;
-  }
+export const exportWorkLogs = async (filters, format = 'csv') => {
+  const queryParams = new URLSearchParams({
+    ...filters,
+    format
+  }).toString();
+  
+  // 使用 window.open 直接下載檔案
+  window.open(`${api.defaults.baseURL}/work-logs/export?${queryParams}`);
 };
 
 // 獲取工作統計資訊
@@ -1088,23 +1109,32 @@ export const checkServerHealth = async () => {
 
 export const getApiStatus = async () => {
   try {
-    const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3002/api'}/health-check`, {
-      timeout: 5000
-    });
-    const data = await response.json();
+    // 使用現有的健康檢查函數
+    const healthStatus = await checkServerHealth();
+    
+    // 擴展傳回的狀態資訊
     return {
-      status: 'online',
-      message: data?.message || '伺服器連線正常',
-      serverTime: data?.serverTime
+      ...healthStatus,
+      cacheStatus: {
+        size: Object.keys(apiCache.data).length,
+        keys: Object.keys(apiCache.data)
+      },
+      throttleStatus: {
+        size: throttleMap.size,
+        keys: Array.from(throttleMap.keys())
+      },
+      timestamp: new Date().toISOString()
     };
   } catch (error) {
+    console.error('獲取API狀態失敗:', error);
     return {
-      status: 'offline',
-      message: '無法連線到伺服器',
-      error: error.message
+      status: 'error',
+      message: '無法獲取API狀態資訊',
+      error: error.message,
+      timestamp: new Date().toISOString()
     };
   }
 };
 
-
+export { apiCache, throttle };
 export default api;

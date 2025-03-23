@@ -198,35 +198,11 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   // 處理產品選擇
   const handleProductSelect = (product) => {
     const productName = `${product.商品編號} - ${product.規格 || ''} (${product.單位 || ''})`;
-    
-    // 更新產品選擇
-    setWorkLog(prev => {
-      // 構建新的狀態
-      const newState = {
-        ...prev,
-        product_id: product.商品編號,
-        product_name: productName
-      };
-      
-      // 如果是種植工作，則自動設置作物名稱為種子/種苗的名稱
-      if (prev.work_category_name === '種植' && product.規格) {
-        // 從規格中提取作物名稱 (例如："A菜-250g" -> "A菜")
-        let cropName = product.規格;
-        
-        // 嘗試處理常見的格式，移除重量或包裝信息
-        if (cropName.includes('-')) {
-          cropName = cropName.split('-')[0].trim();
-        } else if (cropName.includes(' ')) {
-          cropName = cropName.split(' ')[0].trim();
-        }
-        
-        // 設置作物名稱
-        newState.crop = cropName;
-      }
-      
-      return newState;
-    });
-    
+    setWorkLog(prev => ({
+      ...prev,
+      product_id: product.商品編號,
+      product_name: productName
+    }));
     setProductSearchTerm(productName);
     setShowProductDropdown(false);
     setFormErrors(prev => ({ ...prev, product: null }));
@@ -476,59 +452,48 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     }));
   };
 
-// 處理位置選擇
-const handlePositionChange = async (e) => {
-  const positionCode = e.target.value;
-  setFormErrors(prev => ({ ...prev, position: null, crop: null }));
-  
-  if (!positionCode) {
-    setWorkLog(prev => ({ ...prev, position_code: '', position_name: '', location_code: '', crop: '' }));
-    setAvailableCrops([]);
-    return;
-  }
-  
-  console.log('選擇位置:', positionCode);
-  
-  // 從篩選後的位置列表中找到選擇的位置
-  const selectedPosition = positions.find(p => p.位置代號 === positionCode);
-  
-  if (selectedPosition) {
-    // 更新位置相關訊息，清除作物選擇
-    setWorkLog(prev => ({
-      ...prev,
-      position_code: positionCode,
-      position_name: selectedPosition.位置名稱 || '',
-      location_code: selectedPosition.區域代號 || '',
-      crop: '' // 清除作物選擇
-    }));
+  // 處理位置選擇
+  const handlePositionChange = async (e) => {
+    const positionCode = e.target.value;
+    setFormErrors(prev => ({ ...prev, position: null }));
     
-    // 加載該位置的作物列表
-    try {
-      console.log('開始載入位置作物列表...');
-      const crops = await fetchLocationCrops(positionCode);
-      console.log(`位置 ${positionCode} 的作物列表:`, crops);
+    if (!positionCode) {
+      setWorkLog(prev => ({ ...prev, position_code: '', position_name: '', location_code: '' }));
+      setAvailableCrops([]);
+      return;
+    }
+    
+    console.log('選擇位置:', positionCode);
+    
+    // 從篩選後的位置列表中找到選擇的位置
+    const selectedPosition = positions.find(p => p.位置代號 === positionCode);
+    
+    if (selectedPosition) {
+      setWorkLog(prev => ({
+        ...prev,
+        position_code: positionCode,
+        position_name: selectedPosition.位置名稱 || '',
+        location_code: selectedPosition.區域代號 || '',
+        // 清除作物選擇
+        crop: ''
+      }));
       
-      if (Array.isArray(crops)) {
+      // 加載該位置的作物列表
+      try {
+        console.log('開始載入位置作物列表...');
+        const crops = await fetchLocationCrops(positionCode);
+        console.log(`位置 ${positionCode} 的作物列表:`, crops);
         setAvailableCrops(crops);
-        // 更新驗證錯誤 - 如果沒有作物，清除作物相關錯誤
-        if (crops.length === 0) {
-          setFormErrors(prev => ({ ...prev, crop: null }));
-        }
-      } else {
-        console.warn('作物列表格式不正確:', crops);
+      } catch (err) {
+        console.error('加載作物列表失敗:', err);
         setAvailableCrops([]);
       }
-    } catch (err) {
-      console.error('加載作物列表失敗:', err);
+    } else {
+      console.warn('找不到匹配的位置:', positionCode);
+      setWorkLog(prev => ({ ...prev, position_code: positionCode, position_name: '', location_code: '' }));
       setAvailableCrops([]);
     }
-  } else {
-    console.warn('找不到匹配的位置:', positionCode);
-    setWorkLog(prev => ({ ...prev, position_code: positionCode, position_name: '', location_code: '', crop: '' }));
-    setAvailableCrops([]);
-  }
-};
-
+  };
   
   // 處理工作類別選擇
   const handleWorkCategoryChange = (e) => {
@@ -804,10 +769,10 @@ const validateForm = () => {
     errors.work_category = '請選擇工作類別';
   }
 
-// 作物驗證 - 只有在有可用作物時才檢查必填
-if (availableCrops.length > 0 && !workLog.crop) {
-  errors.crop = '請選擇作物名稱';
-}
+  // 作物驗證
+  if (!workLog.crop) {
+    errors.crop = '請選擇或輸入作物名稱';
+  }
   
   // 時間欄位驗證
   const timeValidation = validateTimeSelection(workLog.startTime, workLog.endTime);
@@ -849,6 +814,16 @@ const handleSubmit = async (e) => {
     return;
   }
   
+  // 驗證認證狀態
+  const token = localStorage.getItem('token');
+  if (!token) {
+    alert('您的登入狀態已失效，請重新登入');
+    logout(); // 導向登入頁面
+    return;
+  }
+  
+  console.log('正在提交工作日誌，認證令牌存在:', !!token);
+  
   // 表單驗證
   if (!validateForm()) {
     // 滾動到第一個錯誤欄位
@@ -865,7 +840,6 @@ const handleSubmit = async (e) => {
     if (isLoading) return;
     setIsLoading(true);
     
-
     // 確保提交數據包含所有必要欄位
     const submitData = {
       location_code: workLog.location_code || '',
@@ -873,20 +847,17 @@ const handleSubmit = async (e) => {
       position_name: workLog.position_name || '',
       work_category_code: workLog.work_category_code || '',
       work_category_name: workLog.work_category_name || '',
-      startTime: workLog.startTime || '',
-      endTime: workLog.endTime || '',
+      startTime: workLog.startTime || '',  // 保持與後端一致的字段名
+      endTime: workLog.endTime || '',      // 保持與後端一致的字段名
       details: workLog.details || '',
       harvestQuantity: workLog.harvestQuantity || 0,
       product_id: workLog.product_id || '',
       product_name: workLog.product_name || '',
       product_quantity: workLog.product_quantity || 0,
       crop: workLog.crop || '',
-      date: selectedDate
-    };
-  
-    // 增加日誌以便調試
-    console.log('準備提交的工作日誌數據:', JSON.stringify(submitData, null, 2));
-    console.log('認證狀態:', !!localStorage.getItem('token'));
+      date: selectedDate  // 明確添加日期字段
+    };    
+    console.log('提交工作日誌數據:', JSON.stringify(submitData, null, 2));
     
     const response = await submitWorkLog(submitData);
     console.log('工作日誌提交成功:', response);
@@ -928,7 +899,8 @@ const handleSubmit = async (e) => {
       work_category_code: workLog.work_category_code,
       work_category_name: workLog.work_category_name,
       crop: workLog.crop, // 保留作物選擇
-      startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
+      // 如果結束時間是12:00，下一次開始時間設為13:00（午休時間結束）
+      startTime: workLog.endTime === '12:00' ? '13:00' : workLog.endTime,
       endTime: '',
       details: '',
       harvestQuantity: 0,
@@ -938,7 +910,7 @@ const handleSubmit = async (e) => {
     };
     
     setWorkLog(resetForm);
-    setFormErrors({});
+        setFormErrors({});
     setIsLoading(false);
     
     // 顯示成功訊息
@@ -954,7 +926,12 @@ const handleSubmit = async (e) => {
       userMessage: err.userMessage,
       status: err.response?.status,
       statusText: err.response?.statusText,
-      data: err.response?.data
+      data: err.response?.data,
+      config: {
+        url: err.config?.url,
+        method: err.config?.method,
+        headers: err.config?.headers ? '存在' : '不存在'
+      }
     });
     
     // 處理特殊錯誤情況
@@ -1206,43 +1183,38 @@ return (
 
 
             <div>
-  <label className="block mb-2">
-    作物 {availableCrops.length > 0 && <span className="text-red-500">*</span>}
-  </label>
-  {availableCrops.length > 0 ? (
-    // 有作物列表時顯示下拉選擇
-    <select
-      value={workLog.crop}
-      onChange={handleCropChange}  
-      className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-        formErrors.crop ? 'border border-red-500' : ''
-      }`}
-      disabled={!workLog.position_code}
-    >
-      <option value="">選擇作物</option>
-      {availableCrops.map(crop => (
-        <option key={crop} value={crop}>{crop}</option>
-      ))}
-    </select>
-  ) : (
-    // 沒有作物列表時顯示文本輸入
-    workLog.position_code && (
-      <Input
-        type="text"
-        value={workLog.crop}
-        onChange={(e) => setWorkLog(prev => ({ ...prev, crop: e.target.value }))}
-        placeholder="請輸入作物名稱 (選填)"
-        className={formErrors.crop ? 'border border-red-500' : ''}
-      />
-    )
-  )}
-  {renderFieldError('crop')}
-  {workLog.position_code && availableCrops.length === 0 && (
-    <p className="text-gray-400 text-xs mt-1">
-      此位置尚未記錄種植作物，可選填作物名稱或先記錄種植工作
-    </p>
-  )}
-</div>
+              <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
+              <select
+                value={workLog.crop}
+                onChange={handleCropChange}  
+                className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+                  formErrors.crop ? 'border border-red-500' : ''
+                }`}
+                disabled={!workLog.position_code || availableCrops.length === 0}
+              >
+                <option value="">選擇作物</option>
+                {availableCrops.map(crop => (
+                  <option key={crop} value={crop}>{crop}</option>
+                ))}
+              </select>
+              {renderFieldError('crop')}
+              {workLog.position_code && availableCrops.length === 0 && (
+                <p className="text-yellow-500 text-xs mt-1">
+                  此位置沒有記錄種植作物，請手動輸入作物名稱或先記錄種植工作
+                </p>
+              )}
+              {/* 當沒有可用作物時顯示手動輸入欄位 */}
+              {workLog.position_code && availableCrops.length === 0 && (
+                <Input
+                  type="text"
+                  value={workLog.crop}
+                  onChange={(e) => setWorkLog(prev => ({ ...prev, crop: e.target.value }))}
+                  placeholder="請手動輸入作物名稱"
+                  className="mt-2"
+                />
+              )}
+            </div>
+
             {/* 工作類別選擇 */}
             <div>
               <label className="block mb-2">工作類別 <span className="text-red-500">*</span></label>
@@ -1372,8 +1344,8 @@ return (
               </div>
             )}
             
-{/* 採收重量（條件性顯示） */}
-{showHarvestQuantity && (
+            {/* 採收重量（條件性顯示） */}
+            {showHarvestQuantity && (
               <div>
                 <label className="block mb-2">採收重量 (台斤) <span className="text-red-500">*</span></label>
                 <Input 
@@ -1453,6 +1425,8 @@ return (
     </div>
   </div>
 );
-};
+}; // WorkLogForm 函數的結尾
 
-export default WorkLogForm;
+
+
+export default WorkLogForm; // 導出組件
