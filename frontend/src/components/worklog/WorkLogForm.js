@@ -682,234 +682,151 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
     setCsvSuccess(null);
   };
 
-  // 處理 CSV 文件上傳
-  const handleCsvUpload = async (e) => {
-    e.preventDefault();
+// 處理 CSV 文件上傳
+const handleCsvUpload = async (e) => {
+  e.preventDefault();
+  
+  if (!csvFile) {
+    setCsvError('請選擇 CSV 文件');
+    return;
+  }
+  
+  try {
+    setIsLoading(true); // 開始加載
+    setCsvError(null);
+    const result = await uploadCSV(csvFile);
+    setCsvSuccess(result.message || '成功上傳 CSV 文件');
+    setCsvFile(null);
     
-    if (!csvFile) {
-      setCsvError('請選擇 CSV 文件');
-      return;
-    }
+    // 上傳成功後重新載入今日工作日誌
+    await loadDateWorkLogs(selectedDate);
     
-    try {
-      setIsLoading(true); // 開始加載
-      setCsvError(null);
-      const result = await uploadCSV(csvFile);
-      setCsvSuccess(result.message || '成功上傳 CSV 文件');
-      setCsvFile(null);
-      
-      // 上傳成功後重新載入今日工作日誌
-      await loadDateWorkLogs(selectedDate);
-      
-      // 重置文件上傳控件
-      const fileInput = document.getElementById('csv-file-input');
-      if (fileInput) fileInput.value = '';
-      setIsLoading(false); // 結束加載
-
-      // 呼叫父元件的成功回調
-      if (onSubmitSuccess) {
-        onSubmitSuccess();
-      }
-    } catch (err) {
-      console.error('CSV 上傳失敗:', err);
-      setCsvError(err.userMessage || err.message || 'CSV 上傳失敗');
-      setIsLoading(false); // 確保錯誤時也結束加載
-    }
-  };
-
-  // 驗證時間選擇
-  const validateTimeSelection = (startTime, endTime) => {
-    if (!startTime || !endTime) {
-      return { valid: false, message: '請選擇開始和結束時間' };
-    }
-    
-    // 檢查是否在工作時間內 (07:30-16:30)
-    const minWorkTime = new Date('2000-01-01T07:30:00');
-    const maxWorkTime = new Date('2000-01-01T16:30:00');
-    const lunchStart = new Date('2000-01-01T12:00:00');
-    const lunchEnd = new Date('2000-01-01T13:00:00');
-    
-    const start = new Date(`2000-01-01T${startTime}:00`);
-    const end = new Date(`2000-01-01T${endTime}:00`);
-    
-    if (start < minWorkTime || end > maxWorkTime) {
-      return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
-    }
-    
-    if (start >= end) {
-      return { valid: false, message: '結束時間必須晚於開始時間' };
-    }
-    
-    // 檢查是否與午休時間重疊
-    if ((start < lunchStart && end > lunchStart) || 
-        (start >= lunchStart && start < lunchEnd)) {
-      return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
-    }
-    
-    // 使用選擇日期的日誌列表
-    const logsToCheck = dateWorkLogs;
-    
-    // 增強檢查: 詳細檢查是否與已提交的時段重疊
-    for (const log of logsToCheck) {
-      // 確保時間格式一致
-      if (!log.start_time || !log.end_time) continue;
-      
-      // 去除時間字串中可能的秒數部分
-      const logStartStr = log.start_time.substring(0, 5);
-      const logEndStr = log.end_time.substring(0, 5);
-      
-      const logStart = new Date(`2000-01-01T${logStartStr}`);
-      const logEnd = new Date(`2000-01-01T${logEndStr}`);
-      
-      // 檢查所有可能的重疊情況
-      if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
-          (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
-          (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
-        
-        return { 
-          valid: false, 
-          message: `所選時間與已存在的時段「${logStartStr}-${logEndStr}」重疊` 
-        };
-      }
-    }
-    
-    return { valid: true, message: '' };
-  };
-
-  // 表單驗證
-  const validateForm = () => {
-    const errors = {};
-    
-    // 必填欄位驗證
-    if (!selectedArea) {
-      errors.area = '請選擇區域';
-    }
-    
-    if (!workLog.position_code) {
-      errors.position = '請選擇位置';
-    }
-    
-    if (!workLog.work_category_code) {
-      errors.work_category = '請選擇工作類別';
-    }
-
-    // 作物驗證 - 如果不是種植類且沒有作物，則顯示錯誤
-    if (workLog.work_category_name !== '種植' && workLog.position_code && !workLog.crop) {
-      errors.crop = '請選擇作物';
-    }
-    
-    // 如果是種植類但沒有選產品導致沒有作物名稱，也提示錯誤
-    if (workLog.work_category_name === '種植' && !workLog.crop) {
-      errors.product = '請選擇種子/種苗產品';
-    }
-    
-    // 時間欄位驗證
-    const timeValidation = validateTimeSelection(workLog.startTime, workLog.endTime);
-    if (!timeValidation.valid) {
-      errors.time = timeValidation.message;
-    }
-    
-    // 採收數量驗證
-    if (showHarvestQuantity && (!workLog.harvestQuantity || workLog.harvestQuantity <= 0)) {
-      errors.harvestQuantity = '請填寫採收重量';
-    }
-    
-    // 產品相關驗證
-    if (showProductSelector && workLog.work_category_name !== '種植') {
-      if (!selectedProductCategory) {
-        errors.product_category = '請選擇產品類別';
-      }
-      
-      if (!workLog.product_id) {
-        errors.product = '請選擇產品';
-      }
-      
-      if (!workLog.product_quantity || workLog.product_quantity <= 0) {
-        errors.product_quantity = '請填寫產品數量';
-      }
-    } else if (showProductSelector && workLog.work_category_name === '種植') {
-      // 種植工作必須選擇種子/種苗產品
-      if (!workLog.product_id) {
-        errors.product = '請選擇種子/種苗產品';
-      }
-      
-      if (!workLog.product_quantity || workLog.product_quantity <= 0) {
-        errors.product_quantity = '請填寫產品數量';
-      }
-    }
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
-
-      await loadDateWorkLogs(selectedDate);
-      
-      // 重置表單，但保留位置和工作類別
-      const resetForm = {
-        location_code: workLog.location_code,
-        position_code: workLog.position_code,
-        position_name: workLog.position_name,
-        work_category_code: workLog.work_category_code,
-        work_category_name: workLog.work_category_name,
-        crop: workLog.crop, // 保留作物選擇
-        startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
-        endTime: '',
-        details: '',
-        harvestQuantity: 0,
-        product_id: '',
-        product_name: '',
-        product_quantity: 0,
-      }; // Added missing comma here
-      
-      setWorkLog(resetForm);
-      setFormErrors({});
-      setIsLoading(false);
-      
-      // 顯示成功訊息
-      alert('工作日誌提交成功！');
+    // 重置文件上傳控件
+    const fileInput = document.getElementById('csv-file-input');
+    if (fileInput) fileInput.value = '';
+    setIsLoading(false); // 結束加載
 
     // 呼叫父元件的成功回調
     if (onSubmitSuccess) {
       onSubmitSuccess();
     }
   } catch (err) {
-    console.error('提交工作日誌詳細錯誤:', {
-      message: err.message,
-      userMessage: err.userMessage,
-      status: err.response?.status,
-      statusText: err.response?.statusText,
-      data: err.response?.data,
-      config: {
-        url: err.config?.url,
-        method: err.config?.method,
-        headers: err.config?.headers ? '存在' : '不存在'
-      }
-    });
+    console.error('CSV 上傳失敗:', err);
+    setCsvError(err.userMessage || err.message || 'CSV 上傳失敗');
+    setIsLoading(false); // 確保錯誤時也結束加載
+  }
+};
+
+// 驗證時間選擇
+const validateTimeSelection = (startTime, endTime) => {
+  if (!startTime || !endTime) {
+    return { valid: false, message: '請選擇開始和結束時間' };
+  }
+  
+  // 檢查是否在工作時間內 (07:30-16:30)
+  const minWorkTime = new Date('2000-01-01T07:30:00');
+  const maxWorkTime = new Date('2000-01-01T16:30:00');
+  const lunchStart = new Date('2000-01-01T12:00:00');
+  const lunchEnd = new Date('2000-01-01T13:00:00');
+  
+  const start = new Date(`2000-01-01T${startTime}:00`);
+  const end = new Date(`2000-01-01T${endTime}:00`);
+  
+  if (start < minWorkTime || end > maxWorkTime) {
+    return { valid: false, message: '時間必須在工作時間(07:30-16:30)內' };
+  }
+  
+  if (start >= end) {
+    return { valid: false, message: '結束時間必須晚於開始時間' };
+  }
+  
+  // 檢查是否與午休時間重疊
+  if ((start < lunchStart && end > lunchStart) || 
+      (start >= lunchStart && start < lunchEnd)) {
+    return { valid: false, message: '所選時間不能與午休時間(12:00-13:00)重疊' };
+  }
+  
+  // 使用選擇日期的日誌列表
+  const logsToCheck = dateWorkLogs;
+  
+  // 增強檢查: 詳細檢查是否與已提交的時段重疊
+  for (const log of logsToCheck) {
+    // 確保時間格式一致
+    if (!log.start_time || !log.end_time) continue;
     
-    // 處理特殊錯誤情況
-    if (err.response?.status === 403) {
-      alert('權限錯誤：您可能沒有提交工作日誌的權限或登入狀態已失效，請重新登入');
-      // 可選：登出並重定向到登入頁面
-      // logout();
-    } else if (err.response?.status === 401) {
-      alert('登入狀態已失效，請重新登入');
-      logout(); // 登出並重定向到登入頁面
-    } else {
-      // 顯示錯誤訊息
-      const errorMessage = err.userMessage || err.response?.data?.message || err.message || '提交工作日誌失敗，請檢查網路連線';
-      alert(`提交失敗: ${errorMessage}`);
+    // 去除時間字串中可能的秒數部分
+    const logStartStr = log.start_time.substring(0, 5);
+    const logEndStr = log.end_time.substring(0, 5);
+    
+    const logStart = new Date(`2000-01-01T${logStartStr}`);
+    const logEnd = new Date(`2000-01-01T${logEndStr}`);
+    
+    // 檢查所有可能的重疊情況
+    if ((start >= logStart && start < logEnd) || // 新開始在已有範圍內
+        (end > logStart && end <= logEnd) ||     // 新結束在已有範圍內
+        (start <= logStart && end >= logEnd)) {  // 新時段包含已有時段
+      
+      return { 
+        valid: false, 
+        message: `所選時間與已存在的時段「${logStartStr}-${logEndStr}」重疊` 
+      };
     }
-    
-    // 如果是驗證錯誤，更新表單錯誤
-    if (err.validationErrors) {
-      setFormErrors(prev => ({ ...prev, ...err.validationErrors }));
-    }
-    
-    setIsLoading(false);
+  }
+  
+  return { valid: true, message: '' };
+};
+
+// 驗證表單
+const validateForm = () => {
+  const errors = {};
+  
+  // 必填欄位驗證
+  if (!selectedArea) {
+    errors.area = '請選擇區域';
+  }
+  
+  if (!workLog.position_code) {
+    errors.position = '請選擇位置';
+  }
+  
+  if (!workLog.work_category_code) {
+    errors.work_category = '請選擇工作類別';
   }
 
+  // 作物驗證
+  if (!workLog.crop) {
+    errors.crop = '請選擇或輸入作物名稱';
+  }
   
+  // 時間欄位驗證
+  const timeValidation = validateTimeSelection(workLog.startTime, workLog.endTime);
+  if (!timeValidation.valid) {
+    errors.time = timeValidation.message;
+  }
+  
+  // 採收數量驗證
+  if (showHarvestQuantity && (!workLog.harvestQuantity || workLog.harvestQuantity <= 0)) {
+    errors.harvestQuantity = '請填寫採收重量';
+  }
+  
+  // 產品相關驗證
+  if (showProductSelector) {
+    if (!selectedProductCategory && workLog.work_category_name !== '種植') {
+      errors.product_category = '請選擇產品類別';
+    }
+    
+    if (!workLog.product_id) {
+      errors.product = '請選擇產品';
+    }
+    
+    if (!workLog.product_quantity || workLog.product_quantity <= 0) {
+      errors.product_quantity = '請填寫產品數量';
+    }
+  }
+  
+  setFormErrors(errors);
+  return Object.keys(errors).length === 0;
+};
 
 // 提交表單
 const handleSubmit = async (e) => {
@@ -979,50 +896,48 @@ const handleSubmit = async (e) => {
       work_category_name: submitData.work_category_name,
       details: submitData.details,
       created_at: new Date().toISOString()
-    }; 
+    };
     
+    // 添加到日誌列表中
+    const updatedLogs = [...dateWorkLogs, submittedLog];
+    setDateWorkLogs(updatedLogs);
     
-        // 添加到日誌列表中
-        const updatedLogs = [...dateWorkLogs, submittedLog];
-        setDateWorkLogs(updatedLogs);
-        
-        // 如果是今天的日期，也更新 todayWorkLogs
-        const today = new Date().toISOString().split('T')[0];
-        if (selectedDate === today) {
-          setTodayWorkLogs(updatedLogs);
-        }
-        
-        // 重新計算剩餘工時
-        const { remainingHours } = calculateWorkHours(updatedLogs);
-        setRemainingHours(remainingHours);
-        
-        // 為確保數據一致性，仍然從服務器重新載入日誌
-        await loadDateWorkLogs(selectedDate);
-        
-        // 重置表單，但保留位置和工作類別
-        const resetForm = {
-          location_code: workLog.location_code,
-          position_code: workLog.position_code,
-          position_name: workLog.position_name,
-          work_category_code: workLog.work_category_code,
-          work_category_name: workLog.work_category_name,
-          crop: workLog.crop, // 保留作物選擇
-          startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
-          endTime: '',
-          details: '',
-          harvestQuantity: 0,
-          product_id: '',
-          product_name: '',
-          product_quantity: 0
-        };
-        
-        setWorkLog(resetForm);
-        setFormErrors({});
-        setIsLoading(false);
-        
-        // 顯示成功訊息
-        alert('工作日誌提交成功！');
+    // 如果是今天的日期，也更新 todayWorkLogs
+    const today = new Date().toISOString().split('T')[0];
+    if (selectedDate === today) {
+      setTodayWorkLogs(updatedLogs);
+    }
     
+    // 重新計算剩餘工時
+    const { remainingHours } = calculateWorkHours(updatedLogs);
+    setRemainingHours(remainingHours);
+    
+    // 為確保數據一致性，仍然從服務器重新載入日誌
+    await loadDateWorkLogs(selectedDate);
+    
+    // 重置表單，但保留位置和工作類別
+    const resetForm = {
+      location_code: workLog.location_code,
+      position_code: workLog.position_code,
+      position_name: workLog.position_name,
+      work_category_code: workLog.work_category_code,
+      work_category_name: workLog.work_category_name,
+      crop: workLog.crop, // 保留作物選擇
+      startTime: workLog.endTime, // 下一次開始時間為前一次的結束時間
+      endTime: '',
+      details: '',
+      harvestQuantity: 0,
+      product_id: '',
+      product_name: '',
+      product_quantity: 0
+    };
+    
+    setWorkLog(resetForm);
+    setFormErrors({});
+    setIsLoading(false);
+    
+    // 顯示成功訊息
+    alert('工作日誌提交成功！');
 
     // 呼叫父元件的成功回調
     if (onSubmitSuccess) {
@@ -1064,6 +979,7 @@ const handleSubmit = async (e) => {
     setIsLoading(false);
   }
 };
+  
 // 渲染欄位錯誤訊息
 const renderFieldError = (fieldName) => {
   if (formErrors[fieldName]) {
@@ -1080,27 +996,28 @@ return (
   <div className="min-h-screen bg-gray-900 text-white p-4">
     <div className="max-w-4xl mx-auto">
 
-      <div className="mb-4">
-        <Button 
-          onClick={handleGoBack}
-          variant="secondary"
-          className="flex items-center text-sm"
+    <div className="mb-4">
+      <Button 
+        onClick={handleGoBack}
+        variant="secondary"
+        className="flex items-center text-sm"
+      >
+        <svg 
+          xmlns="http://www.w3.org/2000/svg" 
+          className="h-5 w-5 mr-1" 
+          viewBox="0 0 20 20" 
+          fill="currentColor"
         >
-          <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            className="h-5 w-5 mr-1" 
-            viewBox="0 0 20 20" 
-            fill="currentColor"
-          >
-            <path 
-              fillRule="evenodd" 
-              d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
-              clipRule="evenodd" 
-            />
-          </svg>
-          返回
-        </Button>
-      </div>
+          <path 
+            fillRule="evenodd" 
+            d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" 
+            clipRule="evenodd" 
+          />
+        </svg>
+        返回
+      </Button>
+    </div>
+
 
       <h2 className="text-2xl font-bold mb-4 text-center">工作日誌登錄</h2>
       
@@ -1287,11 +1204,12 @@ return (
               </div>
             </div>
 
+
             <div>
               <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
               <select
                 value={workLog.crop}
-                onChange={handleCropChange}
+                onChange={handleCropChange}  
                 className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
                   formErrors.crop ? 'border border-red-500' : ''
                 }`}
@@ -1449,8 +1367,8 @@ return (
               </div>
             )}
             
-            {/* 採收重量（條件性顯示） */}
-            {showHarvestQuantity && (
+{/* 採收重量（條件性顯示） */}
+{showHarvestQuantity && (
               <div>
                 <label className="block mb-2">採收重量 (台斤) <span className="text-red-500">*</span></label>
                 <Input 
@@ -1529,6 +1447,7 @@ return (
       )}
     </div>
   </div>
+);
+};
 
-); 
 export default WorkLogForm;
