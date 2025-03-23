@@ -243,12 +243,14 @@ const WorkLogController = {
   // 優化後的 searchWorkLogs 函數
   async searchWorkLogs(req, res) {
     const { location, crop, startDate, endDate, status } = req.query;
-
+  
     try {
       console.log('收到工作日誌搜索請求:', {
         location, crop, startDate, endDate, status,
         userId: req.user?.id,
-        userRole: req.user?.role
+        userRole: req.user?.role,
+        query: req.query,
+        url: req.originalUrl
       });
       
       // 添加結果限制避免返回過多數據
@@ -261,19 +263,29 @@ const WorkLogController = {
                wl.details, wl.position_name, wl.work_category_name,
                wl.status, wl.created_at, u.username
         FROM work_logs wl
-        JOIN users u ON wl.user_id = u.id
-        WHERE 1=1
-      `;
-      
+          JOIN users u ON wl.user_id = u.id
+          ORDER BY wl.created_at DESC
+          LIMIT 20
+        `;
+
+
+        const emergencyResult = await db.query(emergencyQuery);
+        console.log(`緊急查詢找到 ${emergencyResult.rows.length} 條工作日誌`);
+
+
+        
+  
+        
       const values = [];
       let paramIndex = 1;
 
       // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
-      if (!req.user.role || req.user.role !== 'admin') {
-        queryText += ` AND wl.user_id = $${paramIndex}`;
-        values.push(req.user.id);
+      if (status) {
+        queryText += ` AND wl.status = $${paramIndex}`;
+        values.push(status);
         paramIndex++;
       }
+      
 
       if (location) {
         queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
@@ -296,11 +308,12 @@ const WorkLogController = {
 
       if (startDate && endDate) {
         // 使用 DATE() 函數優化日期比較
-        queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        // 注意：這裡是關鍵修改，原來的查詢方式可能有問題
+        queryText += ` AND DATE(wl.created_at) BETWEEN DATE($${paramIndex}) AND DATE($${paramIndex + 1})`;
         values.push(startDate, endDate);
         paramIndex += 2;
       }
-
+  
       // 添加排序、限制和超時設置
       queryText += ' ORDER BY wl.created_at DESC';
       queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量

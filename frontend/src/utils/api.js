@@ -540,7 +540,7 @@ export const searchWorkLogs = async (filters) => {
   const cacheKey = `workLogs:${JSON.stringify(filters)}`;
   
   // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters, null, 2));
   
   // 檢查快取
   const cachedData = apiCache.get(cacheKey);
@@ -550,7 +550,7 @@ export const searchWorkLogs = async (filters) => {
   }
   
   try {
-    console.log('開始發送工作日誌搜尋請求');
+    console.log('開始發送工作日誌搜尋請求，完整參數:', filters);
     
     // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
     let timeoutAttempts = 0;

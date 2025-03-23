@@ -73,42 +73,15 @@ const WorkLogReview = () => {
     const loadWorkLogs = async () => {
       try {
         setIsLoading(true);
-        
-        // 計算日期範圍
-        const dateRange = calculateDateRange();
-        
-        // 建立查詢參數
-        const searchParams = {
+        const data = await searchWorkLogs({
           status: filter.status,
-          startDate: dateRange.startDate,
-          endDate: dateRange.endDate
-        };
-        
-        // 加入可選篩選條件
-        if (filter.location) searchParams.location = filter.location;
-        if (filter.crop) searchParams.crop = filter.crop;
-        if (filter.userName) searchParams.userName = filter.userName;
-        
-        const data = await searchWorkLogs(searchParams);
-        
-        // 根據時段篩選 (上午/下午)
-        let filteredData = [...data];
-        if (filter.timeRange !== 'all') {
-          filteredData = data.filter(log => {
-            const hour = parseInt(log.start_time.split(':')[0], 10);
-            if (filter.timeRange === 'morning') {
-              return hour < 12; // 上午 (00:00-11:59)
-            } else if (filter.timeRange === 'afternoon') {
-              return hour >= 12; // 下午 (12:00-23:59)
-            }
-            return true;
-          });
-        }
-        
-        setWorkLogs(filteredData);
+          startDate: filter.date, // 使用選定的日期作為開始日期
+          endDate: filter.date    // 使用選定的日期作為結束日期（同一天）
+        });
+        setWorkLogs(data);
         
         // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(filteredData);
+        const grouped = groupWorkLogsByUserAndDate(data);
         setGroupedWorkLogs(grouped);
         
         // 初始化展開狀態
@@ -120,47 +93,13 @@ const WorkLogReview = () => {
         
         setIsLoading(false);
       } catch (err) {
-        console.error('載入工作日誌失敗:', err);
         setError('載入工作日誌失敗');
         setIsLoading(false);
       }
     };
-
+  
     loadWorkLogs();
   }, [filter]);
-
-  // 將工作日誌按使用者和日期分組
-  const groupWorkLogsByUserAndDate = (logs) => {
-    const grouped = {};
-    
-    logs.forEach(log => {
-      // 從日期獲取年月日部分作為分組的一部分
-      const date = new Date(log.created_at).toLocaleDateString();
-      // 創建唯一的分組鍵 (使用者ID + 日期)
-      const groupKey = `${log.user_id}_${date}`;
-      
-      if (!grouped[groupKey]) {
-        grouped[groupKey] = {
-          userId: log.user_id,
-          username: log.username || '未知使用者',
-          date: date,
-          logs: []
-        };
-      }
-      
-      grouped[groupKey].logs.push(log);
-    });
-    
-    return grouped;
-  };
-
-  // 切換分組的展開/折疊狀態
-  const toggleGroupExpand = (groupKey) => {
-    setExpandedGroups(prev => ({
-      ...prev,
-      [groupKey]: !prev[groupKey]
-    }));
-  };
 
   // 格式化時間：只顯示 HH:MM
   const formatTime = (timeString) => {
@@ -249,6 +188,21 @@ const WorkLogReview = () => {
       </div>
     );
   }
+
+// 診斷輸出
+console.log('WorkLogReview 狀態:', {
+  isLoading,
+  error,
+  workLogsCount: workLogs.length,
+  groupedCount: Object.keys(groupedWorkLogs).length,
+  filter
+});
+
+if (workLogs.length === 0 && !isLoading && !error) {
+  console.warn('工作日誌列表為空，但沒有錯誤和載入狀態');
+}
+
+
 
   return (
     <div className="bg-gray-900 text-white p-6">
