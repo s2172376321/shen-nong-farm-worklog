@@ -1,6 +1,7 @@
 // 位置：frontend/src/hooks/useWorkLog.js
 import { useState, useCallback } from 'react';
 import { createWorkLog, searchWorkLogs, uploadCSV } from '../utils/api';
+import api, { apiCache } from '../utils/api'; // 添加這行來導入 api 和 apiCache
 
 // 改進的節流管理器
 const createThrottleManager = () => {
@@ -70,25 +71,11 @@ const createThrottleManager = () => {
     clearCache: (key) => {
       if (key) {
         requestCache.delete(key);
-        console.log(`清除特定緩存: ${key}`);
       } else {
-        // 清除所有緩存
         requestCache.clear();
         throttleMap.clear();
-        console.log('清除所有緩存');
       }
-    },
-    
-    // 清除所有工作日誌相關的緩存
-    clearWorkLogCaches: () => {
-      // 遍歷並刪除所有以 workLogs: 開頭的緩存鍵
-      for (const key of requestCache.keys()) {
-        if (typeof key === 'string' && key.startsWith('workLogs:')) {
-          requestCache.delete(key);
-          console.log(`清除工作日誌緩存: ${key}`);
-        }
-      }
-      console.log('所有工作日誌緩存已清除');
+      console.log('節流快取已清除');
     }
   };
 };
@@ -105,35 +92,74 @@ export const useWorkLog = () => {
     setIsLoading(true);
     setError(null);
     
-    try {
-      console.log('嘗試提交工作日誌:', JSON.stringify(workLogData, null, 2));
-      
-      // 確保 Content-Type 設置正確
-      const response = await api.post('/work-logs', workLogData, {
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      });
-      
-      console.log('工作日誌提交成功:', response.data);
-      
-      // 清除相關快取
-      apiCache.clear('workLogs');
-      apiCache.clear('workStats');
-      apiCache.clear('todayHour');
-      
-      setLastSuccessTime(Date.now());
-      setIsLoading(false);
-      return response.data;
-    } catch (err) {
-      console.error('提交工作日誌錯誤:', err);
-      // 其他錯誤處理邏輯...
-      setIsLoading(false);
-      throw err;
+    // 計算重試延遲時間的函數
+    const getRetryDelay = (retryCount) => Math.min(1000 * Math.pow(2, retryCount), 10000);
+    
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        // 添加詳細的日誌
+        console.log(`嘗試提交工作日誌 (${retryCount}/${maxRetries})`, {
+          startTime: workLogData.startTime,
+          endTime: workLogData.endTime,
+          position: workLogData.position_name,
+          category: workLogData.work_category_name
+        });
+        
+        const response = await createWorkLog(workLogData);
+        
+        // 清除相關快取，確保最新數據
+        apiCache.clear('workLogs');
+        apiCache.clear('workStats');
+        apiCache.clear('todayHour');
+        throttleManager.clearCache();
+        setLastSuccessTime(Date.now());
+        setIsLoading(false);
+        
+        // 更詳細的成功日誌
+        console.log('工作日誌提交成功:', {
+          id: response.workLogId,
+          status: response.status
+        });
+        
+        return response;
+      } catch (err) {
+        retryCount++;
+        
+        // 更詳細的錯誤處理
+        console.error(`工作日誌提交失敗 (${retryCount}/${maxRetries}):`, {
+          message: err.message,
+          userMessage: err.userMessage,
+          status: err.response?.status,
+          data: err.response?.data
+        });
+        
+        // 根據錯誤類型決定是否重試
+        const shouldRetry = 
+          (err.response && err.response.status === 429) || 
+          err.message === 'Request throttled' ||
+          err.message.includes('timeout') ||
+          err.message.includes('Network Error');
+        
+        if (shouldRetry && retryCount <= maxRetries) {
+          const delay = getRetryDelay(retryCount);
+          console.warn(`將在 ${delay}ms 後重試...`);
+          
+          // 等待延遲後繼續循環
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // 已重試最大次數或非可重試錯誤
+        setError(err.userMessage || err.response?.data?.message || '提交工作日誌失敗');
+        setIsLoading(false);
+        throw err;
+      }
     }
-  });
-  
+  }, []);
+
   // 改進的 CSV 上傳函數
   const submitCSV = useCallback(async (csvFile) => {
     setIsLoading(true);
@@ -151,10 +177,11 @@ export const useWorkLog = () => {
         
         const response = await uploadCSV(csvFile);
         
-        // 清除所有緩存，確保列表更新
-        throttleManager.clearCache(); // 清除所有緩存
-        console.log('CSV上傳成功 - 所有緩存已清除，確保列表顯示最新數據');
-        
+        // 清除相關快取，確保最新數據
+        apiCache.clear('workLogs');
+        apiCache.clear('workStats'); 
+        apiCache.clear('todayHour');
+        throttleManager.clearCache();
         setLastSuccessTime(Date.now());
         setIsLoading(false);
         
@@ -193,8 +220,8 @@ export const useWorkLog = () => {
     }
   }, []);
 
-  // 改進的工作日誌獲取函數 - 增加強制刷新參數
-  const fetchWorkLogs = useCallback(async (filters = {}, forceRefresh = false) => {
+  // 改進的工作日誌獲取函數
+  const fetchWorkLogs = useCallback(async (filters = {}) => {
     setIsLoading(true);
     setError(null);
 
@@ -202,24 +229,13 @@ export const useWorkLog = () => {
     const cacheKey = `workLogs:${JSON.stringify(filters)}`;
     
     try {
-      console.log('嘗試獲取工作日誌，過濾條件:', filters, 
-        forceRefresh ? '(強制刷新)' : '');
-      
-      // 如果強制刷新，先清除該緩存
-      if (forceRefresh) {
-        throttleManager.clearCache(cacheKey);
-        console.log(`強制刷新: 已清除緩存 ${cacheKey}`);
-      }
+      console.log('嘗試獲取工作日誌，過濾條件:', filters);
       
       const response = await throttleManager.throttle(
         cacheKey, 
         async () => {
           try {
-            // 如果強制刷新，添加時間戳參數防止使用舊緩存
-            const enhancedFilters = forceRefresh ? 
-              { ...filters, _t: Date.now() } : filters;
-              
-            const data = await searchWorkLogs(enhancedFilters);
+            const data = await searchWorkLogs(filters);
             // 確保返回的數據是數組
             return Array.isArray(data) ? data : [];
           } catch (err) {
@@ -255,20 +271,10 @@ export const useWorkLog = () => {
     }
   }, []);
 
-  // 新增函數：強制刷新工作日誌列表
-  const forceRefreshWorkLogs = useCallback(async (filters = {}) => {
-    console.log('開始強制刷新工作日誌列表');
-    // 首先清除所有工作日誌相關緩存
-    throttleManager.clearWorkLogCaches();
-    // 使用強制刷新參數獲取最新數據
-    return fetchWorkLogs(filters, true);
-  }, [fetchWorkLogs]);
-
   return {
     submitWorkLog,
     uploadCSV: submitCSV,
     fetchWorkLogs,
-    forceRefreshWorkLogs, // 新增強制刷新方法
     isLoading,
     error,
     clearCache: throttleManager.clearCache

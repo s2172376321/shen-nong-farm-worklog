@@ -1,8 +1,6 @@
-// 位置：frontend/src/context/AuthContext.js
+// frontend/src/context/AuthContext.js
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { loginUser, googleLogin } from '../utils/api';
-import api, { apiCache, throttle } from '../utils/api';
-
 
 const AuthContext = createContext({
   user: null,
@@ -16,46 +14,61 @@ const AuthContext = createContext({
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authLogs, setAuthLogs] = useState([]);
+  
+  // 調試日誌函數
+  const logAuth = (message, data = {}) => {
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      message,
+      ...data
+    };
+    console.log(`[Auth] ${message}`, data);
+    setAuthLogs(prev => [...prev, logEntry]);
+  };
 
-// 根據角色重定向
-const redirectBasedOnRole = (userRole) => {
-  switch (userRole) {
-    case 'admin':
-      window.location.href = '/admin';
-      break;
-    case 'user':
-    default:
-      window.location.href = '/dashboard';  // 從 /work-log 改為 /dashboard
-      break;
-  }
-};
-
-
+  // 根據角色重定向
+  const redirectBasedOnRole = (userRole) => {
+    logAuth('準備重定向', { role: userRole });
+    
+    switch (userRole) {
+      case 'admin':
+        logAuth('重定向到管理員頁面');
+        window.location.href = '/admin';
+        break;
+      case 'user':
+      default:
+        logAuth('重定向到儀表板頁面');
+        window.location.href = '/dashboard';
+        break;
+    }
+  };
 
   // 檢查是否已登入
   useEffect(() => {
     const checkAuth = async () => {
+      logAuth('檢查認證狀態');
       const token = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
       
       if (token && storedUser) {
         try {
-          // 檢查 token 是否仍然有效 (這裡可以加入驗證 token 的邏輯)
+          logAuth('發現認證令牌和用戶數據');
+          // 檢查 token 是否仍然有效
           const parsedUser = JSON.parse(storedUser);
           setUser(parsedUser);
+          logAuth('認證成功，用戶已設置', { role: parsedUser.role });
         } catch (error) {
-          // token 無效或使用者資料解析錯誤，清除儲存的資訊
-          console.error('使用者資料解析失敗:', error);
+          logAuth('解析用戶數據失敗', { error: error.message });
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           setUser(null);
         }
       } else {
-        // 沒有 token 或使用者資料，表示未登入
+        logAuth('未找到認證信息');
         setUser(null);
       }
       
-      // 完成載入
       setIsLoading(false);
     };
 
@@ -65,53 +78,131 @@ const redirectBasedOnRole = (userRole) => {
   // 一般登入
   const login = async (username, password) => {
     try {
-      console.log('從 AuthContext 嘗試登入:', username);
+      logAuth('嘗試使用用戶名密碼登入', { username });
+      
+      if (!username || !password) {
+        logAuth('登入失敗：缺少用戶名或密碼');
+        throw new Error('請輸入用戶名和密碼');
+      }
+      
       const response = await loginUser(username, password);
+      logAuth('登入 API 響應成功', { 
+        hasToken: !!response.token,
+        hasUser: !!response.user
+      });
+      
+      if (!response.token) {
+        logAuth('登入響應缺少令牌');
+        throw new Error('服務器響應缺少認證令牌');
+      }
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
-  
+      
+      logAuth('用戶數據已存儲到本地', { role: response.user.role });
       setUser(response.user);
+      
+      // 直接重定向
+      redirectBasedOnRole(response.user.role);
+      
       return response.user;
     } catch (error) {
-      console.error('登入失敗:', error);
+      logAuth('登入過程中發生錯誤', { 
+        message: error.message,
+        response: error.response?.data
+      });
       throw error;
     }
   };
   
-
-  // Google 登入
+  // Google 登入 - 進階診斷版本
   const loginWithGoogle = async (credential) => {
     try {
-      console.log('發送Google登入請求，憑證長度:', credential?.length);
+      logAuth('使用 Google 憑證登入', { 
+        credentialLength: credential?.length 
+      });
       
-      // 明確使用token參數名稱
+      if (!credential) {
+        logAuth('Google 登入失敗：缺少憑證');
+        throw new Error('缺少 Google 憑證');
+      }
+      
+      // 使用明確的 token 參數名稱
+      logAuth('調用 Google 登入 API');
       const response = await googleLogin(credential);
+      
+      logAuth('Google 登入 API 響應', { 
+        status: 'success',
+        hasToken: !!response.token,
+        hasUser: !!response.user,
+        tokenSubstr: response.token ? response.token.substring(0, 10) + '...' : 'missing'
+      });
+      
+      if (!response.token) {
+        logAuth('Google 登入響應缺少令牌');
+        throw new Error('服務器響應缺少認證令牌');
+      }
       
       // 儲存 token 和使用者資訊
       localStorage.setItem('token', response.token);
       localStorage.setItem('user', JSON.stringify(response.user));
       
+      logAuth('Google 登入用戶數據已存儲', { 
+        role: response.user.role,
+        username: response.user.username,
+        email: response.user.email
+      });
+      
       setUser(response.user);
+      
+      // 使用 setTimeout 確保狀態更新後再重定向
+      setTimeout(() => {
+        logAuth('執行延遲重定向');
+        redirectBasedOnRole(response.user.role);
+      }, 100);
+      
       return response.user;
     } catch (error) {
-      console.error('Google 登入失敗:', error);
+      logAuth('Google 登入過程中發生錯誤', { 
+        message: error.message,
+        stack: error.stack?.substring(0, 100),
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
+      // 提供更多錯誤診斷
+      if (error.response) {
+        logAuth('伺服器響應錯誤', {
+          status: error.response.status,
+          data: error.response.data
+        });
+      } else if (error.request) {
+        logAuth('未收到伺服器響應', {
+          request: 'Request sent but no response'
+        });
+      } else {
+        logAuth('請求設置錯誤', {
+          setupError: error.message
+        });
+      }
+      
       throw error;
     }
   };
-  
 
   // 登出
   const logout = () => {
+    logAuth('執行登出操作');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);
     window.location.href = '/login';
   };
 
-  // 更新使用者資訊const
+  // 更新使用者資訊
   const updateUser = (userData) => {
+    logAuth('更新用戶數據', { userId: userData.id });
     setUser(userData);
     localStorage.setItem('user', JSON.stringify(userData));
   };
@@ -123,7 +214,8 @@ const redirectBasedOnRole = (userRole) => {
       login,
       loginWithGoogle,
       logout,
-      updateUser
+      updateUser,
+      authLogs // 添加日誌到 context
     }}>
       {children}
     </AuthContext.Provider>

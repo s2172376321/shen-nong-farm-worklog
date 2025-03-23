@@ -1,10 +1,15 @@
 // 位置：frontend/src/utils/api.js
+// frontend/src/utils/api.js 的開頭部分修改
+
 import axios from 'axios';
 
-
+console.log('API 模組初始化', {
+  baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
+  env: process.env.NODE_ENV
+});
 
 // 快取存儲
-const apiCache = {
+export const apiCache = {
   data: {},
   set: function(key, value, ttl = 300000) { // 預設快取5分鐘 (300000毫秒)
     this.data[key] = {
@@ -33,21 +38,20 @@ const apiCache = {
 // 創建 axios 實例
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
-  timeout: 30000,  // 增加到30秒
-  withCredentials: true
+  timeout: 15000  // 增加超時時間到15秒
 });
 
 // 節流 Map
 const throttleMap = new Map();
 
 // 節流函數
-const throttle = (key, fn, delay = 3000) => {
+export const throttle = (key, fn, delay = 3000) => {
   const now = Date.now();
   
   if (throttleMap.has(key)) {
     const { timestamp } = throttleMap.get(key);
     if (now - timestamp < delay) {
-      console.log(`請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
+      console.log(`[API] 請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
       return Promise.reject(new Error('Request throttled'));
     }
   }
@@ -149,10 +153,17 @@ api.interceptors.request.use(
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    
+    // 對於文件上傳請求，不設置 Content-Type，讓瀏覽器自動設置
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    }
+    
+    console.log(`[API] 發送請求: ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   error => {
-    console.error('API請求錯誤:', error);
+    console.error('[API] 請求配置錯誤:', error);
     return Promise.reject(error);
   }
 );
@@ -162,37 +173,14 @@ api.interceptors.request.use(
 // 響應攔截器：統一處理錯誤
 api.interceptors.response.use(
   response => {
-    console.log('API響應成功:', response.config.url);
+    console.log(`[API] 請求成功: ${response.config.url}`);
     return response;
   },
   error => {
-    // 檢查是否返回HTML而非JSON
-    if (error.response && 
-        error.response.data && 
-        typeof error.response.data === 'string' && 
-        error.response.data.includes('<!DOCTYPE html>')) {
-      
-      console.error('API返回了HTML而非JSON:', {
-        url: error.config?.url,
-        status: error.response?.status,
-        data: error.response?.data.substring(0, 200) + '...'
-      });
-      
-      // 判斷是否為登入頁面
-      if (error.response.data.includes('login') || error.response.status === 401) {
-        console.warn('返回的HTML可能是登入頁面，用戶認證可能已過期');
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/login';
-        return Promise.reject(new Error('認證已過期，請重新登入'));
-      }
-      
-      return Promise.reject(new Error('伺服器回應了HTML而非JSON，可能發生了內部錯誤'));
-    }
-    
-    // 原有的錯誤處理邏輯...
-    console.error('API響應錯誤:', {
+    // 詳細記錄錯誤信息
+    console.error('[API] 請求失敗:', {
       url: error.config?.url,
+      method: error.config?.method,
       status: error.response?.status,
       statusText: error.response?.statusText,
       data: error.response?.data,
@@ -202,10 +190,14 @@ api.interceptors.response.use(
     // 處理特定錯誤類型
     if (error.response && error.response.status === 401) {
       // 處理未授權錯誤，可能是token過期
-      console.warn('授權已過期或無效，將重定向到登入頁面');
+      console.warn('[API] 授權已過期或無效，將重定向到登入頁面');
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      
+      // 避免循環重定向
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
       return Promise.reject(new Error('認證已過期，請重新登入'));
     }
     
@@ -359,50 +351,65 @@ export class WebSocketService {
 export const websocket = new WebSocketService();
 
 // ----- 認證相關 API -----
+// 一般登入
 export const loginUser = async (username, password) => {
   try {
-    console.log('嘗試登入用戶:', username);
+    console.log('[API] 嘗試登入用戶:', username);
     const response = await api.post('/auth/login', { username, password });
-    console.log('登入成功:', response.data);
-    
-    // 登入成功後連接 WebSocket
-    websocket.connect();
-    
+    console.log('[API] 登入成功:', response.data);
     return response.data;
   } catch (error) {
-    console.error('登入失敗:', error);
+    console.error('[API] 登入失敗:', error);
     throw error;
   }
 };
 
 export const googleLogin = async (credential) => {
   try {
-    console.log('調用 API: 發送Google憑證，長度:', credential?.length);
+    console.log('[API] 調用 googleLogin API 函數', { 
+      credentialLength: credential?.length,
+      credentialSubstr: credential ? `${credential.substring(0, 10)}...` : 'missing'
+    });
     
-    // 使用'token'參數名稱，與後端對應
-    const response = await api.post('/auth/google-login', { token: credential });
-    
-    console.log('Google登入API成功');
-    
-    // 連接WebSocket
-    websocket.connect();
-    
-    return response.data;
-  } catch (error) {
-    console.error('Google登入API失敗:', error);
-    
-    // 詳細日誌
-    if (error.response) {
-      console.error('伺服器回應:', {
-        status: error.response.status,
-        data: error.response.data
-      });
-    } else if (error.request) {
-      console.error('未收到伺服器回應:', error.request);
-    } else {
-      console.error('請求設置錯誤:', error.message);
+    if (!credential) {
+      console.error('[API] googleLogin: 缺少必要的 Google 憑證');
+      throw new Error('缺少 Google 憑證');
     }
     
+    // 嘗試繞過 axios 實例，直接使用瀏覽器的 fetch API 
+    console.log('[API] 使用 fetch 發送 Google 登入請求');
+    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3002/api';
+    const response = await fetch(`${baseUrl}/auth/google-login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ token: credential })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('[API] Google 登入失敗', {
+        status: response.status,
+        data: errorData
+      });
+      throw new Error(errorData.message || '伺服器拒絕 Google 登入請求');
+    }
+    
+    const data = await response.json();
+    console.log('[API] Google 登入成功', {
+      hasToken: !!data.token,
+      hasUser: !!data.user
+    });
+    
+    if (!data.token || !data.user) {
+      console.error('[API] 伺服器響應缺少必要資訊', data);
+      throw new Error('伺服器響應格式不正確');
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('[API] Google 登入失敗:', error);
     throw error;
   }
 };
@@ -1100,5 +1107,4 @@ export const getApiStatus = async () => {
 };
 
 
-export { apiCache, throttle };
 export default api;
