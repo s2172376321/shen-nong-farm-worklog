@@ -1,9 +1,11 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
 import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
-import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
+import { searchWorkLogs, reviewWorkLog, getApiStatus } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext'; // 添加 useAuth 引入
 
 const WorkLogReview = () => {
+  const { user } = useAuth(); // 使用 useAuth 獲取當前用戶
   const [workLogs, setWorkLogs] = useState([]);
   const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
@@ -20,6 +22,39 @@ const WorkLogReview = () => {
     userName: '', // 新增: 用戶名稱篩選
     timeRange: 'all' // 新增: 'all', 'morning', 'afternoon'
   });
+
+  // 將工作日誌按使用者和日期分組
+  const groupWorkLogsByUserAndDate = (logs) => {
+    const grouped = {};
+    
+    logs.forEach(log => {
+      // 從日期獲取年月日部分作為分組的一部分
+      const date = new Date(log.created_at).toLocaleDateString();
+      // 創建唯一的分組鍵 (使用者ID + 日期)
+      const groupKey = `${log.user_id}_${date}`;
+      
+      if (!grouped[groupKey]) {
+        grouped[groupKey] = {
+          userId: log.user_id,
+          username: log.username || '未知使用者',
+          date: date,
+          logs: []
+        };
+      }
+      
+      grouped[groupKey].logs.push(log);
+    });
+    
+    return grouped;
+  };
+  
+  // 切換分組的展開/折疊狀態
+  const toggleGroupExpand = (groupKey) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
+    }));
+  };
 
   // 返回函數
   const handleGoBack = () => {
@@ -73,34 +108,49 @@ const WorkLogReview = () => {
     const loadWorkLogs = async () => {
       try {
         setIsLoading(true);
+        
+        // 診斷信息
+        console.log("嘗試載入工作日誌，過濾條件:", {
+          status: filter.status,
+          date: filter.date,
+          token: localStorage.getItem('token') ? '存在' : '不存在',
+          userRole: user?.role
+        });
+        
+        // 這里先直接測試 API 是否能訪問
+        const healthCheck = await getApiStatus();
+        console.log("API 狀態檢查結果:", healthCheck);
+        
+        // 簡化過濾條件 - 只使用狀態和日期
         const data = await searchWorkLogs({
           status: filter.status,
-          startDate: filter.date, // 使用選定的日期作為開始日期
-          endDate: filter.date    // 使用選定的日期作為結束日期（同一天）
+          startDate: filter.date, 
+          endDate: filter.date    
         });
-        setWorkLogs(data);
         
-        // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(data);
-        setGroupedWorkLogs(grouped);
-        
-        // 初始化展開狀態
-        const initialExpandState = {};
-        Object.keys(grouped).forEach(key => {
-          initialExpandState[key] = true; // 預設展開所有組
-        });
-        setExpandedGroups(initialExpandState);
-        
-        setIsLoading(false);
+        if (!Array.isArray(data)) {
+          console.error("返回的工作日誌數據不是數組:", data);
+          setWorkLogs([]);
+          setGroupedWorkLogs({});
+        } else {
+          console.log(`成功加載 ${data.length} 條工作日誌`);
+          setWorkLogs(data);
+          
+          // 將工作日誌按使用者和日期分組
+          const grouped = groupWorkLogsByUserAndDate(data);
+          setGroupedWorkLogs(grouped);
+        }
       } catch (err) {
-        setError('載入工作日誌失敗');
+        console.error('載入工作日誌失敗:', err);
+        setError(`載入工作日誌失敗: ${err.message}`);
+      } finally {
         setIsLoading(false);
       }
     };
   
     loadWorkLogs();
-  }, [filter]);
-
+  }, [filter, user]); // 添加 user 到依賴數組
+  
   // 格式化時間：只顯示 HH:MM
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -189,20 +239,18 @@ const WorkLogReview = () => {
     );
   }
 
-// 診斷輸出
-console.log('WorkLogReview 狀態:', {
-  isLoading,
-  error,
-  workLogsCount: workLogs.length,
-  groupedCount: Object.keys(groupedWorkLogs).length,
-  filter
-});
+  // 診斷輸出
+  console.log('WorkLogReview 狀態:', {
+    isLoading,
+    error,
+    workLogsCount: workLogs.length,
+    groupedCount: Object.keys(groupedWorkLogs).length,
+    filter
+  });
 
-if (workLogs.length === 0 && !isLoading && !error) {
-  console.warn('工作日誌列表為空，但沒有錯誤和載入狀態');
-}
-
-
+  if (workLogs.length === 0 && !isLoading && !error) {
+    console.warn('工作日誌列表為空，但沒有錯誤和載入狀態');
+  }
 
   return (
     <div className="bg-gray-900 text-white p-6">

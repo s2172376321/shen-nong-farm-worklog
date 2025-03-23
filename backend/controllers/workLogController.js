@@ -59,7 +59,7 @@ const WorkLogController = {
         product_quantity,
         harvestQuantity
       } = req.body;
-
+  
       // 時間格式驗證
       const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
       if (!startTime || !endTime || 
@@ -69,50 +69,15 @@ const WorkLogController = {
           details: '時間必須為 HH:MM 格式，且不能為空'
         });
       }
-
-      // 檢查位置是否有有效值
-      if (!location && !position_name) {
+  
+      // 檢查位置和作物是否至少有一個有效值
+      if ((!location && !position_name) || (!crop && !work_category_name)) {
         return res.status(400).json({ 
           message: '缺少必填欄位',
-          details: '位置為必填項'
+          details: '位置和作物/工作類別為必填項'
         });
       }
-      
-      // 檢查工作類別是否有有效值
-      if (!work_category_name) {
-        return res.status(400).json({ 
-          message: '缺少必填欄位',
-          details: '工作類別為必填項'
-        });
-      }
-      
-      // 根據工作類別執行不同的驗證
-      if (work_category_name === '種植') {
-        // 種植工作需要提供作物名稱
-        if (!crop) {
-          return res.status(400).json({ 
-            message: '缺少必填欄位',
-            details: '種植工作必須提供作物名稱'
-          });
-        }
-        
-        // 種植工作還應該檢查是否有選擇產品
-        if (!product_id || !product_name) {
-          return res.status(400).json({ 
-            message: '缺少必填欄位',
-            details: '種植工作必須選擇種子或種苗產品'
-          });
-        }
-      } else {
-        // 非種植工作，檢查作物名稱
-        if (!crop) {
-          return res.status(400).json({ 
-            message: '缺少必填欄位',
-            details: '請選擇作物名稱'
-          });
-        }
-      }
-
+  
       // 計算工作時數
       const workHoursResult = calculateWorkHours(startTime, endTime);
       
@@ -122,7 +87,7 @@ const WorkLogController = {
           details: '工作時數必須大於0且不超過8小時'
         });
       }
-
+  
       // 處理日期（使用傳入日期或當前日期）
       const workDate = date || new Date().toISOString().split('T')[0];
       
@@ -136,7 +101,7 @@ const WorkLogController = {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         RETURNING id
       `;
-      
+
       const values = [
         req.user.id,
         location || position_name || '', 
@@ -158,7 +123,7 @@ const WorkLogController = {
         new Date(workDate),
         req.body.work_categories || '{}' // 新增：默認為空數組
       ];
-
+  
       // 嘗試插入資料庫
       console.log('執行SQL查詢:', {
         userId: req.user.id,
@@ -167,7 +132,7 @@ const WorkLogController = {
         endTime,
         workDate
       });
-
+  
       const result = await db.query(query, values);
       
       // 成功回應
@@ -195,7 +160,7 @@ const WorkLogController = {
         '42P01': { message: '資料表不存在，請聯繫管理員', code: 500 },
         '42703': { message: '欄位不存在，可能需要更新資料庫結構', code: 500 }
       };
-
+  
       const mappedError = errorMap[error.code];
       if (mappedError) {
         errorMessage = mappedError.message;
@@ -210,47 +175,15 @@ const WorkLogController = {
     }
   },
 
-  // 獲取特定位置的作物列表
-  async getLocationCrops(req, res) {
-    const { positionCode } = req.params;
-    
-    try {
-      console.log(`獲取位置 ${positionCode} 的作物列表`);
-      
-      // 查詢指定位置曾種植的作物
-      const query = `
-        SELECT DISTINCT crop 
-        FROM work_logs 
-        WHERE position_code = $1 
-          AND work_category_name = '種植' 
-        ORDER BY crop
-      `;
-      
-      const result = await db.query(query, [positionCode]);
-      
-      console.log(`找到 ${result.rows.length} 種作物`);
-      
-      // 抽取作物名稱列表
-      const crops = result.rows.map(row => row.crop);
-      
-      res.json(crops);
-    } catch (error) {
-      console.error('獲取位置作物列表失敗:', error);
-      res.status(500).json({ message: '獲取位置作物列表失敗，請稍後再試' });
-    }
-  },
-
   // 優化後的 searchWorkLogs 函數
   async searchWorkLogs(req, res) {
     const { location, crop, startDate, endDate, status } = req.query;
-  
+
     try {
       console.log('收到工作日誌搜索請求:', {
         location, crop, startDate, endDate, status,
         userId: req.user?.id,
-        userRole: req.user?.role,
-        query: req.query,
-        url: req.originalUrl
+        userRole: req.user?.role
       });
       
       // 添加結果限制避免返回過多數據
@@ -263,29 +196,19 @@ const WorkLogController = {
                wl.details, wl.position_name, wl.work_category_name,
                wl.status, wl.created_at, u.username
         FROM work_logs wl
-          JOIN users u ON wl.user_id = u.id
-          ORDER BY wl.created_at DESC
-          LIMIT 20
-        `;
-
-
-        const emergencyResult = await db.query(emergencyQuery);
-        console.log(`緊急查詢找到 ${emergencyResult.rows.length} 條工作日誌`);
-
-
-        
-  
-        
+        JOIN users u ON wl.user_id = u.id
+        WHERE 1=1
+      `;
+      
       const values = [];
       let paramIndex = 1;
 
       // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
-      if (status) {
-        queryText += ` AND wl.status = $${paramIndex}`;
-        values.push(status);
+      if (!req.user.role || req.user.role !== 'admin') {
+        queryText += ` AND wl.user_id = $${paramIndex}`;
+        values.push(req.user.id);
         paramIndex++;
       }
-      
 
       if (location) {
         queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
@@ -307,13 +230,12 @@ const WorkLogController = {
       }
 
       if (startDate && endDate) {
-        // 使用 DATE() 函數優化日期比較
-        // 注意：這裡是關鍵修改，原來的查詢方式可能有問題
-        queryText += ` AND DATE(wl.created_at) BETWEEN DATE($${paramIndex}) AND DATE($${paramIndex + 1})`;
+        // 改進日期處理
+        queryText += ` AND DATE(wl.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Taipei') BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
         values.push(startDate, endDate);
         paramIndex += 2;
       }
-  
+
       // 添加排序、限制和超時設置
       queryText += ' ORDER BY wl.created_at DESC';
       queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
@@ -350,6 +272,36 @@ const WorkLogController = {
         message: '查詢工作日誌失敗，請稍後再試',
         error: process.env.NODE_ENV === 'production' ? undefined : error.message
       });
+    }
+  },
+
+  // 獲取特定位置的作物列表
+  async getLocationCrops(req, res) {
+    const { positionCode } = req.params;
+    
+    try {
+      console.log(`獲取位置 ${positionCode} 的作物列表`);
+      
+      // 查詢指定位置曾種植的作物
+      const query = `
+        SELECT DISTINCT crop 
+        FROM work_logs 
+        WHERE position_code = $1 
+          AND work_category_name = '種植' 
+        ORDER BY crop
+      `;
+      
+      const result = await db.query(query, [positionCode]);
+      
+      console.log(`找到 ${result.rows.length} 種作物`);
+      
+      // 抽取作物名稱列表
+      const crops = result.rows.map(row => row.crop);
+      
+      res.json(crops);
+    } catch (error) {
+      console.error('獲取位置作物列表失敗:', error);
+      res.status(500).json({ message: '獲取位置作物列表失敗，請稍後再試' });
     }
   },
 
@@ -548,6 +500,57 @@ const WorkLogController = {
       console.error('匯出工作日誌失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
+  },
+
+  // 新增：管理員專用的日期查詢工作日誌功能
+  async getWorkLogsByDate(req, res) {
+    const { date, status } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ message: '請提供日期參數' });
+    }
+    
+    try {
+      console.log('管理員直接查詢工作日誌，日期:', date, '狀態:', status);
+      
+      // 簡化查詢，直接按日期獲取所有日誌
+      let query = `
+        SELECT w.*, u.username 
+        FROM work_logs w
+        LEFT JOIN users u ON w.user_id = u.id
+        WHERE DATE(w.created_at) = $1
+      `;
+      
+      const params = [date];
+      
+      // 如果有指定狀態，則添加狀態過濾
+      if (status) {
+        query += ` AND w.status = $2`;
+        params.push(status);
+      }
+      
+      // 添加排序
+      query += ` ORDER BY w.created_at DESC`;
+      
+      const result = await db.query(query, params);
+      
+      console.log(`為日期 ${date} 找到 ${result.rows.length} 條工作日誌`);
+      
+      // 標準化時間格式
+      const formattedResults = result.rows.map(log => ({
+        ...log,
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+      }));
+      
+      res.json(formattedResults);
+    } catch (error) {
+      console.error('管理員直接查詢工作日誌失敗:', error);
+      res.status(500).json({
+        message: '查詢失敗',
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
+      });
+    }
   }
 };
 
@@ -591,7 +594,7 @@ WorkLogController.searchWorkLogs = async (req, isInternalCall = false) => {
     }
 
     if (startDate && endDate) {
-      queryText += ` AND wl.created_at BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+      queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
       values.push(startDate, endDate);
       paramIndex += 2;
     }

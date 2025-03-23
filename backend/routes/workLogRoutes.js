@@ -56,6 +56,14 @@ router.patch('/:workLogId/review',
   }
 );
 
+
+// 管理員直接查詢工作日誌
+router.get('/admin/by-date', 
+  authMiddleware, 
+  authMiddleware.adminOnly, 
+  WorkLogController.getWorkLogsByDate
+);
+
 // 獲取位置的作物列表
 router.get('/position/:positionCode/crops', 
   authMiddleware, 
