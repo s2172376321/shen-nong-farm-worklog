@@ -29,6 +29,15 @@ const corsOptions = {
   credentials: true
 };
 
+// 應用 CORS 到所有請求
+app.use(cors(corsOptions));
+
+// 回應 OPTIONS 請求
+app.options('*', cors(corsOptions));
+
+
+
+
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   if (req.method === 'POST' || req.method === 'PUT') {
