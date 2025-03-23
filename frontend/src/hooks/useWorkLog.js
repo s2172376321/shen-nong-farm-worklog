@@ -105,73 +105,35 @@ export const useWorkLog = () => {
     setIsLoading(true);
     setError(null);
     
-    // 計算重試延遲時間的函數
-    const getRetryDelay = (retryCount) => Math.min(1000 * Math.pow(2, retryCount), 10000);
-    
-    let retryCount = 0;
-    const maxRetries = 3;
-    
-    while (retryCount <= maxRetries) {
-      try {
-        // 添加詳細的日誌
-        console.log(`嘗試提交工作日誌 (${retryCount}/${maxRetries})`, {
-          startTime: workLogData.startTime,
-          endTime: workLogData.endTime,
-          position: workLogData.position_name,
-          category: workLogData.work_category_name
-        });
-        
-        const response = await createWorkLog(workLogData);
-        
-        // 提交成功後徹底清除所有緩存，確保列表更新
-        throttleManager.clearCache(); // 清除所有緩存
-        console.log('工作日誌提交成功 - 所有緩存已清除，確保列表顯示最新數據');
-        
-        setLastSuccessTime(Date.now());
-        setIsLoading(false);
-        
-        // 更詳細的成功日誌
-        console.log('工作日誌提交成功:', {
-          id: response.workLogId,
-          status: response.status
-        });
-        
-        return response;
-      } catch (err) {
-        retryCount++;
-        
-        // 更詳細的錯誤處理
-        console.error(`工作日誌提交失敗 (${retryCount}/${maxRetries}):`, {
-          message: err.message,
-          userMessage: err.userMessage,
-          status: err.response?.status,
-          data: err.response?.data
-        });
-        
-        // 根據錯誤類型決定是否重試
-        const shouldRetry = 
-          (err.response && err.response.status === 429) || 
-          err.message === 'Request throttled' ||
-          err.message.includes('timeout') ||
-          err.message.includes('Network Error');
-        
-        if (shouldRetry && retryCount <= maxRetries) {
-          const delay = getRetryDelay(retryCount);
-          console.warn(`將在 ${delay}ms 後重試...`);
-          
-          // 等待延遲後繼續循環
-          await new Promise(resolve => setTimeout(resolve, delay));
-          continue;
-        }
-        
-        // 已重試最大次數或非可重試錯誤
-        setError(err.userMessage || err.response?.data?.message || '提交工作日誌失敗');
-        setIsLoading(false);
-        throw err;
-      }
+    try {
+      console.log('嘗試提交工作日誌:', JSON.stringify(workLogData, null, 2));
+      
+      // 確保 Content-Type 設置正確
+      const response = await api.post('/work-logs', workLogData, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      
+      console.log('工作日誌提交成功:', response.data);
+      
+      // 清除相關快取
+      apiCache.clear('workLogs');
+      apiCache.clear('workStats');
+      apiCache.clear('todayHour');
+      
+      setLastSuccessTime(Date.now());
+      setIsLoading(false);
+      return response.data;
+    } catch (err) {
+      console.error('提交工作日誌錯誤:', err);
+      // 其他錯誤處理邏輯...
+      setIsLoading(false);
+      throw err;
     }
-  }, []);
-
+  });
+  
   // 改進的 CSV 上傳函數
   const submitCSV = useCallback(async (csvFile) => {
     setIsLoading(true);

@@ -38,7 +38,8 @@ app.use((req, res, next) => {
 });
 
 // 中间件配置
-app.use(cors(corsOptions));
+app.use(express.json({ limit: '5mb' })); // 增加限制大小
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // 安全中间件
 app.use(helmet());
