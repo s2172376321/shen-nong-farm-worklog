@@ -769,9 +769,12 @@ const validateForm = () => {
     errors.work_category = '請選擇工作類別';
   }
 
-  // 作物驗證
-  if (!workLog.crop) {
-    errors.crop = '請選擇或輸入作物名稱';
+// 作物驗證 - 修改後的代碼
+if (!workLog.crop && availableCrops.length > 0) {
+  errors.crop = '請選擇作物名稱';
+} else if (!workLog.crop && availableCrops.length === 0 && !workLog.position_code) {
+  // 如果沒有選擇位置，仍然需要作物
+  errors.crop = '請選擇位置後輸入作物名稱';
   }
   
   // 時間欄位驗證
@@ -1183,38 +1186,37 @@ return (
 
 
             <div>
-              <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
-              <select
-                value={workLog.crop}
-                onChange={handleCropChange}  
-                className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
-                  formErrors.crop ? 'border border-red-500' : ''
-                }`}
-                disabled={!workLog.position_code || availableCrops.length === 0}
-              >
-                <option value="">選擇作物</option>
-                {availableCrops.map(crop => (
-                  <option key={crop} value={crop}>{crop}</option>
-                ))}
-              </select>
-              {renderFieldError('crop')}
-              {workLog.position_code && availableCrops.length === 0 && (
-                <p className="text-yellow-500 text-xs mt-1">
-                  此位置沒有記錄種植作物，請手動輸入作物名稱或先記錄種植工作
-                </p>
-              )}
-              {/* 當沒有可用作物時顯示手動輸入欄位 */}
-              {workLog.position_code && availableCrops.length === 0 && (
-                <Input
-                  type="text"
-                  value={workLog.crop}
-                  onChange={(e) => setWorkLog(prev => ({ ...prev, crop: e.target.value }))}
-                  placeholder="請手動輸入作物名稱"
-                  className="mt-2"
-                />
-              )}
-            </div>
-
+  <label className="block mb-2">作物 <span className="text-red-500">*</span></label>
+  <select
+    value={workLog.crop}
+    onChange={handleCropChange}  
+    className={`w-full bg-gray-700 text-white p-2 rounded-lg ${
+      formErrors.crop ? 'border border-red-500' : ''
+    }`}
+    disabled={!workLog.position_code || availableCrops.length === 0}
+  >
+    <option value="">選擇作物</option>
+    {availableCrops.map(crop => (
+      <option key={crop} value={crop}>{crop}</option>
+    ))}
+  </select>
+  {renderFieldError('crop')}
+  {workLog.position_code && availableCrops.length === 0 && (
+    <p className="text-yellow-500 text-xs mt-1">
+      此位置沒有記錄種植作物，請手動輸入作物名稱或先記錄種植工作
+    </p>
+  )}
+  {/* 當沒有可用作物時顯示手動輸入欄位 */}
+  {workLog.position_code && availableCrops.length === 0 && (
+    <Input
+      type="text"
+      value={workLog.crop}
+      onChange={(e) => setWorkLog(prev => ({ ...prev, crop: e.target.value }))}
+      placeholder="請手動輸入作物名稱"
+      className="mt-2"
+    />
+  )}
+</div>
             {/* 工作類別選擇 */}
             <div>
               <label className="block mb-2">工作類別 <span className="text-red-500">*</span></label>
