@@ -2,11 +2,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui';
 import { searchWorkLogs, reviewWorkLog, getApiStatus } from '../../utils/api';
-import { useAuth } from '../../context/AuthContext'; // 添加 useAuth 引入
+import { useAuth } from '../../context/AuthContext';
 import ApiDiagnostic from '../common/ApiDiagnostic';
 
 const WorkLogReview = () => {
-  const { user } = useAuth(); // 使用 useAuth 獲取當前用戶
+  const { user } = useAuth();
   const [workLogs, setWorkLogs] = useState([]);
   const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
@@ -28,11 +28,24 @@ const WorkLogReview = () => {
 
   // 將工作日誌按使用者和日期分組
   const groupWorkLogsByUserAndDate = (logs) => {
+    console.log('開始分組工作日誌，輸入長度:', logs.length);
+    if (logs.length > 0) {
+      console.log('第一條日誌樣例:', JSON.stringify(logs[0]));
+    }
+    
     const grouped = {};
     
     logs.forEach(log => {
       // 從日期獲取年月日部分作為分組的一部分
-      const date = new Date(log.created_at).toLocaleDateString();
+      let date;
+      try {
+        date = new Date(log.created_at).toLocaleDateString();
+        console.log('處理日期:', log.created_at, '格式化後:', date);
+      } catch (e) {
+        console.error('日期格式化錯誤:', e);
+        date = 'unknown-date';
+      }
+      
       // 創建唯一的分組鍵 (使用者ID + 日期)
       const groupKey = `${log.user_id}_${date}`;
       
@@ -48,6 +61,7 @@ const WorkLogReview = () => {
       grouped[groupKey].logs.push(log);
     });
     
+    console.log('分組完成，組數:', Object.keys(grouped).length);
     return grouped;
   };
   
@@ -85,9 +99,8 @@ const WorkLogReview = () => {
     }
   };
   
-  
   // 計算日期範圍
-  const calculateDateRange = () => {
+  const calculateDateRange = useCallback(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
@@ -126,22 +139,21 @@ const WorkLogReview = () => {
           endDate: today.toISOString().split('T')[0]
         };
     }
-  };
+  }, [filter.dateRange, filter.startDate, filter.endDate]);
 
   // 載入工作日誌
   const loadWorkLogs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
-
-      // 添加認證檢查
-  const token = localStorage.getItem('token');
-  if (!token) {
-    console.error('認證令牌不存在');
-    setError('您的登入狀態已失效，請重新登入');
-    setIsLoading(false); // 確保設置 loading 狀態為 false
-    return; // 提前退出函數
-  }
+    // 添加認證檢查
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.error('認證令牌不存在');
+      setError('您的登入狀態已失效，請重新登入');
+      setIsLoading(false); // 確保設置 loading 狀態為 false
+      return; // 提前退出函數
+    }
 
     try {
       // 計算實際使用的過濾條件
@@ -177,35 +189,49 @@ const WorkLogReview = () => {
       
       const data = await searchWorkLogs(filters);
         
-    // [添加位置 2] - 在這裡添加對 API 響應的詳細日誌
-    console.log('API 響應詳細資訊:', {
-      isArray: Array.isArray(data),
-      length: Array.isArray(data) ? data.length : 'not an array',
-      recordIds: Array.isArray(data) ? data.map(item => item.id) : [],
-      sample: Array.isArray(data) && data.length > 0 ? JSON.stringify(data[0]).substring(0, 500) : null,
-      responseTime: new Date().toISOString()
-    });
-    
-    if (Array.isArray(data)) {
-      setWorkLogs(data);
-        
-      // 將工作日誌按使用者和日期分組
-      const grouped = groupWorkLogsByUserAndDate(data);
-      setGroupedWorkLogs(grouped);
-      
-      // 初始化展開狀態
-      const initialExpandState = {};
-      Object.keys(grouped).forEach(key => {
-        initialExpandState[key] = true; // 預設展開所有組
+      // 在這裡添加對 API 響應的詳細日誌
+      console.log('API 響應詳細資訊:', {
+        isArray: Array.isArray(data),
+        length: Array.isArray(data) ? data.length : 'not an array',
+        recordIds: Array.isArray(data) ? data.map(item => item.id) : [],
+        sample: Array.isArray(data) && data.length > 0 ? JSON.stringify(data[0]).substring(0, 500) : null,
+        responseTime: new Date().toISOString()
       });
-      setExpandedGroups(initialExpandState);
       
-      console.log(`成功載入並分組 ${Object.keys(grouped).length} 組工作日誌`);
-    } else {
-      console.error('API返回了非數組數據:', data);
-      setWorkLogs([]);
-      setGroupedWorkLogs({});
-      setError('返回數據格式不正確，請聯繫系統管理員');
+      // 確保數據是數組並進行標準化
+      let normalizedData = [];
+      if (Array.isArray(data)) {
+        normalizedData = data.map(log => ({
+          ...log,
+          id: log.id || `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          created_at: log.created_at || new Date().toISOString(),
+          user_id: log.user_id || 'unknown',
+          username: log.username || '未知使用者',
+          // 確保這些欄位至少有空字符串值
+          position_name: log.position_name || log.location || '',
+          location: log.location || log.position_name || '',
+          work_category_name: log.work_category_name || log.crop || '',
+          crop: log.crop || log.work_category_name || ''
+        }));
+        setWorkLogs(normalizedData);
+        
+        // 將工作日誌按使用者和日期分組
+        const grouped = groupWorkLogsByUserAndDate(normalizedData);
+        setGroupedWorkLogs(grouped);
+        
+        // 初始化展開狀態
+        const initialExpandState = {};
+        Object.keys(grouped).forEach(key => {
+          initialExpandState[key] = true; // 預設展開所有組
+        });
+        setExpandedGroups(initialExpandState);
+        
+        console.log(`成功載入並分組 ${Object.keys(grouped).length} 組工作日誌`);
+      } else {
+        console.error('API返回了非數組數據:', data);
+        setWorkLogs([]);
+        setGroupedWorkLogs({});
+        setError('返回數據格式不正確，請聯繫系統管理員');
       }
     } catch (err) {
       console.error('載入工作日誌詳細錯誤:', {
@@ -357,19 +383,10 @@ const WorkLogReview = () => {
     }
   };
   
-    
   // 組件掛載時加載數據
   useEffect(() => {
     loadWorkLogs();
   }, [loadWorkLogs]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
 
   // 診斷輸出
   console.log('WorkLogReview 狀態:', {
@@ -556,13 +573,13 @@ const WorkLogReview = () => {
         {/* 添加按钮行 */}
         <div className="mt-4 flex justify-end">
           <Button 
-  onClick={() => {
-    console.log('執行搜尋，過濾條件:', filter);
-    loadWorkLogs();
-  }}
-  className="bg-blue-600 hover:bg-blue-700"
->
-  搜尋
+            onClick={() => {
+              console.log('執行搜尋，過濾條件:', filter);
+              loadWorkLogs();
+            }}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            搜尋
           </Button>
           <Button 
             onClick={testApiConnection}
@@ -576,8 +593,31 @@ const WorkLogReview = () => {
 
       {/* 分組顯示的工作日誌 */}
       <div className="bg-gray-800 p-6 rounded-lg">
-        {Object.keys(groupedWorkLogs).length === 0 ? (
-          <p className="text-center text-gray-400">沒有符合條件的工作日誌</p>
+        {isLoading ? (
+          <div className="flex justify-center items-center py-8">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+          </div>
+        ) : error ? (
+          <div className="text-center text-red-400 py-8">
+            <p>{error}</p>
+            <Button onClick={handleRetry} className="mt-4">重試載入</Button>
+          </div>
+        ) : Object.keys(groupedWorkLogs).length === 0 ? (
+          <div className="text-center py-8">
+            <p className="text-gray-400">
+              該日期沒有符合條件的工作日誌
+            </p>
+            <p className="text-sm text-gray-500 mt-2">
+              請嘗試調整篩選條件或選擇其他日期
+            </p>
+            <Button 
+              onClick={handleRetry}
+              variant="secondary"
+              className="mt-4"
+            >
+              重新載入資料
+            </Button>
+          </div>
         ) : (
           <div className="space-y-6">
             {Object.keys(groupedWorkLogs).map(groupKey => (
@@ -687,6 +727,7 @@ const WorkLogReview = () => {
           </div>
         )}
       </div>
+
       {showDiagnostic && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="w-full max-w-3xl">

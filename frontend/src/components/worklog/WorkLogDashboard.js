@@ -24,11 +24,14 @@ const WorkLogDashboard = () => {
   
   // 過濾條件
   const [filters, setFilters] = useState({
+    location: '',  // 改為 location 而非 areaName
+    crop: '',     // 增加 crop 參數
     startDate: new Date().toISOString().split('T')[0], // 今天
     endDate: new Date().toISOString().split('T')[0],   // 今天
-    areaName: '',
+    // 可以保留這些進階參數，但確保基本參數正確
+    areaName: '',  
     location_code: ''
-  });
+    });
 
   // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
   const checkServerStatus = useCallback(async () => {
@@ -48,67 +51,52 @@ const WorkLogDashboard = () => {
     setError(null);
     
     try {
-      // 增加載入狀態日誌
       console.log('開始載入工作日誌，過濾條件:', filters);
-      
-      // 增加診斷資訊
-      const networkStatus = navigator.onLine ? '在線' : '離線';
-      const token = localStorage.getItem('token') ? '存在' : '不存在';
-      console.log('診斷資訊:', { networkStatus, token, timestamp: new Date().toISOString() });
+          // 添加網絡和認證狀態診斷
+    console.log('診斷資訊:', { 
+      networkStatus: navigator.onLine ? '在線' : '離線',
+      token: localStorage.getItem('token') ? '存在' : '不存在',
+      timestamp: new Date().toISOString() 
+    });
+
       
       const data = await fetchWorkLogs(filters);
+          // 添加詳細的收到數據診斷
+    console.log('API 返回數據類型:', typeof data);
+    console.log('API 返回是否數組:', Array.isArray(data));
+    console.log('API 返回數據長度:', Array.isArray(data) ? data.length : 'N/A');
+
       
-      if (Array.isArray(data)) {
-        console.log(`成功載入 ${data.length} 條工作日誌`);
-        setWorkLogs(data);
-      } else {
-        console.error('工作日誌數據格式不正確:', data);
-        setWorkLogs([]);
-        setError('返回數據格式不正確，請聯繫系統管理員');
-      }
-    } catch (err) {
-      console.error('載入工作日誌失敗:', err);
-      
-      // 提供更有用的錯誤訊息
-      let errorMessage = '載入工作日誌失敗，請稍後再試';
-      
-      if (!navigator.onLine) {
-        errorMessage = '網絡連接中斷，請檢查您的網絡連接';
-      } else if (err.message && err.message.includes('timeout')) {
-        errorMessage = '伺服器響應超時，請稍後再試';
-      } else if (err.response) {
-        // 處理特定的HTTP錯誤
-        switch (err.response.status) {
-          case 401:
-            errorMessage = '登入狀態已失效，請重新登入';
-            // 可選：自動登出並重定向
-            setTimeout(() => {
-              logout();
-              navigate('/login');
-            }, 2000);
-            break;
-          case 403:
-            errorMessage = '您沒有權限查看工作日誌';
-            break;
-          case 404:
-            errorMessage = '找不到工作日誌資源，請確認API設置';
-            break;
-          case 500:
-            errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
-            break;
-          default:
-            errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
-        }
-      } else if (err.request) {
-        errorMessage = '無法連接到伺服器，請檢查網絡連接';
-      }
-      
-      setError(errorMessage);
-      setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
-    } finally {
-      setIsLoading(false);
+    // 如果有數據，記錄第一條的關鍵字段
+    if (Array.isArray(data) && data.length > 0) {
+      console.log('第一條記錄範例:', {
+        id: data[0].id,
+        start_time: data[0].start_time,
+        end_time: data[0].end_time,
+        location: data[0].location || data[0].position_name,
+        status: data[0].status
+      });
+    } else {
+      console.log('API 返回空數組或非數組數據');
     }
-  }, [filters, fetchWorkLogs, logout, navigate]);
+    
+    // 確保數據是數組類型
+    if (Array.isArray(data)) {
+      setWorkLogs(data);
+    } else {
+      console.error('API 返回了非數組數據:', data);
+      setWorkLogs([]);
+      setError('返回數據格式不正確，請檢查API響應');
+    }
+  } catch (err) {
+    console.error('載入工作日誌失敗:', err);
+    setError('載入工作日誌失敗: ' + (err.message || '未知錯誤'));
+    setWorkLogs([]); // 重置工作日誌資料
+  } finally {
+    setIsLoading(false);
+  }
+}, [filters, fetchWorkLogs]);
+
 
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
@@ -174,8 +162,18 @@ const WorkLogDashboard = () => {
   // 處理過濾器變更
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    setFilters(prev => ({ ...prev, [name]: value }));
-  };
+    
+    // 確保當區域或位置代碼變更時，同時更新 location 字段
+    if (name === 'areaName' || name === 'location_code') {
+      setFilters(prev => ({
+        ...prev, 
+        [name]: value,
+        location: value // 同時設置 location 為相同值
+      }));
+    } else {
+      setFilters(prev => ({ ...prev, [name]: value }));
+    }
+    };
 
   // 處理位置選擇
   const handleLocationSelect = (locationData) => {
@@ -345,98 +343,103 @@ const WorkLogDashboard = () => {
           </div>
         </Card>
 
-        {/* 工作日誌列表 */}
-        <Card>
-          <h2 className="text-lg font-semibold p-4 border-b border-gray-700">工作日誌列表</h2>
-          
-          {isLoading ? (
-            <div className="flex justify-center p-8">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-            </div>
-          ) : error ? (
-            <div className="p-8 text-center">
-              <p className="text-red-400 mb-4">{error}</p>
-              <div className="bg-gray-800 p-4 rounded-lg text-sm text-left mb-4">
-                <p className="font-semibold mb-2">診斷信息:</p>
-                <ul className="list-disc list-inside">
-                  <li>網絡狀態: {navigator.onLine ? '在線' : '離線'}</li>
-                  <li>認證狀態: {localStorage.getItem('token') ? '已登入' : '未登入'}</li>
-                  <li>API地址: {process.env.REACT_APP_API_URL || '未設置'}</li>
-                  <li>瀏覽器: {navigator.userAgent}</li>
-                </ul>
-              </div>
-              <div className="flex space-x-4 justify-center">
-                <Button onClick={handleRetry}>重試載入</Button>
-                <Button 
-                  onClick={() => setShowDiagnostic(true)}
-                  variant="secondary"
-                >
-                  診斷連接問題
-                </Button>
-              </div>
-            </div>
-          ) : workLogs.length === 0 ? (
-            <div className="p-8 text-center text-gray-400">
-              <p>沒有找到符合條件的工作日誌</p>
-              <p className="mt-2 text-sm">您可以點擊「新增工作日誌」按鈕來建立</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="bg-gray-800">
-                    <th className="p-3 text-left">日期</th>
-                    <th className="p-3 text-left">時間</th>
-                    <th className="p-3 text-left">工作時長</th>
-                    <th className="p-3 text-left">區域</th>
-                    <th className="p-3 text-left">位置</th>
-                    <th className="p-3 text-left">工作類別</th>
-                    <th className="p-3 text-left">狀態</th>
+{/* 工作日誌列表 */}
+<Card>
+  <h2 className="text-lg font-semibold p-4 border-b border-gray-700">工作日誌列表</h2>
+  
+  {isLoading ? (
+    <div className="flex justify-center p-8">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+    </div>
+  ) : error ? (
+    <div className="p-8 text-center">
+      <p className="text-red-400 mb-4">{error}</p>
+      <div className="flex space-x-4 justify-center">
+        <Button onClick={handleRetry}>重試載入</Button>
+        <Button onClick={() => setShowDiagnostic(true)} variant="secondary">診斷連接問題</Button>
+      </div>
+    </div>
+  ) : (
+    <div>
+      {/* 診斷信息 - 僅在開發環境顯示 */}
+      {process.env.NODE_ENV !== 'production' && (
+        <div className="p-4 mb-4 bg-gray-800 rounded">
+          <h3 className="text-yellow-400 font-semibold mb-2">診斷信息</h3>
+          <p>工作日誌數量: {workLogs.length}</p>
+          <p>過濾條件: {JSON.stringify(filters)}</p>
+          <p>網絡狀態: {navigator.onLine ? '在線' : '離線'}</p>
+          <p>認證狀態: {localStorage.getItem('token') ? '已登入' : '未登入'}</p>
+        </div>
+      )}
+      
+      {workLogs.length === 0 ? (
+        <div className="p-8 text-center text-gray-400">
+          <p>沒有找到符合條件的工作日誌</p>
+          <p className="mt-2 text-sm">請嘗試修改篩選條件或點擊「新增工作日誌」</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-gray-800">
+                <th className="p-3 text-left">日期</th>
+                <th className="p-3 text-left">時間</th>
+                <th className="p-3 text-left">工作時長</th>
+                <th className="p-3 text-left">位置</th>
+                <th className="p-3 text-left">工作類別</th>
+                <th className="p-3 text-left">狀態</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workLogs.map((log, index) => {
+                // 添加詳細欄位診斷日誌
+                console.log(`渲染工作日誌 #${index}:`, {
+                  id: log.id,
+                  date: log.created_at,
+                  time: `${log.start_time} - ${log.end_time}`,
+                  location: log.location || log.position_name,
+                  category: log.work_category_name || log.crop,
+                  status: log.status
+                });
+                
+                return (
+                  <tr key={log.id || `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
+                    <td className="p-3">
+                      {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td className="p-3">
+                      {log.start_time || 'N/A'} - {log.end_time || 'N/A'}
+                    </td>
+                    <td className="p-3">
+                      {log.work_hours ? `${log.work_hours.toFixed(2)} 小時` : '計算中...'}
+                    </td>
+                    <td className="p-3">
+                      {log.position_name || log.location || 'N/A'}
+                    </td>
+                    <td className="p-3">
+                      {log.work_category_name || log.crop || 'N/A'}
+                    </td>
+                    <td className="p-3">
+                      <span 
+                        className={`px-2 py-1 rounded text-xs ${
+                          log.status === 'approved' ? 'bg-green-800 text-green-200' : 
+                          log.status === 'rejected' ? 'bg-red-800 text-red-200' : 
+                          'bg-yellow-800 text-yellow-200'}`}
+                      >
+                        {log.status === 'approved' ? '已核准' : 
+                          log.status === 'rejected' ? '已拒絕' : '審核中'}
+                      </span>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {workLogs.map((log, index) => {
-                    const durationHours = log.work_hours || calculateDuration(log.start_time, log.end_time);
-                    
-                    return (
-                      <tr key={log.id || `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
-                        <td className="p-3">
-                          {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
-                        </td>
-                        <td className="p-3">
-                          {formatTime(log.start_time)} - {formatTime(log.end_time)}
-                        </td>
-                        <td className="p-3">
-                          {typeof durationHours === 'number' ? `${durationHours.toFixed(2)} 小時` : durationHours}
-                        </td>
-                        <td className="p-3">
-                          {log.area_name || 'N/A'}
-                        </td>
-                        <td className="p-3">
-                          {log.position_name || log.location || 'N/A'}
-                        </td>
-                        <td className="p-3">
-                          {log.work_category_name || log.crop || 'N/A'}
-                        </td>
-                        <td className="p-3">
-                          <span 
-                            className={`px-2 py-1 rounded text-xs 
-                              ${log.status === 'approved' ? 'bg-green-800 text-green-200' : 
-                                log.status === 'rejected' ? 'bg-red-800 text-red-200' : 
-                                'bg-yellow-800 text-yellow-200'}`}
-                          >
-                            {log.status === 'approved' ? '已核准' : 
-                              log.status === 'rejected' ? '已拒絕' : '審核中'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )}
+</Card>
       </div>
 
       {/* 診斷工具彈窗 */}

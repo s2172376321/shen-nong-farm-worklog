@@ -177,31 +177,35 @@ const WorkLogController = {
 
   // 優化後的 searchWorkLogs 函數
   async searchWorkLogs(req, res) {
-    const { location, crop, startDate, endDate, status } = req.query;
-  
+    const { 
+      location, crop, startDate, endDate, status,
+      areaName, location_code, userName, timeRange 
+    } = req.query;
+    
     try {
       console.log('收到工作日誌搜索請求:', {
         location, crop, startDate, endDate, status,
+        areaName, location_code, userName, timeRange,
         userId: req.user?.id,
         userRole: req.user?.role
       });
-      
+        
       // 添加結果限制避免返回過多數據
       const LIMIT = 100; 
       
       // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
       let queryText = `
-        SELECT wl.id, wl.user_id, wl.location, wl.crop, 
-               wl.start_time, wl.end_time, wl.work_hours, 
-               wl.details, wl.position_name, wl.work_category_name,
-               wl.status, wl.created_at, u.username
-        FROM work_logs wl
-        JOIN users u ON wl.user_id = u.id
-        WHERE 1=1
-      `;
-      
-      const values = [];
-      let paramIndex = 1;
+      SELECT wl.id, wl.user_id, wl.location, wl.crop, 
+             wl.start_time, wl.end_time, wl.work_hours, 
+             wl.details, wl.position_name, wl.work_category_name,
+             wl.status, wl.created_at, u.username
+      FROM work_logs wl
+      JOIN users u ON wl.user_id = u.id
+      WHERE 1=1
+    `;
+    
+    const values = [];
+    let paramIndex = 1;
   
     // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
     if (!req.user.role || req.user.role !== 'admin') {
@@ -210,6 +214,14 @@ const WorkLogController = {
       paramIndex++;
     }
 
+
+        // 支持多種位置查詢參數
+        if (location || areaName || location_code) {
+          queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex} OR wl.location_code = $${paramIndex})`;
+          values.push(`%${location || areaName || location_code}%`);
+          paramIndex++;
+        }
+    
     if (location) {
       queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
       values.push(`%${location}%`);
@@ -254,13 +266,27 @@ const WorkLogController = {
     
     console.log(`查詢到 ${result.rows.length} 條工作日誌`);
     
-    // 標準化時間格式，確保前端能正確顯示
-    const formattedResults = result.rows.map(log => ({
-      ...log,
-      start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
-      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
-    }));
-    
+  // 確保每條記錄都有必要的字段，標準化日期和時間
+  const formattedResults = result.rows.map(log => ({
+    ...log,
+    id: log.id || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+    end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time,
+    created_at: log.created_at ? log.created_at.toISOString() : new Date().toISOString(),
+    username: log.username || '未知使用者'
+  }));
+    // 額外記錄每條數據的關鍵字段，幫助診斷
+    formattedResults.forEach((log, index) => {
+      console.log(`記錄 #${index+1}: id=${log.id}, start=${log.start_time}, end=${log.end_time}, location=${log.location || log.position_name || 'N/A'}`);
+    });
+  // 在 res.json(formattedResults) 之前添加
+console.log('向前端返回的數據結構範例:', 
+  formattedResults.length > 0 ? 
+  JSON.stringify(formattedResults[0], null, 2) : 
+  '沒有數據'
+);
+console.log('向前端返回的數據條數:', formattedResults.length);
+        
     res.json(formattedResults);
   } catch (error) {
     console.error('查詢工作日誌失敗:', {
