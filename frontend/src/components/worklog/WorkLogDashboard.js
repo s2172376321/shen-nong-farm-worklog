@@ -13,7 +13,7 @@ import { useWorkLogDetail } from '../../hooks/useWorkLogDetail';
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { clearCache } = useWorkLog();
+  const { fetchWorkLogs, clearCache } = useWorkLog();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -169,6 +169,15 @@ const WorkLogDashboard = () => {
       startDate: filters.startDate,
       endDate: filters.endDate
     }, `${categoryName} 工作日誌`);
+  };
+
+  // 查看特定用戶工作日誌
+  const handleViewUserLogs = (userId, username) => {
+    showWorkLogDetail({ 
+      userId,
+      startDate: filters.startDate,
+      endDate: filters.endDate
+    }, `${username || userId} 工作日誌`);
   };
 
   // 重試按鈕的處理函數

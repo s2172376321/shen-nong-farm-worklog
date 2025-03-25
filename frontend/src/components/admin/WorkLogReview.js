@@ -1,176 +1,188 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
 import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
-import { useWorkLogDetail } from '../../hooks/useWorkLogDetail'; 
+import { useWorkLogDetail } from '../../hooks/useWorkLogDetail';
+import Card from '../ui/Card';
 
 const WorkLogReview = () => {
-  const [workLogs, setWorkLogs] = useState([]);
-  const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [expandedGroups, setExpandedGroups] = useState({});
   const [filter, setFilter] = useState({
     status: 'pending',
     date: new Date().toISOString().split('T')[0] // 預設為今天日期
   });
   
-  // 引入工作日誌詳情 hook
+  // 使用 useWorkLogDetail hook 來顯示詳細日誌
   const { showWorkLogDetail, renderWorkLogDetail } = useWorkLogDetail();
+  
+  // 待審核數據統計
+  const [pendingStats, setPendingStats] = useState({
+    totalLogs: 0,
+    byUser: {}
+  });
 
   // 返回函數
   const handleGoBack = () => {
     window.history.back();
   };
 
-  // 將工作日誌按使用者和日期分組
-  const groupWorkLogsByUserAndDate = useCallback((logs) => {
-    const grouped = {};
-    
-    logs.forEach(log => {
-      // 從日期獲取年月日部分作為分組的一部分
-      const date = new Date(log.created_at).toLocaleDateString();
-      // 創建唯一的分組鍵 (使用者ID + 日期)
-      const groupKey = `${log.user_id}_${date}`;
-      
-      if (!grouped[groupKey]) {
-        grouped[groupKey] = {
-          userId: log.user_id,
-          username: log.username || '未知使用者',
-          date: date,
-          logs: []
-        };
-      }
-      
-      grouped[groupKey].logs.push(log);
-    });
-    
-    return grouped;
-  }, []);
-
-  // 切換分組的展開/折疊狀態
-  const toggleGroupExpand = (groupKey) => {
-    setExpandedGroups(prev => ({
-      ...prev,
-      [groupKey]: !prev[groupKey]
-    }));
-  };
-
-  // 格式化時間：只顯示 HH:MM
-  const formatTime = (timeString) => {
-    if (!timeString) return '';
-    // 如果時間格式已經是 HH:MM，直接返回
-    if (timeString.length === 5 && timeString.includes(':')) {
-      return timeString;
-    }
-    // 否則嘗試提取 HH:MM 部分
-    return timeString.substring(0, 5);
-  };
-
-  // 審核工作日誌
-  const handleReviewWorkLog = async (workLogId, status) => {
-    try {
-      await reviewWorkLog(workLogId, status);
-      
-      // 更新本地狀態 - 移除已審核的日誌
-      const updatedWorkLogs = workLogs.filter(log => log.id !== workLogId);
-      setWorkLogs(updatedWorkLogs);
-      
-      // 重新分組更新後的工作日誌
-      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-      setGroupedWorkLogs(updatedGrouped);
-      
-      setError(null);
-    } catch (err) {
-      setError('審核工作日誌失敗');
-    }
-  };
-
-  // 批量審核同一組的所有工作日誌
-  const handleBatchReview = async (groupKey, status) => {
-    try {
-      const group = groupedWorkLogs[groupKey];
-      
-      // 依次審核該組中的所有工作日誌
-      for (const log of group.logs) {
-        await reviewWorkLog(log.id, status);
-      }
-      
-      // 更新本地狀態 - 移除已審核的組
-      const updatedWorkLogs = workLogs.filter(log => {
-        const logDate = new Date(log.created_at).toLocaleDateString();
-        const logGroupKey = `${log.user_id}_${logDate}`;
-        return logGroupKey !== groupKey;
-      });
-      
-      setWorkLogs(updatedWorkLogs);
-      
-      // 重新分組更新後的工作日誌
-      const updatedGrouped = groupWorkLogsByUserAndDate(updatedWorkLogs);
-      setGroupedWorkLogs(updatedGrouped);
-      
-      setError(null);
-    } catch (err) {
-      setError('批量審核工作日誌失敗');
-    }
-  };
-
-  // 查看所有待審核記錄
-  const handleViewAllPendingLogs = () => {
-    showWorkLogDetail(
-      { status: 'pending' },
-      '所有待審核工作日誌'
-    );
-  };
-
-  // 查看指定日期所有工作日誌
-  const handleViewDateLogs = (date) => {
-    showWorkLogDetail(
-      { startDate: date, endDate: date },
-      `${date} 所有工作日誌`
-    );
-  };
-
-  // 查看特定使用者指定日期所有工作日誌
-  const handleViewUserDayLogs = (userId, date, username) => {
-    showWorkLogDetail(
-      { userId, startDate: date, endDate: date },
-      `${username} - ${date} 工作日誌`
-    );
-  };
-
-  // 載入工作日誌
+  // 載入待審核數據統計
   useEffect(() => {
-    const loadWorkLogs = async () => {
+    const loadPendingStats = async () => {
       try {
         setIsLoading(true);
-        const data = await searchWorkLogs({
-          status: filter.status,
-          startDate: filter.date, // 使用選定的日期作為開始日期
-          endDate: filter.date    // 使用選定的日期作為結束日期（同一天）
+        setError(null);
+        
+        // 獲取待審核日誌
+        const logs = await searchWorkLogs({
+          status: 'pending'
         });
-        setWorkLogs(data);
         
-        // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(data);
-        setGroupedWorkLogs(grouped);
-        
-        // 初始化展開狀態
-        const initialExpandState = {};
-        Object.keys(grouped).forEach(key => {
-          initialExpandState[key] = true; // 預設展開所有組
-        });
-        setExpandedGroups(initialExpandState);
-        
-        setIsLoading(false);
+        // 組織數據
+        if (Array.isArray(logs)) {
+          // 計算總數
+          const totalLogs = logs.length;
+          
+          // 按用戶統計
+          const byUser = {};
+          logs.forEach(log => {
+            const userId = log.user_id;
+            const username = log.username || 'Unknown';
+            
+            if (!byUser[userId]) {
+              byUser[userId] = {
+                username,
+                count: 0,
+                dates: {}
+              };
+            }
+            
+            byUser[userId].count++;
+            
+            // 按日期分組
+            const date = new Date(log.created_at).toISOString().split('T')[0];
+            if (!byUser[userId].dates[date]) {
+              byUser[userId].dates[date] = 0;
+            }
+            byUser[userId].dates[date]++;
+          });
+          
+          setPendingStats({
+            totalLogs,
+            byUser
+          });
+        }
       } catch (err) {
-        setError('載入工作日誌失敗');
+        console.error('載入待審核統計失敗:', err);
+        setError('無法載入待審核統計數據');
+      } finally {
         setIsLoading(false);
       }
     };
+    
+    loadPendingStats();
+  }, []);
 
-    loadWorkLogs();
-  }, [filter, groupWorkLogsByUserAndDate]);
+  // 處理日期變更
+  const handleDateChange = (e) => {
+    setFilter(prev => ({
+      ...prev,
+      date: e.target.value
+    }));
+  };
+
+  // 處理狀態變更
+  const handleStatusChange = (e) => {
+    setFilter(prev => ({
+      ...prev,
+      status: e.target.value
+    }));
+  };
+
+  // 查看特定用戶的特定日期工作日誌
+  const handleViewUserDayLogs = (userId, username, date) => {
+    // 使用 hook 顯示詳情彈窗
+    showWorkLogDetail({
+      userId,
+      startDate: date,
+      endDate: date,
+      status: filter.status
+    }, `${username} - ${date} 工作日誌`);
+  };
+  
+  // 查看所有待審核日誌
+  const handleViewAllPending = () => {
+    showWorkLogDetail({
+      status: 'pending'
+    }, '所有待審核工作日誌');
+  };
+  
+  // 查看特定日期所有待審核日誌
+  const handleViewDatePending = (date) => {
+    showWorkLogDetail({
+      status: 'pending',
+      startDate: date,
+      endDate: date
+    }, `${date} 待審核工作日誌`);
+  };
+  
+  // 查看特定用戶所有待審核日誌
+  const handleViewUserPending = (userId, username) => {
+    showWorkLogDetail({
+      status: 'pending',
+      userId
+    }, `${username} 待審核工作日誌`);
+  };
+
+  // 審核工作日誌 - 內嵌於詳情視圖中處理
+  const handleReviewWorkLog = async (workLogId, status) => {
+    try {
+      await reviewWorkLog(workLogId, status);
+      // 重新載入統計數據
+      const updatedLogs = await searchWorkLogs({
+        status: 'pending'
+      });
+      
+      // 更新統計
+      if (Array.isArray(updatedLogs)) {
+        const totalLogs = updatedLogs.length;
+        
+        const byUser = {};
+        updatedLogs.forEach(log => {
+          const userId = log.user_id;
+          const username = log.username || 'Unknown';
+          
+          if (!byUser[userId]) {
+            byUser[userId] = {
+              username,
+              count: 0,
+              dates: {}
+            };
+          }
+          
+          byUser[userId].count++;
+          
+          const date = new Date(log.created_at).toISOString().split('T')[0];
+          if (!byUser[userId].dates[date]) {
+            byUser[userId].dates[date] = 0;
+          }
+          byUser[userId].dates[date]++;
+        });
+        
+        setPendingStats({
+          totalLogs,
+          byUser
+        });
+      }
+      
+      // 提示審核成功
+      alert(`工作日誌已${status === 'approved' ? '核准' : '拒絕'}`);
+    } catch (err) {
+      console.error('審核工作日誌失敗:', err);
+      alert('審核失敗，請稍後再試');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -205,24 +217,7 @@ const WorkLogReview = () => {
         </Button>
       </div>
     
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">工作日誌審核</h1>
-        
-        <div className="flex space-x-2">
-          <Button 
-            onClick={handleViewAllPendingLogs}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            查看所有待審核
-          </Button>
-          <Button 
-            onClick={() => handleViewDateLogs(filter.date)}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            查看所有工作日誌
-          </Button>
-        </div>
-      </div>
+      <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
 
       {error && (
         <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
@@ -230,14 +225,14 @@ const WorkLogReview = () => {
         </div>
       )}
 
-      {/* 篩選器 - 修改為單一日期 */}
-      <div className="bg-gray-800 p-4 rounded-lg mb-6">
+      {/* 篩選器 */}
+      <Card className="p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block mb-2">狀態</label>
             <select
               value={filter.status}
-              onChange={(e) => setFilter({...filter, status: e.target.value})}
+              onChange={handleStatusChange}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
             >
               <option value="pending">待審核</option>
@@ -250,141 +245,98 @@ const WorkLogReview = () => {
             <input
               type="date"
               value={filter.date}
-              onChange={(e) => setFilter({...filter, date: e.target.value})}
+              onChange={handleDateChange}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
             />
           </div>
         </div>
-      </div>
+        <div className="mt-4 flex justify-end">
+          <Button 
+            onClick={() => showWorkLogDetail({
+              status: filter.status,
+              startDate: filter.date,
+              endDate: filter.date
+            }, `${filter.date} ${filter.status === 'pending' ? '待審核' : filter.status === 'approved' ? '已核准' : '已拒絕'}工作日誌`)}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            查看工作日誌
+          </Button>
+        </div>
+      </Card>
 
-      {/* 分組顯示的工作日誌 */}
-      <div className="bg-gray-800 p-6 rounded-lg">
-        {Object.keys(groupedWorkLogs).length === 0 ? (
-          <p className="text-center text-gray-400">該日期沒有符合條件的工作日誌</p>
+      {/* 待審核概覽 */}
+      <Card className="p-4 mb-6">
+        <h2 className="text-lg font-semibold mb-4 flex justify-between items-center">
+          <span>待審核工作日誌概覽</span>
+          <span className="text-sm bg-yellow-600 text-white px-2 py-1 rounded-full">
+            {pendingStats.totalLogs} 待審核
+          </span>
+        </h2>
+        
+        {pendingStats.totalLogs === 0 ? (
+          <p className="text-center text-gray-400 py-4">目前沒有待審核的工作日誌</p>
         ) : (
-          <div className="space-y-6">
-            {Object.keys(groupedWorkLogs).map(groupKey => (
-              <div key={groupKey} className="border border-gray-700 rounded-lg overflow-hidden">
-                {/* 分組標頭 */}
-                <div 
-                  className="bg-gray-700 p-4 flex justify-between items-center cursor-pointer"
-                  onClick={() => toggleGroupExpand(groupKey)}
-                >
-                  <div>
-                    <h3 className="text-xl font-semibold">
-                      {groupedWorkLogs[groupKey].username} - {groupedWorkLogs[groupKey].date}
-                    </h3>
-                    <p className="text-gray-400">
-                      共 {groupedWorkLogs[groupKey].logs.length} 筆工作紀錄
-                    </p>
+          <div>
+            <Button 
+              onClick={handleViewAllPending}
+              className="mb-4 bg-blue-600 hover:bg-blue-700 w-full"
+            >
+              查看所有待審核工作日誌
+            </Button>
+            
+            <h3 className="text-md font-semibold mb-2">按使用者分組</h3>
+            <div className="space-y-2">
+              {Object.entries(pendingStats.byUser).map(([userId, userInfo]) => (
+                <div key={userId} className="bg-gray-800 p-3 rounded-lg">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="font-medium">{userInfo.username}</h4>
+                    <span className="text-sm bg-blue-600 text-white px-2 py-1 rounded-full">
+                      {userInfo.count} 筆
+                    </span>
                   </div>
-                  <div className="flex space-x-2">
-                    {/* 查看使用者單日所有工作日誌按鈕 */}
-                    <Button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleViewUserDayLogs(
-                          groupedWorkLogs[groupKey].userId,
-                          groupedWorkLogs[groupKey].date,
-                          groupedWorkLogs[groupKey].username
-                        );
-                      }}
-                      className="px-2 py-1 text-sm"
-                    >
-                      查看詳情
-                    </Button>
-                    
-                    <button className="text-blue-400 ml-2">
-                      {expandedGroups[groupKey] ? '收起' : '展開'}
-                    </button>
-                    {filter.status === 'pending' && (
-                      <div className="flex space-x-2">
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleBatchReview(groupKey, 'approved');
-                          }}
-                          className="px-2 py-1 text-sm"
-                        >
-                          全部核准
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleBatchReview(groupKey, 'rejected');
-                          }}
-                          className="px-2 py-1 text-sm"
-                        >
-                          全部拒絕
-                        </Button>
-                      </div>
-                    )}
+                  
+                  <Button 
+                    onClick={() => handleViewUserPending(userId, userInfo.username)}
+                    variant="secondary"
+                    className="mb-2 w-full text-sm"
+                  >
+                    查看此使用者所有待審核工作日誌
+                  </Button>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {Object.entries(userInfo.dates).map(([date, count]) => (
+                      <Button 
+                        key={date}
+                        onClick={() => handleViewUserDayLogs(userId, userInfo.username, date)}
+                        className="bg-gray-700 hover:bg-gray-600 text-sm"
+                      >
+                        {date} ({count})
+                      </Button>
+                    ))}
                   </div>
                 </div>
-                
-                {/* 分組內容 */}
-                {expandedGroups[groupKey] && (
-                  <div className="p-4">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="bg-gray-700">
-                          <th className="p-3 text-left">時間</th>
-                          <th className="p-3 text-left">地點</th>
-                          <th className="p-3 text-left">工作類別</th>
-                          <th className="p-3 text-left">工作內容</th>
-                          <th className="p-3 text-left">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {groupedWorkLogs[groupKey].logs.map(log => (
-                          <tr key={log.id} className="border-b border-gray-700">
-                            <td className="p-3">
-                              {formatTime(log.start_time)} - {formatTime(log.end_time)}
-                            </td>
-                            <td className="p-3">{log.position_name || log.location}</td>
-                            <td className="p-3">{log.work_category_name || log.crop}</td>
-                            <td className="p-3">
-                              <div>
-                                <p><strong>詳情:</strong> {log.details || '無'}</p>
-                                {log.harvest_quantity > 0 && (
-                                  <p><strong>採收量:</strong> {log.harvest_quantity} 台斤</p>
-                                )}
-                                {log.product_id && (
-                                  <p><strong>使用產品:</strong> {log.product_name} ({log.product_quantity})</p>
-                                )}
-                              </div>
-                            </td>
-                            <td className="p-3 space-x-2">
-                              {filter.status === 'pending' && (
-                                <>
-                                  <Button
-                                    onClick={() => handleReviewWorkLog(log.id, 'approved')}
-                                    className="px-2 py-1 text-sm"
-                                  >
-                                    核准
-                                  </Button>
-                                  <Button
-                                    variant="secondary"
-                                    onClick={() => handleReviewWorkLog(log.id, 'rejected')}
-                                    className="px-2 py-1 text-sm"
-                                  >
-                                    拒絕
-                                  </Button>
-                                </>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
-      </div>
+      </Card>
+      
+      {/* 審核工作流程說明 */}
+      <Card className="p-4">
+        <h2 className="text-lg font-semibold mb-2">審核工作流程</h2>
+        <p className="text-gray-300 mb-4">
+          點擊「查看工作日誌」按鈕可以檢視特定日期和狀態的工作日誌。在工作日誌詳情中，您可以直接進行審核操作。
+        </p>
+        <div className="bg-gray-800 p-3 rounded-lg">
+          <h3 className="font-medium mb-2">審核指南</h3>
+          <ul className="list-disc list-inside text-gray-300 space-y-1">
+            <li>確認工作時間是否符合規定（每日8小時）</li>
+            <li>檢查工作地點和工作類別是否填寫正確</li>
+            <li>核對採收數量或使用產品是否合理</li>
+            <li>對於不符合要求的工作日誌，請選擇「拒絕」</li>
+          </ul>
+        </div>
+      </Card>
       
       {/* 渲染工作日誌詳情彈窗 */}
       {renderWorkLogDetail()}

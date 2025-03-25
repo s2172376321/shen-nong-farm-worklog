@@ -67,44 +67,78 @@ export const markNoticeAsRead = async (noticeId) => {
   return response.data;
 };
 
-// 獲取特定使用者特定日期的工作日誌
+// ----- 用戶工作日誌 API -----
 export const getUserDailyWorkLogs = async (userId, workDate) => {
-  // 生成快取鍵
-  const cacheKey = `userWorkLogs:${userId}:${workDate}`;
-  
   // 檢查快取
+  const cacheKey = `userDailyWorkLogs:${userId}:${workDate}`;
   const cachedData = apiCache.get(cacheKey);
   if (cachedData) {
-    console.log('使用快取的使用者工作日誌數據');
+    console.log('使用快取的用戶日誌數據');
     return cachedData;
   }
   
   try {
-    console.log(`嘗試獲取使用者 ${userId} 在 ${workDate} 的工作日誌`);
-    
-    const response = await api.get(`/work-logs/user/${userId}/date/${workDate}`, {
-      timeout: 10000 // 10秒超時
+    // 直接使用 searchWorkLogs API 獲取日誌數據
+    const logs = await searchWorkLogs({
+      userId,
+      startDate: workDate,
+      endDate: workDate
     });
     
-    console.log(`成功獲取 ${response.data.workLogs.length} 筆使用者工作日誌`);
-    
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
-    
-    return response.data;
-  } catch (error) {
-    console.error('獲取使用者工作日誌失敗:', error);
-    
-    // 詳細記錄錯誤
-    if (error.response) {
-      console.error('服務器回應:', {
-        status: error.response.status,
-        data: error.response.data
-      });
-    } else if (error.request) {
-      console.error('未收到服務器回應:', error.request);
+    // 如果不是數組，拋出錯誤
+    if (!Array.isArray(logs)) {
+      throw new Error('返回數據格式不正確');
     }
     
+    // 計算總工時
+    const totalHours = logs.reduce((sum, log) => {
+      return sum + (parseFloat(log.work_hours) || 0);
+    }, 0).toFixed(2);
+    
+    // 計算剩餘工時
+    const remainingHours = Math.max(0, (8 - parseFloat(totalHours))).toFixed(2);
+    
+    // 是否已完成每日工時
+    const isComplete = parseFloat(totalHours) >= 8;
+    
+    // 查詢用戶信息
+    let username = '';
+    if (logs.length > 0) {
+      username = logs[0].username || '';
+    } else {
+      // 如果日誌為空，嘗試獲取用戶名稱
+      try {
+        const userResponse = await api.get(`/users/${userId}`);
+        username = userResponse.data.username || '';
+      } catch (error) {
+        console.warn('獲取用戶名稱失敗:', error);
+      }
+    }
+    
+    // 整合數據
+    const result = {
+      userId,
+      username,
+      workDate,
+      workLogs: logs,
+      totalHours,
+      remainingHours,
+      isComplete
+    };
+    
+    // 存儲到快取
+    apiCache.set(cacheKey, result, 300000); // 快取5分鐘
+    
+    return result;
+  } catch (error) {
+    console.error('獲取用戶日誌失敗:', error);
+    
+    // 如果是特定錯誤，提供更具體的錯誤信息
+    if (error.response && error.response.status === 404) {
+      throw new Error('找不到該用戶的工作日誌');
+    }
+    
+    // 返回默認錯誤信息
     throw error;
   }
 };
