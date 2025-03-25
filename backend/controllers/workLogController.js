@@ -311,133 +311,99 @@ async getUserDailyWorkLogs(req, res) {
     }
   },
 
-  // 優化後的 searchWorkLogs 函數
-  async searchWorkLogs(req, res) {
-    // 解構所有可能的查詢參數，包括 areaName 和 location_code
-    const { location, crop, startDate, endDate, status, limit = 100, page = 1, areaName, location_code } = req.query;
-  
-    try {
-      console.log('收到工作日誌搜索請求:', {
-        location, crop, startDate, endDate, status, limit, page, areaName, location_code,
-        userId: req.user?.id,
-        userRole: req.user?.role
-      });
-      
-      // 計算分頁偏移量
-      const offset = (page - 1) * limit;
-      
-      // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
-      let queryText = `
-        SELECT wl.id, wl.user_id, wl.location, wl.crop, 
-               wl.start_time, wl.end_time, wl.work_hours, 
-               wl.details, wl.position_name, wl.work_category_name,
-               wl.status, wl.created_at, u.username
-        FROM work_logs wl
-        JOIN users u ON wl.user_id = u.id
-        WHERE 1=1
-      `;
-      
-      const values = [];
-      let paramIndex = 1;
-  
-      // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
-      if (!req.user.role || req.user.role !== 'admin') {
-        queryText += ` AND wl.user_id = $${paramIndex}`;
-        values.push(req.user.id);
-        paramIndex++;
-      }
-  
-      if (location) {
-        queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
-        values.push(`%${location}%`);
-        paramIndex++;
-      }
-  
-      if (crop) {
-        queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
-        values.push(`%${crop}%`);
-        paramIndex++;
-      }
-  
-      // 添加狀態過濾
-      if (status) {
-        queryText += ` AND wl.status = $${paramIndex}`;
-        values.push(status);
-        paramIndex++;
-      }
-  
-      if (areaName) {
-        queryText += ` AND wl.area_name = $${paramIndex}`;
-        values.push(areaName);
-        paramIndex++;
-      }
-      
-      if (location_code) {
-        queryText += ` AND wl.location_code = $${paramIndex}`;
-        values.push(location_code);
-        paramIndex++;
-      }
+// 優化後的 searchWorkLogs 函數
+async searchWorkLogs(req, res) {
+  // 提取查詢參數
+  const { startDate, endDate, status } = req.query;
+  const userId = req.user.id;
 
-      if (startDate && endDate) {
-        // 使用 DATE() 函數優化日期比較
-        queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-        values.push(startDate, endDate);
-        paramIndex += 2;
-      }
+  try {
+    console.log('收到工作日誌搜索請求:', {
+      startDate, endDate, status,
+      userId,
+      userRole: req.user?.role
+    });
+    
+    // 建立基本查詢
+    let queryText = `
+      SELECT wl.id, wl.user_id, wl.location, wl.crop, 
+             wl.start_time, wl.end_time, wl.work_hours, 
+             wl.details, wl.position_name, wl.work_category_name,
+             wl.status, wl.created_at, u.username
+      FROM work_logs wl
+      JOIN users u ON wl.user_id = u.id
+      WHERE 1=1
+    `;
+    
+    const values = [];
+    let paramIndex = 1;
 
-      // 添加總數查詢來支持分頁
-      const countQuery = `SELECT COUNT(*) FROM (${queryText}) AS count_query`;
-      const countResult = await db.query(countQuery, values);
-      const totalCount = parseInt(countResult.rows[0].count);
-
-      // 添加排序、分頁和超時設置
-      queryText += ' ORDER BY wl.created_at DESC';
-      queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-      values.push(limit, offset);
-      paramIndex += 2;
-
-      console.log('執行 SQL:', queryText);
-      console.log('參數:', values);
-
-      // 添加查詢超時設定
-      const queryOptions = { 
-        text: queryText, 
-        values: values,
-        timeout: 10000  // 設置數據庫查詢超時為 10 秒
-      };
-
-      const result = await db.query(queryOptions);
-      
-      console.log(`查詢到 ${result.rows.length} 條工作日誌，總計 ${totalCount} 條`);
-      
-      // 標準化時間格式，確保前端能正確顯示
-      const formattedResults = result.rows.map(log => ({
-        ...log,
-        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
-        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
-      }));
-      
-      res.json({
-        data: formattedResults,
-        pagination: {
-          total: totalCount,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          pages: Math.ceil(totalCount / limit)
-        }
-      });
-    } catch (error) {
-      console.error('查詢工作日誌失敗:', {
-        error: error.message,
-        stack: error.stack,
-        query: error.query
-      });
-      res.status(500).json({ 
-        message: '查詢工作日誌失敗，請稍後再試',
-        error: process.env.NODE_ENV === 'production' ? undefined : error.message
-      });
+    // 如果不是管理員，只能查看自己的工作日誌
+    if (!req.user.role || req.user.role !== 'admin') {
+      queryText += ` AND wl.user_id = $${paramIndex}`;
+      values.push(userId);
+      paramIndex++;
     }
-  },
+
+// 日期條件是必須的，確保有日期範圍
+if (startDate && endDate) {
+  queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+  values.push(startDate, endDate);
+  paramIndex += 2;
+} else if (startDate) {
+  // 如果只有開始日期，查詢單日
+  queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
+  values.push(startDate);
+  paramIndex++;
+} else {
+  // 默認查詢今天
+  const today = new Date().toISOString().split('T')[0];
+  queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
+  values.push(today);
+  paramIndex++;
+}
+    // 添加狀態過濾
+    if (status) {
+      queryText += ` AND wl.status = $${paramIndex}`;
+      values.push(status);
+      paramIndex++;
+    }
+
+    // 添加排序
+    queryText += ' ORDER BY wl.created_at DESC';
+    
+    // 限制結果數量，避免返回過多數據
+    queryText += ' LIMIT 100';
+
+    console.log('執行 SQL:', queryText);
+    console.log('參數:', values);
+
+    // 執行查詢
+    const result = await db.query(queryText, values);
+    
+    console.log(`查詢到 ${result.rows.length} 條工作日誌`);
+    
+    // 標準化時間格式，確保前端能正確顯示
+    const formattedResults = result.rows.map(log => ({
+      ...log,
+      start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+    }));
+    
+    res.json(formattedResults);
+  } catch (error) {
+    console.error('查詢工作日誌失敗:', {
+      error: error.message,
+      stack: error.stack
+    });
+    
+    res.status(500).json({ 
+      message: '查詢工作日誌失敗，請稍後再試',
+      error: process.env.NODE_ENV === 'production' ? undefined : error.message
+    });
+  }
+},
+
   
   // 獲取特定位置的作物列表
   async getLocationCrops(req, res) {

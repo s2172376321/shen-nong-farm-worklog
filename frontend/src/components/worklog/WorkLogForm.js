@@ -8,7 +8,11 @@ import {
   fetchWorkCategories, 
   fetchProducts, 
   checkServerHealth,
-  fetchLocationCrops 
+  fetchLocationCrops,
+  getWorkLogsByDate,  // 新增：引入新的 API 函數
+  getTodayWorkHours,  // 新增：引入新的工時統計函數
+  createWorkLog,      // 保留現有的創建函數
+  uploadCSV           // 保留現有的上傳函數
 } from '../../utils/api';
 
 const WorkLogForm = ({ onSubmitSuccess }) => {
@@ -295,91 +299,84 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   }, []);
   
   // 載入指定日期的工作日誌 - 改進錯誤處理和日誌記錄
-  const loadDateWorkLogs = useCallback(async (date) => {
-    if (!date) {
-      console.error('載入工作日誌需要有效日期');
-      return;
+const loadDateWorkLogs = async (date) => {
+  if (!date) {
+    console.error('載入工作日誌需要有效日期');
+    return;
+  }
+  
+  try {
+    console.log('載入日期工作日誌，日期:', date);
+    setIsLoading(true);
+    
+    // 使用新的 API 函數
+    const logs = await getWorkLogsByDate(date);
+    
+    console.log(`成功載入 ${logs.length} 筆工作日誌`);
+    setDateWorkLogs(logs);
+    
+    // 如果是今天的日期，同時更新 todayWorkLogs
+    const today = new Date().toISOString().split('T')[0];
+    if (date === today) {
+      setTodayWorkLogs(logs);
+      
+      // 獲取工時統計
+      try {
+        const hourStats = await getTodayWorkHours();
+        setRemainingHours(parseFloat(hourStats.remaining_hours));
+      } catch (err) {
+        console.error('獲取工時統計失敗:', err);
+        
+        // 使用工作日誌計算剩餘工時的備用方法
+        const { remainingHours } = calculateWorkHours(logs);
+        setRemainingHours(remainingHours);
+      }
+    } else {
+      // 非今天日期，使用工作日誌計算剩餘工時
+      const { remainingHours } = calculateWorkHours(logs);
+      setRemainingHours(remainingHours);
     }
     
-    try {
-      console.log('正在載入指定日期工作日誌，日期:', date);
-      setIsLoading(true);
-      
-      const logs = await fetchWorkLogs({ 
-        startDate: date, 
-        endDate: date 
+    // 設置下一個開始時間邏輯保持不變
+    if (logs.length > 0) {
+      const sortedLogs = [...logs].sort((a, b) => {
+        const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
+        const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
+        return timeB - timeA; // 降序排列，最新的在前面
       });
       
-      console.log('API返回的工作日誌原始數據:', logs);
-      
-      if (!Array.isArray(logs)) {
-        console.error('工作日誌資料格式不正確', logs);
-        setDateWorkLogs([]);
-        setRemainingHours(8);
-        setIsLoading(false);
-        return;
-      }
-      
-      console.log(`成功載入 ${logs.length} 筆指定日期工作日誌`);
-      
-      // 標準化時間格式
-      const normalizedLogs = logs.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || log.start_time || log.startTime,
-        end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || log.end_time || log.endTime
-      }));
-      
-      console.log('標準化後的工作日誌:', normalizedLogs);
-      setDateWorkLogs(normalizedLogs);
-      
-      // 如果是今天的日期，同時更新todayWorkLogs
-      const today = new Date().toISOString().split('T')[0];
-      if (date === today) {
-        setTodayWorkLogs(normalizedLogs);
-      }
-      
-      // 計算剩餘工時
-      const { remainingHours } = calculateWorkHours(normalizedLogs);
-      console.log('剩餘工時計算結果:', remainingHours);
-      setRemainingHours(remainingHours);
-      
-      // 如果有紀錄，設置下一個開始時間為最後一條紀錄的結束時間
-      if (normalizedLogs.length > 0) {
-        const sortedLogs = [...normalizedLogs].sort((a, b) => {
-          const timeA = a.end_time ? new Date(`2000-01-01T${a.end_time}`) : 0;
-          const timeB = b.end_time ? new Date(`2000-01-01T${b.end_time}`) : 0;
-          return timeB - timeA; // 降序排列，最新的在前面
-        });
-        
-        const latestLog = sortedLogs[0];
-        if (latestLog && latestLog.end_time) {
-          // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
-          const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
-          setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
-          console.log('設置下一個開始時間為:', nextStartTime);
-        } else {
-          setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-        }
+      const latestLog = sortedLogs[0];
+      if (latestLog && latestLog.end_time) {
+        // 如果最後時間是12:00，則下一時段從13:00開始（午休時間跳過）
+        const nextStartTime = latestLog.end_time === '12:00' ? '13:00' : latestLog.end_time;
+        setWorkLog(prev => ({ ...prev, startTime: nextStartTime }));
+        console.log('設置下一個開始時間為:', nextStartTime);
       } else {
-        // 沒有紀錄，從工作開始時間開始
         setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
       }
-    } catch (err) {
-      console.error('載入指定日期工作日誌失敗', err);
-      setDateWorkLogs([]);
-      setRemainingHours(8);
+    } else {
+      // 沒有紀錄，從工作開始時間開始
       setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
-    } finally {
-      setIsLoading(false);
     }
-  }, [fetchWorkLogs, calculateWorkHours]);
+  } catch (err) {
+    console.error('載入工作日誌失敗:', err);
+    setDateWorkLogs([]);
+    setRemainingHours(8);
+    setWorkLog(prev => ({ ...prev, startTime: '07:30' }));
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+// 載入今日工作日誌 - 簡化版
+const loadTodayWorkLogs = async () => {
+  // 直接使用 loadDateWorkLogs 加載當天的日誌
+  const today = new Date().toISOString().split('T')[0];
+  await loadDateWorkLogs(today);
+};
+
   
-  // 載入今日工作日誌
-  const loadTodayWorkLogs = useCallback(async () => {
-    // 直接使用loadDateWorkLogs加載當天的日誌
-    const today = new Date().toISOString().split('T')[0];
-    await loadDateWorkLogs(today);
-  }, [loadDateWorkLogs]);
+
 
   // 處理日期變更
   const handleDateChange = (e) => {

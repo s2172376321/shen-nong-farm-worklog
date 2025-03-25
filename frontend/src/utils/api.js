@@ -111,6 +111,102 @@ export const getUserDailyWorkLogs = async (userId, workDate) => {
   }
 };
 
+
+/**
+ * 根據用戶ID和工作日期查詢工作日誌
+ * @param {string} workDate - 格式: YYYY-MM-DD
+ * @returns {Promise<Array>} - 工作日誌數組
+ */
+export const getWorkLogsByDate = async (workDate) => {
+  try {
+    console.log(`開始查詢日期 ${workDate} 的工作日誌`);
+    
+    if (!workDate) {
+      console.warn('未提供工作日期，使用當天日期');
+      workDate = new Date().toISOString().split('T')[0];
+    }
+    
+    // 構建查詢參數
+    const params = {
+      startDate: workDate,
+      endDate: workDate
+    };
+    
+    // 發送請求，增加超時處理
+    const response = await api.get('/work-logs/search', { 
+      params,
+      timeout: 15000 // 給予較長的超時時間 (15秒)
+    });
+    
+    // 確保返回數據是數組
+    if (!Array.isArray(response.data)) {
+      console.warn('API 返回了非數組數據:', response.data);
+      return [];
+    }
+    
+    // 標準化數據格式，確保時間格式一致
+    const normalizedLogs = response.data.map(log => ({
+      ...log,
+      start_time: log.start_time?.substring(0, 5) || log.startTime?.substring(0, 5) || '',
+      end_time: log.end_time?.substring(0, 5) || log.endTime?.substring(0, 5) || '',
+      created_at: log.created_at || new Date().toISOString()
+    }));
+    
+    console.log(`成功獲取 ${normalizedLogs.length} 條工作日誌`);
+    return normalizedLogs;
+  } catch (error) {
+    // 詳細錯誤日誌
+    console.error(`查詢工作日誌失敗 (日期: ${workDate}):`, error);
+    
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到服務器響應:', error.request);
+    }
+    
+    // 返回空數組確保UI不崩潰
+    return [];
+  }
+};
+
+/**
+ * 獲取今日工時統計
+ * @returns {Promise<Object>} - 工時統計對象
+ */
+export const getTodayWorkHours = async () => {
+  try {
+    console.log('開始獲取今日工時統計');
+    
+    const response = await api.get('/work-logs/today-hour', {
+      timeout: 10000 // 10秒超時
+    });
+    
+    // 標準化數據格式
+    const data = response.data || {};
+    const result = {
+      total_hours: parseFloat(data.total_hours || 0).toFixed(2),
+      remaining_hours: parseFloat(data.remaining_hours || 8).toFixed(2),
+      is_complete: Boolean(data.is_complete)
+    };
+    
+    console.log('成功獲取今日工時統計:', result);
+    return result;
+  } catch (error) {
+    console.error('獲取今日工時統計失敗:', error);
+    
+    // 返回預設值確保UI不崩潰
+    return {
+      total_hours: "0.00",
+      remaining_hours: "8.00",
+      is_complete: false
+    };
+  }
+};
+
+
 // 修改 fetchLocationCrops 函數，增強錯誤處理
 export const fetchLocationCrops = async (positionCode) => {
   // 檢查缓存

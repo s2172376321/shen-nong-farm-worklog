@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card } from '../ui';
-import { getTodayHour } from '../../utils/api';
+import { getTodayWorkHours } from '../../utils/api';
 
 const WorkLogStats = () => {
   const [stats, setStats] = useState({
@@ -16,22 +16,29 @@ const WorkLogStats = () => {
   useEffect(() => {
     const loadStats = async () => {
       try {
-        const data = await getTodayHour();
+        setIsLoading(true);
+        
+        // 使用新的 API 函數獲取工時統計
+        const data = await getTodayWorkHours();
+        
         setStats({
           totalHours: parseFloat(data.total_hours),
           remainingHours: parseFloat(data.remaining_hours),
           isComplete: data.is_complete
         });
-        setIsLoading(false);
+        
+        setError(null);
       } catch (err) {
         console.error('載入工作統計資訊失敗:', err);
-        setError(`載入工作統計資訊失敗: ${err.response?.data?.message || '請稍後再試'}`);
+        setError(`載入工作統計資訊失敗: ${err.message || '請稍後再試'}`);
+      } finally {
         setIsLoading(false);
       }
     };
 
     loadStats();
     
+    // 定期更新數據（每 5 分鐘）
     const interval = setInterval(loadStats, 5 * 60 * 1000);
     
     return () => clearInterval(interval);
@@ -49,6 +56,9 @@ const WorkLogStats = () => {
     return (
       <Card className="bg-red-900 p-4">
         <p className="text-red-200">{error}</p>
+        <p className="text-sm text-red-300 mt-2">
+          無法載入今日工時統計，將顯示默認值
+        </p>
       </Card>
     );
   }
