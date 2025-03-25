@@ -1,9 +1,8 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
 import React, { useState, useEffect } from 'react';
-import { Button } from '../ui';
+import { Button, Card } from '../ui';  // 修正 Card 導入路徑
 import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
 import { useWorkLogDetail } from '../../hooks/useWorkLogDetail';
-import Card from '../ui/Card';
 
 const WorkLogReview = () => {
   const [isLoading, setIsLoading] = useState(true);
@@ -14,7 +13,26 @@ const WorkLogReview = () => {
   });
   
   // 使用 useWorkLogDetail hook 來顯示詳細日誌
-  const { showWorkLogDetail, renderWorkLogDetail } = useWorkLogDetail();
+  const { 
+    showWorkLogDetail, 
+    detailModalOpen, 
+    detailLoading, 
+    detailError, 
+    detailData, 
+    detailTitle, 
+    handleReviewWorkLog,
+    handleBatchReview,
+    handleDateGroupReview,
+    toggleGroupExpand,
+    closeWorkLogDetail,
+    formatTime,
+    formatDate,
+    groupedData,
+    totalWorkHours,
+    expandedGroups,
+    reviewSuccess,
+    reviewingLogId
+  } = useWorkLogDetail();
   
   // 待審核數據統計
   const [pendingStats, setPendingStats] = useState({
@@ -135,53 +153,197 @@ const WorkLogReview = () => {
     }, `${username} 待審核工作日誌`);
   };
 
-  // 審核工作日誌 - 內嵌於詳情視圖中處理
-  const handleReviewWorkLog = async (workLogId, status) => {
-    try {
-      await reviewWorkLog(workLogId, status);
-      // 重新載入統計數據
-      const updatedLogs = await searchWorkLogs({
-        status: 'pending'
-      });
-      
-      // 更新統計
-      if (Array.isArray(updatedLogs)) {
-        const totalLogs = updatedLogs.length;
-        
-        const byUser = {};
-        updatedLogs.forEach(log => {
-          const userId = log.user_id;
-          const username = log.username || 'Unknown';
+  // 渲染工作日誌詳情彈窗
+  const renderWorkLogDetail = () => {
+    if (!detailModalOpen) return null;
+    
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+        <div className="w-full max-w-4xl bg-gray-800 rounded-lg shadow-lg">
+          <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+            <h2 className="text-xl font-bold">{detailTitle}</h2>
+            <div className="flex space-x-2">
+              <div className="text-sm text-gray-300 mr-4">
+                找到 <span className="font-bold text-blue-400">{detailData.length}</span> 條記錄 
+                {totalWorkHours > 0 && (
+                  <span className="ml-2">
+                    總工時: <span className="font-bold text-blue-400">{totalWorkHours}</span> 小時
+                  </span>
+                )}
+              </div>
+              <Button 
+                onClick={closeWorkLogDetail}
+                variant="secondary"
+                className="px-2 py-1"
+              >
+                關閉
+              </Button>
+            </div>
+          </div>
           
-          if (!byUser[userId]) {
-            byUser[userId] = {
-              username,
-              count: 0,
-              dates: {}
-            };
-          }
-          
-          byUser[userId].count++;
-          
-          const date = new Date(log.created_at).toISOString().split('T')[0];
-          if (!byUser[userId].dates[date]) {
-            byUser[userId].dates[date] = 0;
-          }
-          byUser[userId].dates[date]++;
-        });
-        
-        setPendingStats({
-          totalLogs,
-          byUser
-        });
-      }
-      
-      // 提示審核成功
-      alert(`工作日誌已${status === 'approved' ? '核准' : '拒絕'}`);
-    } catch (err) {
-      console.error('審核工作日誌失敗:', err);
-      alert('審核失敗，請稍後再試');
-    }
+          <div className="p-4 max-h-[70vh] overflow-y-auto">
+            {detailLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+              </div>
+            ) : detailError ? (
+              <div className="p-4 bg-red-800 text-white rounded-lg">
+                {detailError}
+              </div>
+            ) : detailData.length === 0 ? (
+              <div className="text-center p-8 text-gray-400">
+                沒有找到符合條件的工作日誌記錄
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* 審核模式的批量操作 */}
+                {filter.status === 'pending' && detailData.length > 0 && (
+                  <div className="bg-blue-900 p-3 rounded-lg mb-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-semibold">批量審核</h3>
+                      <div className="flex space-x-2">
+                        <Button 
+                          onClick={() => handleBatchReview(detailData.map(log => log.id), 'approved')}
+                          className="bg-green-600 hover:bg-green-700 text-sm"
+                          disabled={detailLoading}
+                        >
+                          全部核准
+                        </Button>
+                        <Button 
+                          onClick={() => handleBatchReview(detailData.map(log => log.id), 'rejected')}
+                          className="bg-red-600 hover:bg-red-700 text-sm"
+                          disabled={detailLoading}
+                        >
+                          全部拒絕
+                        </Button>
+                      </div>
+                    </div>
+                    {reviewSuccess && (
+                      <div className="mt-2 bg-green-700 p-2 rounded text-white text-sm">
+                        審核操作成功完成
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {Object.keys(groupedData).map(date => (
+                  <Card key={date} className="overflow-hidden">
+                    <div className="bg-gray-700 p-3 flex justify-between items-center cursor-pointer" 
+                         onClick={() => toggleGroupExpand(date)}>
+                      <h3 className="font-semibold">{date}</h3>
+                      <div className="flex items-center">
+                        <div className="text-sm mr-4">
+                          <span className="text-gray-300">工時:</span> 
+                          <span className="font-bold text-blue-400 ml-1">
+                            {groupedData[date].totalHours} 小時
+                          </span>
+                          <span className="ml-3 text-gray-300">({groupedData[date].length} 筆記錄)</span>
+                        </div>
+                        {filter.status === 'pending' && (
+                          <div className="flex space-x-2 mr-2">
+                            <Button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateGroupReview(date, 'approved');
+                              }}
+                              className="bg-green-600 hover:bg-green-700 text-xs px-2 py-1"
+                              disabled={detailLoading}
+                            >
+                              核准此日
+                            </Button>
+                            <Button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateGroupReview(date, 'rejected');
+                              }}
+                              className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1"
+                              disabled={detailLoading}
+                            >
+                              拒絕此日
+                            </Button>
+                          </div>
+                        )}
+                        <span className="text-sm">
+                          {expandedGroups[date] ? '▼' : '►'}
+                        </span>
+                      </div>
+                    </div>
+                    
+                    {expandedGroups[date] && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="bg-gray-700">
+                              <th className="p-3 text-left">使用者</th>
+                              <th className="p-3 text-left">時間</th>
+                              <th className="p-3 text-left">工時</th>
+                              <th className="p-3 text-left">位置</th>
+                              <th className="p-3 text-left">工作類別</th>
+                              <th className="p-3 text-left">作物</th>
+                              <th className="p-3 text-left">詳情</th>
+                              {filter.status === 'pending' && (
+                                <th className="p-3 text-left">操作</th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupedData[date].map((log, index) => (
+                              <tr key={log.id || index} className={index % 2 === 0 ? 'bg-gray-800' : 'bg-gray-700'}>
+                                <td className="p-3">
+                                  {log.username || 'N/A'}
+                                </td>
+                                <td className="p-3">
+                                  {formatTime(log.start_time)} - {formatTime(log.end_time)}
+                                </td>
+                                <td className="p-3">
+                                  {log.work_hours || 'N/A'} 小時
+                                </td>
+                                <td className="p-3">
+                                  {log.position_name || log.location || 'N/A'}
+                                </td>
+                                <td className="p-3">
+                                  {log.work_category_name || 'N/A'}
+                                </td>
+                                <td className="p-3">
+                                  {log.crop || 'N/A'}
+                                </td>
+                                <td className="p-3 max-w-xs truncate">
+                                  {log.details || '無'}
+                                </td>
+                                {filter.status === 'pending' && (
+                                  <td className="p-3 whitespace-nowrap">
+                                    <div className="flex space-x-1">
+                                      <Button 
+                                        onClick={() => handleReviewWorkLog(log.id, 'approved')}
+                                        className="bg-green-600 hover:bg-green-700 text-xs px-2 py-1"
+                                        disabled={reviewingLogId === log.id || detailLoading}
+                                      >
+                                        核准
+                                      </Button>
+                                      <Button 
+                                        onClick={() => handleReviewWorkLog(log.id, 'rejected')}
+                                        className="bg-red-600 hover:bg-red-700 text-xs px-2 py-1"
+                                        disabled={reviewingLogId === log.id || detailLoading}
+                                      >
+                                        拒絕
+                                      </Button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   if (isLoading) {
