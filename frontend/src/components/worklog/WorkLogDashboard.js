@@ -8,12 +8,12 @@ import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
 import ApiDiagnostic from '../common/ApiDiagnostic';
 import { useWorkLog } from '../../hooks/useWorkLog';
+import { useWorkLogDetail } from '../../hooks/useWorkLogDetail';
 
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { fetchWorkLogs, clearCache } = useWorkLog();
-  const [workLogs, setWorkLogs] = useState([]);
+  const { clearCache } = useWorkLog();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -22,16 +22,17 @@ const WorkLogDashboard = () => {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
   
+  // 引入工作日誌詳情 hook
+  const { showWorkLogDetail, renderWorkLogDetail } = useWorkLogDetail();
+  
   // 過濾條件
   const [filters, setFilters] = useState({
-    location: '',  // 改為 location 而非 areaName
-    crop: '',     // 增加 crop 參數
     startDate: new Date().toISOString().split('T')[0], // 今天
     endDate: new Date().toISOString().split('T')[0],   // 今天
-    // 可以保留這些進階參數，但確保基本參數正確
-    areaName: '',  
-    location_code: ''
-    });
+    areaName: '',
+    location_code: '',
+    work_category_code: ''
+  });
 
   // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
   const checkServerStatus = useCallback(async () => {
@@ -44,59 +45,6 @@ const WorkLogDashboard = () => {
       setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
     }
   }, []);
-
-  // 載入工作日誌
-  const loadWorkLogs = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      console.log('開始載入工作日誌，過濾條件:', filters);
-          // 添加網絡和認證狀態診斷
-    console.log('診斷資訊:', { 
-      networkStatus: navigator.onLine ? '在線' : '離線',
-      token: localStorage.getItem('token') ? '存在' : '不存在',
-      timestamp: new Date().toISOString() 
-    });
-
-      
-      const data = await fetchWorkLogs(filters);
-          // 添加詳細的收到數據診斷
-    console.log('API 返回數據類型:', typeof data);
-    console.log('API 返回是否數組:', Array.isArray(data));
-    console.log('API 返回數據長度:', Array.isArray(data) ? data.length : 'N/A');
-
-      
-    // 如果有數據，記錄第一條的關鍵字段
-    if (Array.isArray(data) && data.length > 0) {
-      console.log('第一條記錄範例:', {
-        id: data[0].id,
-        start_time: data[0].start_time,
-        end_time: data[0].end_time,
-        location: data[0].location || data[0].position_name,
-        status: data[0].status
-      });
-    } else {
-      console.log('API 返回空數組或非數組數據');
-    }
-    
-    // 確保數據是數組類型
-    if (Array.isArray(data)) {
-      setWorkLogs(data);
-    } else {
-      console.error('API 返回了非數組數據:', data);
-      setWorkLogs([]);
-      setError('返回數據格式不正確，請檢查API響應');
-    }
-  } catch (err) {
-    console.error('載入工作日誌失敗:', err);
-    setError('載入工作日誌失敗: ' + (err.message || '未知錯誤'));
-    setWorkLogs([]); // 重置工作日誌資料
-  } finally {
-    setIsLoading(false);
-  }
-}, [filters, fetchWorkLogs]);
-
 
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
@@ -152,43 +100,75 @@ const WorkLogDashboard = () => {
     // 載入基礎數據
     loadBaseData();
     
-    // 載入工作日誌
-    loadWorkLogs();
-    
     // 清理函數
     return () => clearInterval(intervalId);
-  }, [checkServerStatus, loadBaseData, loadWorkLogs]);
+  }, [checkServerStatus, loadBaseData]);
 
   // 處理過濾器變更
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
-    
-    // 確保當區域或位置代碼變更時，同時更新 location 字段
-    if (name === 'areaName' || name === 'location_code') {
-      setFilters(prev => ({
-        ...prev, 
-        [name]: value,
-        location: value // 同時設置 location 為相同值
-      }));
-    } else {
-      setFilters(prev => ({ ...prev, [name]: value }));
-    }
-    };
-
-  // 處理位置選擇
-  const handleLocationSelect = (locationData) => {
-    if (!locationData) return;
-    
-    setFilters(prev => ({
-      ...prev, 
-      areaName: locationData.areaName || '',
-      location_code: locationData.locationCode || ''
-    }));
+    setFilters(prev => ({ ...prev, [name]: value }));
   };
 
-  // 刷新工作日誌列表
-  const refreshWorkLogs = async () => {
-    await loadWorkLogs();
+  // 處理搜尋
+  const handleSearch = () => {
+    // 準備有效的過濾條件 (移除空值)
+    const validFilters = {};
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) validFilters[key] = value;
+    });
+    
+    // 建立標題
+    let title = '工作日誌搜尋結果';
+    if (filters.startDate && filters.endDate) {
+      if (filters.startDate === filters.endDate) {
+        title = `${filters.startDate} 工作日誌`;
+      } else {
+        title = `${filters.startDate} ~ ${filters.endDate} 工作日誌`;
+      }
+    }
+    
+    // 加入篩選條件到標題
+    if (filters.areaName) {
+      title += ` - ${filters.areaName}`;
+    }
+    if (filters.work_category_code) {
+      // 找出對應的類別名稱
+      const category = workCategories.find(c => c.工作內容代號 === filters.work_category_code);
+      if (category) {
+        title += ` - ${category.工作內容名稱}`;
+      }
+    }
+    
+    // 顯示詳情彈窗
+    showWorkLogDetail(validFilters, title);
+  };
+
+  // 查看今日工作日誌
+  const handleViewTodayLogs = () => {
+    const today = new Date().toISOString().split('T')[0];
+    showWorkLogDetail({ 
+      startDate: today, 
+      endDate: today 
+    }, `${today} 工作日誌`);
+  };
+
+  // 查看特定區域工作日誌
+  const handleViewAreaLogs = (areaName) => {
+    showWorkLogDetail({ 
+      areaName,
+      startDate: filters.startDate,
+      endDate: filters.endDate
+    }, `${areaName} 工作日誌`);
+  };
+
+  // 查看特定類別工作日誌
+  const handleViewCategoryLogs = (categoryCode, categoryName) => {
+    showWorkLogDetail({ 
+      work_category_code: categoryCode,
+      startDate: filters.startDate,
+      endDate: filters.endDate
+    }, `${categoryName} 工作日誌`);
   };
 
   // 重試按鈕的處理函數
@@ -196,39 +176,6 @@ const WorkLogDashboard = () => {
     // 強制清除快取
     if (typeof clearCache === 'function') {
       clearCache();
-    }
-    
-    // 重新載入資料
-    refreshWorkLogs();
-  };
-
-  // 格式化時間顯示
-  const formatTime = (timeString) => {
-    if (!timeString) return 'N/A';
-    if (timeString.length <= 5) return timeString;
-    return timeString.substring(0, 5);
-  };
-
-  // 計算工作時長
-  const calculateDuration = (startTime, endTime) => {
-    if (!startTime || !endTime) return "N/A";
-    
-    try {
-      const startParts = startTime.split(':');
-      const endParts = endTime.split(':');
-      
-      if (startParts.length !== 2 || endParts.length !== 2) return "N/A";
-      
-      const startMinutes = parseInt(startParts[0]) * 60 + parseInt(startParts[1]);
-      const endMinutes = parseInt(endParts[0]) * 60 + parseInt(endParts[1]);
-      
-      if (isNaN(startMinutes) || isNaN(endMinutes) || endMinutes <= startMinutes) return "N/A";
-      
-      const durationHours = ((endMinutes - startMinutes) / 60).toFixed(2);
-      return `${durationHours} 小時`;
-    } catch (e) {
-      console.error("時間計算錯誤:", e);
-      return "N/A";
     }
   };
 
@@ -262,6 +209,16 @@ const WorkLogDashboard = () => {
         {/* 工作時間統計 */}
         <div className="mb-6">
           <WorkLogStats />
+          
+          {/* 快速動作按鈕 */}
+          <div className="mt-4 flex justify-end">
+            <Button 
+              onClick={handleViewTodayLogs}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              查看今日所有工作日誌
+            </Button>
+          </div>
         </div>
 
         {/* 工作日誌表單 */}
@@ -269,8 +226,8 @@ const WorkLogDashboard = () => {
           <div className="mb-6">
             <WorkLogForm 
               onSubmitSuccess={() => {
-                refreshWorkLogs();
                 setShowForm(false);
+                handleViewTodayLogs(); // 提交成功後自動查看今日工作日誌
               }} 
             />
           </div>
@@ -278,7 +235,7 @@ const WorkLogDashboard = () => {
 
         {/* 過濾器 */}
         <Card className="mb-6 p-4">
-          <h2 className="text-lg font-semibold mb-4">過濾條件</h2>
+          <h2 className="text-lg font-semibold mb-4">搜尋工作日誌</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block mb-2 text-sm">開始日期</label>
@@ -333,113 +290,144 @@ const WorkLogDashboard = () => {
               </select>
             </div>
           </div>
+          
           <div className="mt-4 flex justify-end">
             <Button 
-              onClick={refreshWorkLogs}
+              onClick={handleSearch}
               className="bg-green-600 hover:bg-green-700"
             >
-              重新整理
+              搜尋工作日誌
             </Button>
           </div>
         </Card>
 
-{/* 工作日誌列表 */}
-<Card>
-  <h2 className="text-lg font-semibold p-4 border-b border-gray-700">工作日誌列表</h2>
-  
-  {isLoading ? (
-    <div className="flex justify-center p-8">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-    </div>
-  ) : error ? (
-    <div className="p-8 text-center">
-      <p className="text-red-400 mb-4">{error}</p>
-      <div className="flex space-x-4 justify-center">
-        <Button onClick={handleRetry}>重試載入</Button>
-        <Button onClick={() => setShowDiagnostic(true)} variant="secondary">診斷連接問題</Button>
-      </div>
-    </div>
-  ) : (
-    <div>
-      {/* 診斷信息 - 僅在開發環境顯示 */}
-      {process.env.NODE_ENV !== 'production' && (
-        <div className="p-4 mb-4 bg-gray-800 rounded">
-          <h3 className="text-yellow-400 font-semibold mb-2">診斷信息</h3>
-          <p>工作日誌數量: {workLogs.length}</p>
-          <p>過濾條件: {JSON.stringify(filters)}</p>
-          <p>網絡狀態: {navigator.onLine ? '在線' : '離線'}</p>
-          <p>認證狀態: {localStorage.getItem('token') ? '已登入' : '未登入'}</p>
+        {/* 工作概覽卡片 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* 區域概覽 */}
+          <Card className="p-4">
+            <h2 className="text-lg font-semibold mb-4">區域工作概覽</h2>
+            <div className="grid grid-cols-2 gap-2">
+              {areaData.slice(0, 6).map(area => (
+                <Button 
+                  key={area.areaName}
+                  onClick={() => handleViewAreaLogs(area.areaName)}
+                  className="bg-gray-700 hover:bg-gray-600"
+                >
+                  {area.areaName}
+                </Button>
+              ))}
+            </div>
+            {areaData.length > 6 && (
+              <div className="mt-2 text-center">
+                <Button 
+                  onClick={handleSearch}
+                  variant="secondary"
+                  className="text-sm"
+                >
+                  查看更多區域
+                </Button>
+              </div>
+            )}
+          </Card>
+          
+          {/* 工作類別概覽 */}
+          <Card className="p-4">
+            <h2 className="text-lg font-semibold mb-4">工作類別概覽</h2>
+            <div className="grid grid-cols-2 gap-2">
+              {workCategories.slice(0, 6).map(category => (
+                <Button 
+                  key={category.工作內容代號}
+                  onClick={() => handleViewCategoryLogs(category.工作內容代號, category.工作內容名稱)}
+                  className="bg-gray-700 hover:bg-gray-600"
+                >
+                  {category.工作內容名稱}
+                </Button>
+              ))}
+            </div>
+            {workCategories.length > 6 && (
+              <div className="mt-2 text-center">
+                <Button 
+                  onClick={handleSearch}
+                  variant="secondary"
+                  className="text-sm"
+                >
+                  查看更多類別
+                </Button>
+              </div>
+            )}
+          </Card>
         </div>
-      )}
-      
-      {workLogs.length === 0 ? (
-        <div className="p-8 text-center text-gray-400">
-          <p>沒有找到符合條件的工作日誌</p>
-          <p className="mt-2 text-sm">請嘗試修改篩選條件或點擊「新增工作日誌」</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-800">
-                <th className="p-3 text-left">日期</th>
-                <th className="p-3 text-left">時間</th>
-                <th className="p-3 text-left">工作時長</th>
-                <th className="p-3 text-left">位置</th>
-                <th className="p-3 text-left">工作類別</th>
-                <th className="p-3 text-left">狀態</th>
-              </tr>
-            </thead>
-            <tbody>
-              {workLogs.map((log, index) => {
-                // 添加詳細欄位診斷日誌
-                console.log(`渲染工作日誌 #${index}:`, {
-                  id: log.id,
-                  date: log.created_at,
-                  time: `${log.start_time} - ${log.end_time}`,
-                  location: log.location || log.position_name,
-                  category: log.work_category_name || log.crop,
-                  status: log.status
-                });
+
+        {/* 管理功能卡片 */}
+        <Card className="mb-6 p-4">
+          <h2 className="text-lg font-semibold mb-4">工作日誌管理工具</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Button 
+              onClick={() => handleViewTodayLogs()}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              今日工作日誌
+            </Button>
+            
+            <Button 
+              onClick={() => {
+                const yesterday = new Date();
+                yesterday.setDate(yesterday.getDate() - 1);
+                const yesterdayStr = yesterday.toISOString().split('T')[0];
+                showWorkLogDetail({ 
+                  startDate: yesterdayStr, 
+                  endDate: yesterdayStr 
+                }, `${yesterdayStr} 工作日誌`);
+              }}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              昨日工作日誌
+            </Button>
+            
+            <Button 
+              onClick={() => {
+                const startDate = new Date();
+                const endDate = new Date();
+                startDate.setDate(endDate.getDate() - 6);
                 
-                return (
-                  <tr key={log.id || `index-${index}`} className={index % 2 === 0 ? 'bg-gray-900' : 'bg-gray-800'}>
-                    <td className="p-3">
-                      {log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td className="p-3">
-                      {log.start_time || 'N/A'} - {log.end_time || 'N/A'}
-                    </td>
-                    <td className="p-3">
-                      {log.work_hours ? `${log.work_hours.toFixed(2)} 小時` : '計算中...'}
-                    </td>
-                    <td className="p-3">
-                      {log.position_name || log.location || 'N/A'}
-                    </td>
-                    <td className="p-3">
-                      {log.work_category_name || log.crop || 'N/A'}
-                    </td>
-                    <td className="p-3">
-                      <span 
-                        className={`px-2 py-1 rounded text-xs ${
-                          log.status === 'approved' ? 'bg-green-800 text-green-200' : 
-                          log.status === 'rejected' ? 'bg-red-800 text-red-200' : 
-                          'bg-yellow-800 text-yellow-200'}`}
-                      >
-                        {log.status === 'approved' ? '已核准' : 
-                          log.status === 'rejected' ? '已拒絕' : '審核中'}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  )}
-</Card>
+                showWorkLogDetail({ 
+                  startDate: startDate.toISOString().split('T')[0], 
+                  endDate: endDate.toISOString().split('T')[0] 
+                }, `本週工作日誌`);
+              }}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              本週工作日誌
+            </Button>
+          </div>
+        </Card>
+        
+        {/* 說明卡片 */}
+        <Card className="p-4 bg-gray-800">
+          <h2 className="text-lg font-semibold mb-2">工作日誌使用說明</h2>
+          <ul className="list-disc list-inside text-gray-300 space-y-2">
+            <li>點擊「新增工作日誌」按鈕來記錄你的工作</li>
+            <li>使用上方的過濾條件來搜尋特定工作日誌</li>
+            <li>點擊區域或工作類別按鈕快速查看相關工作日誌</li>
+            <li>每日工作時間需達8小時，請確保完成你的工作時數</li>
+          </ul>
+          
+          {error && (
+            <div className="mt-4 p-3 bg-red-800 rounded-lg">
+              <p className="text-white">{error}</p>
+              <div className="mt-2">
+                <Button onClick={handleRetry}>重試載入</Button>
+                <Button 
+                  onClick={() => setShowDiagnostic(true)}
+                  variant="secondary"
+                  className="ml-2"
+                >
+                  診斷連接問題
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
       </div>
 
       {/* 診斷工具彈窗 */}
@@ -450,6 +438,9 @@ const WorkLogDashboard = () => {
           </div>
         </div>
       )}
+      
+      {/* 渲染工作日誌詳情彈窗 */}
+      {renderWorkLogDetail()}
     </div>
   );
 };

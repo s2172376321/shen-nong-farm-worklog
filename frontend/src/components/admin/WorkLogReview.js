@@ -1,51 +1,35 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui';
-import { searchWorkLogs, reviewWorkLog, getApiStatus } from '../../utils/api';
-import { useAuth } from '../../context/AuthContext';
-import ApiDiagnostic from '../common/ApiDiagnostic';
+import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
+import { useWorkLogDetail } from '../../hooks/useWorkLogDetail'; 
 
 const WorkLogReview = () => {
-  const { user } = useAuth();
   const [workLogs, setWorkLogs] = useState([]);
   const [groupedWorkLogs, setGroupedWorkLogs] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedGroups, setExpandedGroups] = useState({});
-  const [showDiagnostic, setShowDiagnostic] = useState(false);
-
   const [filter, setFilter] = useState({
     status: 'pending',
-    date: new Date().toISOString().split('T')[0], // 預設為今天日期
-    dateRange: 'today', // 新增: 'today', 'week', 'month', 'custom'
-    startDate: new Date().toISOString().split('T')[0], // 新增: 自訂起始日期
-    endDate: new Date().toISOString().split('T')[0], // 新增: 自訂結束日期
-    location: '', // 新增: 位置篩選
-    crop: '', // 新增: 作物篩選
-    userName: '', // 新增: 用戶名稱篩選
-    timeRange: 'all' // 新增: 'all', 'morning', 'afternoon'
+    date: new Date().toISOString().split('T')[0] // 預設為今天日期
   });
+  
+  // 引入工作日誌詳情 hook
+  const { showWorkLogDetail, renderWorkLogDetail } = useWorkLogDetail();
+
+  // 返回函數
+  const handleGoBack = () => {
+    window.history.back();
+  };
 
   // 將工作日誌按使用者和日期分組
-  const groupWorkLogsByUserAndDate = (logs) => {
-    console.log('開始分組工作日誌，輸入長度:', logs.length);
-    if (logs.length > 0) {
-      console.log('第一條日誌樣例:', JSON.stringify(logs[0]));
-    }
-    
+  const groupWorkLogsByUserAndDate = useCallback((logs) => {
     const grouped = {};
     
     logs.forEach(log => {
       // 從日期獲取年月日部分作為分組的一部分
-      let date;
-      try {
-        date = new Date(log.created_at).toLocaleDateString();
-        console.log('處理日期:', log.created_at, '格式化後:', date);
-      } catch (e) {
-        console.error('日期格式化錯誤:', e);
-        date = 'unknown-date';
-      }
-      
+      const date = new Date(log.created_at).toLocaleDateString();
       // 創建唯一的分組鍵 (使用者ID + 日期)
       const groupKey = `${log.user_id}_${date}`;
       
@@ -61,20 +45,9 @@ const WorkLogReview = () => {
       grouped[groupKey].logs.push(log);
     });
     
-    console.log('分組完成，組數:', Object.keys(grouped).length);
     return grouped;
-  };
-  
-  const handleRetry = () => {
-    // 清除快取（如果有使用快取）
-    if (typeof window.clearApiCache === 'function') {
-      window.clearApiCache('workLogs');
-    }
-    
-    // 重新載入數據
-    loadWorkLogs();
-  };
-  
+  }, []);
+
   // 切換分組的展開/折疊狀態
   const toggleGroupExpand = (groupKey) => {
     setExpandedGroups(prev => ({
@@ -83,207 +56,6 @@ const WorkLogReview = () => {
     }));
   };
 
-  // 返回函數
-  const handleGoBack = () => {
-    window.history.back();
-  };
-
-  // 處理過濾器變更
-  const handleFilterChange = (e) => {
-    const { name, value } = e.target;
-    setFilter(prev => ({ ...prev, [name]: value }));
-    
-    // 當主要過濾條件改變時，立即重新載入數據
-    if (['status', 'dateRange', 'startDate', 'endDate'].includes(name)) {
-      setTimeout(() => loadWorkLogs(), 100); // 稍微延遲以確保狀態更新
-    }
-  };
-  
-  // 計算日期範圍
-  const calculateDateRange = useCallback(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    switch (filter.dateRange) {
-      case 'today':
-        return {
-          startDate: today.toISOString().split('T')[0],
-          endDate: today.toISOString().split('T')[0]
-        };
-      case 'week': {
-        const startOfWeek = new Date(today);
-        startOfWeek.setDate(today.getDate() - today.getDay()); // 當週週日
-        const endOfWeek = new Date(today);
-        endOfWeek.setDate(startOfWeek.getDate() + 6); // 當週週六
-        return {
-          startDate: startOfWeek.toISOString().split('T')[0],
-          endDate: endOfWeek.toISOString().split('T')[0]
-        };
-      }
-      case 'month': {
-        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-        const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        return {
-          startDate: startOfMonth.toISOString().split('T')[0],
-          endDate: endOfMonth.toISOString().split('T')[0]
-        };
-      }
-      case 'custom':
-        return {
-          startDate: filter.startDate,
-          endDate: filter.endDate
-        };
-      default:
-        return {
-          startDate: today.toISOString().split('T')[0],
-          endDate: today.toISOString().split('T')[0]
-        };
-    }
-  }, [filter.dateRange, filter.startDate, filter.endDate]);
-
-  // 載入工作日誌
-  const loadWorkLogs = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    // 添加認證檢查
-    const token = localStorage.getItem('token');
-    if (!token) {
-      console.error('認證令牌不存在');
-      setError('您的登入狀態已失效，請重新登入');
-      setIsLoading(false); // 確保設置 loading 狀態為 false
-      return; // 提前退出函數
-    }
-
-    try {
-      // 計算實際使用的過濾條件
-      const dateRange = calculateDateRange();
-      const filters = {
-        status: filter.status,
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate,
-        location: filter.location,
-        crop: filter.crop,
-        userName: filter.userName,
-        timeRange: filter.timeRange
-      };
-      
-      // 增加詳細的載入狀態日誌
-      console.log('API 請求實際發送的參數:', {
-        ...filters,
-        dateRangeInfo: {
-          calculated: dateRange,
-          originalStartDate: filter.startDate,
-          originalEndDate: filter.endDate
-        },
-        requestTime: new Date().toISOString()
-      });
-        
-      // 在請求前添加測試代碼以檢查API是否可訪問
-      try {
-        const serverStatus = await getApiStatus();
-        console.log('伺服器狀態檢查結果:', serverStatus);
-      } catch (statusErr) {
-        console.error('伺服器狀態檢查失敗:', statusErr);
-      }
-      
-      const data = await searchWorkLogs(filters);
-        
-      // 在這裡添加對 API 響應的詳細日誌
-      console.log('API 響應詳細資訊:', {
-        isArray: Array.isArray(data),
-        length: Array.isArray(data) ? data.length : 'not an array',
-        recordIds: Array.isArray(data) ? data.map(item => item.id) : [],
-        sample: Array.isArray(data) && data.length > 0 ? JSON.stringify(data[0]).substring(0, 500) : null,
-        responseTime: new Date().toISOString()
-      });
-      
-      // 確保數據是數組並進行標準化
-      let normalizedData = [];
-      if (Array.isArray(data)) {
-        normalizedData = data.map(log => ({
-          ...log,
-          id: log.id || `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          created_at: log.created_at || new Date().toISOString(),
-          user_id: log.user_id || 'unknown',
-          username: log.username || '未知使用者',
-          // 確保這些欄位至少有空字符串值
-          position_name: log.position_name || log.location || '',
-          location: log.location || log.position_name || '',
-          work_category_name: log.work_category_name || log.crop || '',
-          crop: log.crop || log.work_category_name || ''
-        }));
-        setWorkLogs(normalizedData);
-        
-        // 將工作日誌按使用者和日期分組
-        const grouped = groupWorkLogsByUserAndDate(normalizedData);
-        setGroupedWorkLogs(grouped);
-        
-        // 初始化展開狀態
-        const initialExpandState = {};
-        Object.keys(grouped).forEach(key => {
-          initialExpandState[key] = true; // 預設展開所有組
-        });
-        setExpandedGroups(initialExpandState);
-        
-        console.log(`成功載入並分組 ${Object.keys(grouped).length} 組工作日誌`);
-      } else {
-        console.error('API返回了非數組數據:', data);
-        setWorkLogs([]);
-        setGroupedWorkLogs({});
-        setError('返回數據格式不正確，請聯繫系統管理員');
-      }
-    } catch (err) {
-      console.error('載入工作日誌詳細錯誤:', {
-        message: err.message,
-        userMessage: err.userMessage,
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        data: err.response?.data,
-        config: {
-          url: err.config?.url,
-          method: err.config?.method,
-          headers: err.config?.headers ? '存在' : '不存在'
-        }
-      });
-      
-      // 提供更有用的錯誤訊息
-      let errorMessage = '載入工作日誌失敗，請稍後再試';
-      
-      if (!navigator.onLine) {
-        errorMessage = '網絡連接中斷，請檢查您的網絡連接';
-      } else if (err.message && err.message.includes('timeout')) {
-        errorMessage = '伺服器響應超時，請稍後再試';
-      } else if (err.response) {
-        // 處理特定的HTTP錯誤
-        switch (err.response.status) {
-          case 401:
-            errorMessage = '登入狀態已失效，請重新登入';
-            break;
-          case 403:
-            errorMessage = '您沒有權限查看工作日誌';
-            break;
-          case 404:
-            errorMessage = '找不到工作日誌資源，請確認API設置';
-            break;
-          case 500:
-            errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
-            break;
-          default:
-            errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
-        }
-      } else if (err.request) {
-        errorMessage = '無法連接到伺服器，請檢查網絡連接';
-      }
-      
-      setError(errorMessage);
-      setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
-      setGroupedWorkLogs({});
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filter, calculateDateRange]);
-    
   // 格式化時間：只顯示 HH:MM
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -310,7 +82,6 @@ const WorkLogReview = () => {
       
       setError(null);
     } catch (err) {
-      console.error('審核工作日誌失敗:', err);
       setError('審核工作日誌失敗');
     }
   };
@@ -340,65 +111,73 @@ const WorkLogReview = () => {
       
       setError(null);
     } catch (err) {
-      console.error('批量審核工作日誌失敗:', err);
       setError('批量審核工作日誌失敗');
     }
   };
 
-  // 添加此函數用於測試API連接
-  const testApiConnection = async () => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3002/api'}/health-check`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-        }
-      });
-      const data = await response.json();
-      
-      alert(`API連接測試結果: ${JSON.stringify(data, null, 2)}`);
-    } catch (error) {
-      alert(`API連接測試失敗: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+  // 查看所有待審核記錄
+  const handleViewAllPendingLogs = () => {
+    showWorkLogDetail(
+      { status: 'pending' },
+      '所有待審核工作日誌'
+    );
   };
 
-  // 處理日期變更
-  const handleDateChange = (e) => {
-    const newDate = e.target.value;
-    console.log('日期變更為:', newDate);
-    
-    if (newDate) {
-      setFilter(prev => ({
-        ...prev,
-        date: newDate,
-        startDate: newDate,  // 直接使用日期字符串，無需轉換
-        endDate: newDate,    // 直接使用日期字符串，無需轉換
-        dateRange: 'custom'  // 切換到自定義日期範圍
-      }));
-      
-      // 立即載入新的日期的數據
-      loadWorkLogs();
-    }
+  // 查看指定日期所有工作日誌
+  const handleViewDateLogs = (date) => {
+    showWorkLogDetail(
+      { startDate: date, endDate: date },
+      `${date} 所有工作日誌`
+    );
   };
-  
-  // 組件掛載時加載數據
+
+  // 查看特定使用者指定日期所有工作日誌
+  const handleViewUserDayLogs = (userId, date, username) => {
+    showWorkLogDetail(
+      { userId, startDate: date, endDate: date },
+      `${username} - ${date} 工作日誌`
+    );
+  };
+
+  // 載入工作日誌
   useEffect(() => {
+    const loadWorkLogs = async () => {
+      try {
+        setIsLoading(true);
+        const data = await searchWorkLogs({
+          status: filter.status,
+          startDate: filter.date, // 使用選定的日期作為開始日期
+          endDate: filter.date    // 使用選定的日期作為結束日期（同一天）
+        });
+        setWorkLogs(data);
+        
+        // 將工作日誌按使用者和日期分組
+        const grouped = groupWorkLogsByUserAndDate(data);
+        setGroupedWorkLogs(grouped);
+        
+        // 初始化展開狀態
+        const initialExpandState = {};
+        Object.keys(grouped).forEach(key => {
+          initialExpandState[key] = true; // 預設展開所有組
+        });
+        setExpandedGroups(initialExpandState);
+        
+        setIsLoading(false);
+      } catch (err) {
+        setError('載入工作日誌失敗');
+        setIsLoading(false);
+      }
+    };
+
     loadWorkLogs();
-  }, [loadWorkLogs]);
+  }, [filter, groupWorkLogsByUserAndDate]);
 
-  // 診斷輸出
-  console.log('WorkLogReview 狀態:', {
-    isLoading,
-    error,
-    workLogsCount: workLogs.length,
-    groupedCount: Object.keys(groupedWorkLogs).length,
-    filter
-  });
-
-  if (workLogs.length === 0 && !isLoading && !error) {
-    console.warn('工作日誌列表為空，但沒有錯誤和載入狀態');
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
   }
 
   return (
@@ -426,198 +205,62 @@ const WorkLogReview = () => {
         </Button>
       </div>
     
-      <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">工作日誌審核</h1>
+        
+        <div className="flex space-x-2">
+          <Button 
+            onClick={handleViewAllPendingLogs}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            查看所有待審核
+          </Button>
+          <Button 
+            onClick={() => handleViewDateLogs(filter.date)}
+            className="bg-green-600 hover:bg-green-700"
+          >
+            查看所有工作日誌
+          </Button>
+        </div>
+      </div>
 
       {error && (
         <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          <p className="mb-2">{error}</p>
-          <div className="flex space-x-2">
-            <Button onClick={handleRetry} className="mt-2">
-              重試載入
-            </Button>
-            <Button 
-              onClick={() => setShowDiagnostic(true)}
-              variant="secondary"
-              className="ml-2 mt-2"
-            >
-              診斷連接問題
-            </Button>
-            <Button 
-              onClick={testApiConnection}
-              variant="secondary"
-              className="ml-2 mt-2"
-            >
-              測試API連接
-            </Button>
-          </div>
+          {error}
         </div>
       )}
 
-      {/* 增強的篩選器面板 */}
+      {/* 篩選器 - 修改為單一日期 */}
       <div className="bg-gray-800 p-4 rounded-lg mb-6">
-        <h2 className="text-xl font-semibold mb-4">篩選條件</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* 狀態篩選 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block mb-2">狀態</label>
             <select
-              name="status"
               value={filter.status}
-              onChange={handleFilterChange}
+              onChange={(e) => setFilter({...filter, status: e.target.value})}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
             >
               <option value="pending">待審核</option>
               <option value="approved">已核准</option>
               <option value="rejected">已拒絕</option>
-              <option value="">全部</option>
             </select>
           </div>
-          
-          {/* 日期範圍選擇 */}
           <div>
-            <label className="block mb-2">日期範圍</label>
-            <select
-              name="dateRange"
-              value={filter.dateRange}
-              onChange={handleFilterChange}
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            >
-              <option value="today">今天</option>
-              <option value="week">本週</option>
-              <option value="month">本月</option>
-              <option value="custom">自訂範圍</option>
-            </select>
-          </div>
-          
-          {/* 時段篩選 */}
-          <div>
-            <label className="block mb-2">時段篩選</label>
-            <select
-              name="timeRange"
-              value={filter.timeRange}
-              onChange={handleFilterChange}
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            >
-              <option value="all">全部時段</option>
-              <option value="morning">上午 (00:00-11:59)</option>
-              <option value="afternoon">下午 (12:00-23:59)</option>
-            </select>
-          </div>
-          
-          {/* 自訂日期範圍 - 只有在選擇自訂範圍時顯示 */}
-          {filter.dateRange === 'custom' && (
-            <>
-              <div>
-                <label className="block mb-2">開始日期</label>
-                <input
-                  type="date"
-                  name="startDate"
-                  value={filter.startDate}
-                  onChange={handleFilterChange}
-                  className="w-full bg-gray-700 text-white p-2 rounded-lg"
-                />
-              </div>
-              <div>
-                <label className="block mb-2">結束日期</label>
-                <input
-                  type="date"
-                  name="endDate"
-                  value={filter.endDate}
-                  onChange={handleFilterChange}
-                  className="w-full bg-gray-700 text-white p-2 rounded-lg"
-                />
-              </div>
-            </>
-          )}
-          
-          {/* 位置篩選 */}
-          <div>
-            <label className="block mb-2">位置</label>
+            <label className="block mb-2">日期</label>
             <input
-              type="text"
-              name="location"
-              value={filter.location}
-              onChange={handleFilterChange}
-              placeholder="輸入位置關鍵字"
+              type="date"
+              value={filter.date}
+              onChange={(e) => setFilter({...filter, date: e.target.value})}
               className="w-full bg-gray-700 text-white p-2 rounded-lg"
             />
           </div>
-          
-          {/* 作物篩選 */}
-          <div>
-            <label className="block mb-2">作物/工作類別</label>
-            <input
-              type="text"
-              name="crop"
-              value={filter.crop}
-              onChange={handleFilterChange}
-              placeholder="輸入作物或工作類別關鍵字"
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            />
-          </div>
-          
-          {/* 用戶名稱篩選 */}
-          <div>
-            <label className="block mb-2">使用者</label>
-            <input
-              type="text"
-              name="userName"
-              value={filter.userName}
-              onChange={handleFilterChange}
-              placeholder="輸入使用者名稱"
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            />
-          </div>
-        </div>
-        
-        {/* 添加按钮行 */}
-        <div className="mt-4 flex justify-end">
-          <Button 
-            onClick={() => {
-              console.log('執行搜尋，過濾條件:', filter);
-              loadWorkLogs();
-            }}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            搜尋
-          </Button>
-          <Button 
-            onClick={testApiConnection}
-            variant="secondary"
-            className="ml-2"
-          >
-            測試API連接
-          </Button>
         </div>
       </div>
 
       {/* 分組顯示的工作日誌 */}
       <div className="bg-gray-800 p-6 rounded-lg">
-        {isLoading ? (
-          <div className="flex justify-center items-center py-8">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-          </div>
-        ) : error ? (
-          <div className="text-center text-red-400 py-8">
-            <p>{error}</p>
-            <Button onClick={handleRetry} className="mt-4">重試載入</Button>
-          </div>
-        ) : Object.keys(groupedWorkLogs).length === 0 ? (
-          <div className="text-center py-8">
-            <p className="text-gray-400">
-              該日期沒有符合條件的工作日誌
-            </p>
-            <p className="text-sm text-gray-500 mt-2">
-              請嘗試調整篩選條件或選擇其他日期
-            </p>
-            <Button 
-              onClick={handleRetry}
-              variant="secondary"
-              className="mt-4"
-            >
-              重新載入資料
-            </Button>
-          </div>
+        {Object.keys(groupedWorkLogs).length === 0 ? (
+          <p className="text-center text-gray-400">該日期沒有符合條件的工作日誌</p>
         ) : (
           <div className="space-y-6">
             {Object.keys(groupedWorkLogs).map(groupKey => (
@@ -636,7 +279,22 @@ const WorkLogReview = () => {
                     </p>
                   </div>
                   <div className="flex space-x-2">
-                    <button className="text-blue-400">
+                    {/* 查看使用者單日所有工作日誌按鈕 */}
+                    <Button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewUserDayLogs(
+                          groupedWorkLogs[groupKey].userId,
+                          groupedWorkLogs[groupKey].date,
+                          groupedWorkLogs[groupKey].username
+                        );
+                      }}
+                      className="px-2 py-1 text-sm"
+                    >
+                      查看詳情
+                    </Button>
+                    
+                    <button className="text-blue-400 ml-2">
                       {expandedGroups[groupKey] ? '收起' : '展開'}
                     </button>
                     {filter.status === 'pending' && (
@@ -727,14 +385,9 @@ const WorkLogReview = () => {
           </div>
         )}
       </div>
-
-      {showDiagnostic && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="w-full max-w-3xl">
-            <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
-          </div>
-        </div>
-      )}
+      
+      {/* 渲染工作日誌詳情彈窗 */}
+      {renderWorkLogDetail()}
     </div>
   );
 };

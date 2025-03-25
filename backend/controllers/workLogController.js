@@ -59,7 +59,7 @@ const WorkLogController = {
         product_quantity,
         harvestQuantity
       } = req.body;
-  
+
       // 時間格式驗證
       const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
       if (!startTime || !endTime || 
@@ -69,7 +69,7 @@ const WorkLogController = {
           details: '時間必須為 HH:MM 格式，且不能為空'
         });
       }
-  
+
       // 檢查位置和作物是否至少有一個有效值
       if ((!location && !position_name) || (!crop && !work_category_name)) {
         return res.status(400).json({ 
@@ -77,7 +77,7 @@ const WorkLogController = {
           details: '位置和作物/工作類別為必填項'
         });
       }
-  
+
       // 計算工作時數
       const workHoursResult = calculateWorkHours(startTime, endTime);
       
@@ -87,9 +87,23 @@ const WorkLogController = {
           details: '工作時數必須大於0且不超過8小時'
         });
       }
-  
+
       // 處理日期（使用傳入日期或當前日期）
       const workDate = date || new Date().toISOString().split('T')[0];
+      
+      // 驗證日期格式是否有效
+      const validWorkDate = new Date(workDate);
+      if (isNaN(validWorkDate.getTime())) {
+        return res.status(400).json({
+          message: '無效的日期格式',
+          details: '請提供有效的日期格式 YYYY-MM-DD'
+        });
+      }
+      
+      // 使用相同的日期作為開始和結束日期
+      const formattedDate = validWorkDate.toISOString().split('T')[0];
+      const startDate = formattedDate;
+      const endDate = formattedDate;
       
       const query = `
         INSERT INTO work_logs 
@@ -97,8 +111,9 @@ const WorkLogController = {
          location_code, position_code, position_name, 
          work_category_code, work_category_name, 
          product_id, product_name, product_quantity,
-         harvest_quantity, created_at, work_categories)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         harvest_quantity, created_at, work_categories,
+         start_date, end_date)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING id
       `;
 
@@ -120,19 +135,23 @@ const WorkLogController = {
         product_quantity || 0,
         harvestQuantity || 0,
         // 指定創建日期
-        new Date(workDate),
-        req.body.work_categories || '{}' // 新增：默認為空數組
+        validWorkDate,
+        req.body.work_categories || '{}', // 工作類別數組
+        startDate,  // 開始日期
+        endDate     // 結束日期
       ];
-  
+
       // 嘗試插入資料庫
       console.log('執行SQL查詢:', {
         userId: req.user.id,
         workHours: workHoursResult.hours,
         startTime,
         endTime,
-        workDate
+        workDate,
+        startDate,
+        endDate
       });
-  
+
       const result = await db.query(query, values);
       
       // 成功回應
@@ -175,132 +194,251 @@ const WorkLogController = {
     }
   },
 
-  // 優化後的 searchWorkLogs 函數
-  async searchWorkLogs(req, res) {
-    const { 
-      location, crop, startDate, endDate, status,
-      areaName, location_code, userName, timeRange 
-    } = req.query;
+  // 獲取特定使用者特定日期的工作日誌
+async getUserDailyWorkLogs(req, res) {
+  const { userId, workDate } = req.params;
+  
+  try {
+    console.log(`獲取使用者 ${userId} 在 ${workDate} 的工作日誌`);
     
-    try {
-      console.log('收到工作日誌搜索請求:', {
-        location, crop, startDate, endDate, status,
-        areaName, location_code, userName, timeRange,
-        userId: req.user?.id,
-        userRole: req.user?.role
+    // 驗證日期格式
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(workDate)) {
+      return res.status(400).json({ 
+        message: '日期格式不正確',
+        details: '日期必須為 YYYY-MM-DD 格式'
       });
-        
-      // 添加結果限制避免返回過多數據
-      const LIMIT = 100; 
-      
-      // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
-      let queryText = `
-      SELECT wl.id, wl.user_id, wl.location, wl.crop, 
-             wl.start_time, wl.end_time, wl.work_hours, 
-             wl.details, wl.position_name, wl.work_category_name,
-             wl.status, wl.created_at, u.username
+    }
+
+    // 只允許使用者查看自己的日誌，或管理員可以查看所有人的
+    if (req.user.id !== userId && req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        message: '無權限查詢其他使用者的工作日誌'
+      });
+    }
+
+    // 使用參數化查詢避免SQL注入
+    const query = `
+      SELECT wl.*, u.username 
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
-      WHERE 1=1
+      WHERE wl.user_id = $1 
+      AND DATE(wl.created_at) = $2
+      ORDER BY wl.start_time ASC
     `;
+
+    const result = await db.query(query, [userId, workDate]);
     
-    const values = [];
-    let paramIndex = 1;
-  
-    // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
-    if (!req.user.role || req.user.role !== 'admin') {
-      queryText += ` AND wl.user_id = $${paramIndex}`;
-      values.push(req.user.id);
-      paramIndex++;
-    }
-
-
-        // 支持多種位置查詢參數
-        if (location || areaName || location_code) {
-          queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex} OR wl.location_code = $${paramIndex})`;
-          values.push(`%${location || areaName || location_code}%`);
-          paramIndex++;
-        }
+    console.log(`找到 ${result.rows.length} 條工作日誌`);
     
-    if (location) {
-      queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
-      values.push(`%${location}%`);
-      paramIndex++;
-    }
-
-    if (crop) {
-      queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
-      values.push(`%${crop}%`);
-      paramIndex++;
-    }
-
-    // 添加狀態過濾
-    if (status) {
-      queryText += ` AND wl.status = $${paramIndex}`;
-      values.push(status);
-      paramIndex++;
-    }
-
-    if (startDate && endDate) {
-      // 修改這裡：移除時區轉換，使用簡單的DATE比較
-      queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-      values.push(startDate, endDate);
-      paramIndex += 2;
-    }
-
-    // 添加排序、限制和超時設置
-    queryText += ' ORDER BY wl.created_at DESC';
-    queryText += ` LIMIT ${LIMIT}`;  // 明確限制結果數量
-
-    console.log('執行 SQL:', queryText);
-    console.log('參數:', values);
-
-    // 添加查詢超時設定
-    const queryOptions = { 
-      text: queryText, 
-      values: values,
-      timeout: 10000  // 設置數據庫查詢超時為 10 秒
-    };
-
-    const result = await db.query(queryOptions);
-    
-    console.log(`查詢到 ${result.rows.length} 條工作日誌`);
-    
-  // 確保每條記錄都有必要的字段，標準化日期和時間
-  const formattedResults = result.rows.map(log => ({
-    ...log,
-    id: log.id || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
-    end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time,
-    created_at: log.created_at ? log.created_at.toISOString() : new Date().toISOString(),
-    username: log.username || '未知使用者'
-  }));
-    // 額外記錄每條數據的關鍵字段，幫助診斷
-    formattedResults.forEach((log, index) => {
-      console.log(`記錄 #${index+1}: id=${log.id}, start=${log.start_time}, end=${log.end_time}, location=${log.location || log.position_name || 'N/A'}`);
+    // 計算當日總工時
+    let totalHours = 0;
+    result.rows.forEach(log => {
+      totalHours += parseFloat(log.work_hours || 0);
     });
-  // 在 res.json(formattedResults) 之前添加
-console.log('向前端返回的數據結構範例:', 
-  formattedResults.length > 0 ? 
-  JSON.stringify(formattedResults[0], null, 2) : 
-  '沒有數據'
-);
-console.log('向前端返回的數據條數:', formattedResults.length);
-        
-    res.json(formattedResults);
+    
+    // 標準化時間格式，確保前端能正確顯示
+    const formattedResults = result.rows.map(log => ({
+      ...log,
+      start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+    }));
+    
+    res.json({
+      workDate,
+      userId,
+      username: result.rows.length > 0 ? result.rows[0].username : null,
+      totalHours: parseFloat(totalHours.toFixed(2)),
+      remainingHours: Math.max(0, parseFloat((8 - totalHours).toFixed(2))),
+      isComplete: totalHours >= 8,
+      workLogs: formattedResults
+    });
   } catch (error) {
-    console.error('查詢工作日誌失敗:', {
+    console.error('獲取使用者工作日誌失敗:', {
       error: error.message,
       stack: error.stack,
-      query: error.query
+      params: { userId, workDate }
     });
+    
     res.status(500).json({ 
-      message: '查詢工作日誌失敗，請稍後再試',
+      message: '獲取工作日誌失敗，請稍後再試',
       error: process.env.NODE_ENV === 'production' ? undefined : error.message
     });
+  }
+},
+
+
+  // 批量審核工作日誌
+  async batchReviewWorkLogs(req, res) {
+    const { workLogIds, status } = req.body;
+    const reviewerId = req.user.id;
+
+    // 驗證輸入
+    if (!workLogIds || !Array.isArray(workLogIds) || workLogIds.length === 0) {
+      return res.status(400).json({ message: '請提供有效的工作日誌ID列表' });
+    }
+
+    if (!status || !['approved', 'rejected'].includes(status)) {
+      return res.status(400).json({ message: '請提供有效的審核狀態' });
+    }
+
+    try {
+      const query = `
+        UPDATE work_logs 
+        SET status = $1, 
+            reviewed_at = CURRENT_TIMESTAMP, 
+            reviewer_id = $2
+        WHERE id = ANY($3::uuid[])
+        RETURNING id
+      `;
+
+      const values = [
+        status, 
+        reviewerId,
+        workLogIds
+      ];
+
+      const result = await db.query(query, values);
+      
+      // 返回更新的日誌ID列表
+      res.json({ 
+        message: `成功批量審核 ${result.rows.length} 條工作日誌`,
+        updatedIds: result.rows.map(row => row.id)
+      });
+    } catch (error) {
+      console.error('批量審核工作日誌失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
 
+  // 優化後的 searchWorkLogs 函數
+  async searchWorkLogs(req, res) {
+    // 解構所有可能的查詢參數，包括 areaName 和 location_code
+    const { location, crop, startDate, endDate, status, limit = 100, page = 1, areaName, location_code } = req.query;
+  
+    try {
+      console.log('收到工作日誌搜索請求:', {
+        location, crop, startDate, endDate, status, limit, page, areaName, location_code,
+        userId: req.user?.id,
+        userRole: req.user?.role
+      });
+      
+      // 計算分頁偏移量
+      const offset = (page - 1) * limit;
+      
+      // 優化 SQL 查詢 - 增加索引提示並限制返回欄位
+      let queryText = `
+        SELECT wl.id, wl.user_id, wl.location, wl.crop, 
+               wl.start_time, wl.end_time, wl.work_hours, 
+               wl.details, wl.position_name, wl.work_category_name,
+               wl.status, wl.created_at, u.username
+        FROM work_logs wl
+        JOIN users u ON wl.user_id = u.id
+        WHERE 1=1
+      `;
+      
+      const values = [];
+      let paramIndex = 1;
+  
+      // 如果是使用者查詢，只顯示自己的工作日誌(除非是管理員)
+      if (!req.user.role || req.user.role !== 'admin') {
+        queryText += ` AND wl.user_id = $${paramIndex}`;
+        values.push(req.user.id);
+        paramIndex++;
+      }
+  
+      if (location) {
+        queryText += ` AND (wl.location ILIKE $${paramIndex} OR wl.position_name ILIKE $${paramIndex})`;
+        values.push(`%${location}%`);
+        paramIndex++;
+      }
+  
+      if (crop) {
+        queryText += ` AND (wl.crop ILIKE $${paramIndex} OR wl.work_category_name ILIKE $${paramIndex})`;
+        values.push(`%${crop}%`);
+        paramIndex++;
+      }
+  
+      // 添加狀態過濾
+      if (status) {
+        queryText += ` AND wl.status = $${paramIndex}`;
+        values.push(status);
+        paramIndex++;
+      }
+  
+      if (areaName) {
+        queryText += ` AND wl.area_name = $${paramIndex}`;
+        values.push(areaName);
+        paramIndex++;
+      }
+      
+      if (location_code) {
+        queryText += ` AND wl.location_code = $${paramIndex}`;
+        values.push(location_code);
+        paramIndex++;
+      }
+
+      if (startDate && endDate) {
+        // 使用 DATE() 函數優化日期比較
+        queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        values.push(startDate, endDate);
+        paramIndex += 2;
+      }
+
+      // 添加總數查詢來支持分頁
+      const countQuery = `SELECT COUNT(*) FROM (${queryText}) AS count_query`;
+      const countResult = await db.query(countQuery, values);
+      const totalCount = parseInt(countResult.rows[0].count);
+
+      // 添加排序、分頁和超時設置
+      queryText += ' ORDER BY wl.created_at DESC';
+      queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      values.push(limit, offset);
+      paramIndex += 2;
+
+      console.log('執行 SQL:', queryText);
+      console.log('參數:', values);
+
+      // 添加查詢超時設定
+      const queryOptions = { 
+        text: queryText, 
+        values: values,
+        timeout: 10000  // 設置數據庫查詢超時為 10 秒
+      };
+
+      const result = await db.query(queryOptions);
+      
+      console.log(`查詢到 ${result.rows.length} 條工作日誌，總計 ${totalCount} 條`);
+      
+      // 標準化時間格式，確保前端能正確顯示
+      const formattedResults = result.rows.map(log => ({
+        ...log,
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+      }));
+      
+      res.json({
+        data: formattedResults,
+        pagination: {
+          total: totalCount,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(totalCount / limit)
+        }
+      });
+    } catch (error) {
+      console.error('查詢工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack,
+        query: error.query
+      });
+      res.status(500).json({ 
+        message: '查詢工作日誌失敗，請稍後再試',
+        error: process.env.NODE_ENV === 'production' ? undefined : error.message
+      });
+    }
+  },
+  
   // 獲取特定位置的作物列表
   async getLocationCrops(req, res) {
     const { positionCode } = req.params;
@@ -473,15 +611,42 @@ console.log('向前端返回的數據條數:', formattedResults.length);
         reviewerId: req.user.id
       });
   
+      // 檢查工作日誌是否存在
+      const checkQuery = 'SELECT id, status FROM work_logs WHERE id = $1';
+      const checkResult = await db.query(checkQuery, [workLogId]);
+      
+      if (checkResult.rows.length === 0) {
+        console.log(`工作日誌 ID ${workLogId} 不存在`);
+        return res.status(404).json({ message: '工作日誌不存在' });
+      }
+      
+      console.log(`找到工作日誌，當前狀態: ${checkResult.rows[0].status}`);
+  
+      // 定義更新查詢
+      const query = `
+        UPDATE work_logs 
+        SET status = $1, 
+            reviewed_at = CURRENT_TIMESTAMP, 
+            reviewer_id = $2
+        WHERE id = $3
+        RETURNING id
+      `;
+  
       const values = [
         status, 
         req.user.id,  // 管理員ID
         workLogId
       ];
-
-      await db.query(query, values);
+  
+      const result = await db.query(query, values);
       
-      res.json({ message: '工作日誌覆核成功' });
+      console.log(`工作日誌 ID ${workLogId} 審核成功，狀態更新為 ${status}`);
+      
+      res.json({ 
+        message: '工作日誌覆核成功',
+        workLogId: result.rows[0].id,
+        status: status
+      });
     } catch (error) {
       console.error('覆核工作日誌失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
@@ -498,19 +663,6 @@ console.log('向前端返回的數據條數:', formattedResults.length);
         endDate,
         format: 'csv'
       };
-
-    // 檢查工作日誌是否存在
-    const checkQuery = 'SELECT id, status FROM work_logs WHERE id = $1';
-    const checkResult = await db.query(checkQuery, [workLogId]);
-    
-    if (checkResult.rows.length === 0) {
-      console.log(`工作日誌 ID ${workLogId} 不存在`);
-      return res.status(404).json({ message: '工作日誌不存在' });
-    }
-    
-    console.log(`找到工作日誌，當前狀態: ${checkResult.rows[0].status}`);
-
-
 
       // 如果不是管理員，只匯出當前用戶的工作日誌
       if (req.user.role !== 'admin') {
@@ -592,7 +744,7 @@ console.log('向前端返回的數據條數:', formattedResults.length);
       });
     }
   }
-  };
+};
 
 // 補充：確保 searchWorkLogs 支持作為內部方法調用
 WorkLogController.searchWorkLogs = async (req, isInternalCall = false) => {

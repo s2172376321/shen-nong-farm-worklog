@@ -67,6 +67,48 @@ export const markNoticeAsRead = async (noticeId) => {
   return response.data;
 };
 
+// 獲取特定使用者特定日期的工作日誌
+export const getUserDailyWorkLogs = async (userId, workDate) => {
+  // 生成快取鍵
+  const cacheKey = `userWorkLogs:${userId}:${workDate}`;
+  
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的使用者工作日誌數據');
+    return cachedData;
+  }
+  
+  try {
+    console.log(`嘗試獲取使用者 ${userId} 在 ${workDate} 的工作日誌`);
+    
+    const response = await api.get(`/work-logs/user/${userId}/date/${workDate}`, {
+      timeout: 10000 // 10秒超時
+    });
+    
+    console.log(`成功獲取 ${response.data.workLogs.length} 筆使用者工作日誌`);
+    
+    // 儲存到快取
+    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+    
+    return response.data;
+  } catch (error) {
+    console.error('獲取使用者工作日誌失敗:', error);
+    
+    // 詳細記錄錯誤
+    if (error.response) {
+      console.error('服務器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到服務器回應:', error.request);
+    }
+    
+    throw error;
+  }
+};
+
 
 // 修改 fetchLocationCrops 函數，增強錯誤處理
 export const fetchLocationCrops = async (positionCode) => {
@@ -493,6 +535,40 @@ export const createWorkLog = async (workLogData) => {
   }
 };
 
+// 批量審核工作日誌
+export const batchReviewWorkLogs = async (workLogIds, status) => {
+  try {
+    console.log(`批量審核 ${workLogIds.length} 條工作日誌，狀態: ${status}`);
+    
+    const response = await api.post('/work-logs/batch-review', {
+      workLogIds,
+      status
+    });
+    
+    // 審核後清除相關快取
+    apiCache.clear('workLogs');
+    apiCache.clear('workStats');
+    
+    return response.data;
+  } catch (error) {
+    console.error('批量審核工作日誌失敗:', error);
+    
+    // 詳細錯誤日誌
+    if (error.response) {
+      console.error('服務器回應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('未收到服務器回應:', error.request);
+    } else {
+      console.error('請求設置錯誤:', error.message);
+    }
+    
+    throw error;
+  }
+};
+
 
 // CSV 上傳工作日誌
 export const uploadCSV = async (csvFile) => {
@@ -536,88 +612,113 @@ export const uploadCSV = async (csvFile) => {
 
 // 優化後的 searchWorkLogs 函數
 export const searchWorkLogs = async (filters) => {
-  console.log('searchWorkLogs 調用開始，過濾條件:', JSON.stringify(filters, null, 2));
+  // 生成快取鍵
+  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
+  
+  // 詳細日誌
+  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
+  
+  // 檢查快取
+  const cachedData = apiCache.get(cacheKey);
+  if (cachedData) {
+    console.log('使用快取的工作日誌數據');
+    return cachedData;
+  }
   
   try {
-    // 構建請求參數
-    const params = { ...filters };
+    console.log('開始發送工作日誌搜尋請求');
     
-    // 直接記錄完整 URL 和參數
-    const baseURL = process.env.REACT_APP_API_URL || 'http://localhost:3002/api';
-    const endpoint = '/work-logs/search';
-    const queryString = new URLSearchParams(params).toString();
-    const fullUrl = `${baseURL}${endpoint}?${queryString}`;
+    // 實現漸進式超時策略 - 先快速嘗試，然後再增加超時時間重試
+    let timeoutAttempts = 0;
+    const maxTimeoutAttempts = 2;
+    const timeouts = [8000, 20000]; // 第一次嘗試 8 秒，第二次 20 秒
     
-    console.log('發送請求至:', fullUrl);
+    let lastError = null;
     
-    // 發送請求
-    const response = await api.get('/work-logs/search', { 
-      params,
-      timeout: 15000 // 增加超時時間
-    });
-    
-    // 添加響應詳情日誌
-    console.log('API 響應狀態:', response.status);
-    console.log('API 響應標頭:', response.headers);
-    console.log('API 響應數據類型:', typeof response.data);
-    console.log('API 響應是否數組:', Array.isArray(response.data));
-    console.log('API 響應數據長度:', Array.isArray(response.data) ? response.data.length : 'N/A');
-    
-    // 檢查響應格式
-    if (!Array.isArray(response.data)) {
-      console.error('API 返回非數組數據:', response.data);
-      return []; // 返回空數組以避免前端崩潰
+    while (timeoutAttempts <= maxTimeoutAttempts) {
+      try {
+        // 使用當前的超時時間
+        const currentTimeout = timeouts[timeoutAttempts] || 30000;
+        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
+        
+        // 添加分頁參數，限制返回的結果數量
+        const searchParams = {
+          ...filters,
+          limit: 100, // 限制每次請求最多返回100條記錄
+          page: 1     // 首頁
+        };
+        
+        const response = await api.get('/work-logs/search', { 
+          params: searchParams,
+          timeout: currentTimeout
+        });
+        
+        console.log('工作日誌搜尋結果:', response.status, response.data?.length || 0);
+        
+        // 標準化日期和時間格式
+        if (Array.isArray(response.data)) {
+          const normalizedData = response.data.map(log => ({
+            ...log,
+            start_time: log.start_time?.substring(0, 5) || log.start_time,
+            end_time: log.end_time?.substring(0, 5) || log.end_time,
+            created_at: log.created_at || new Date().toISOString()
+          }));
+          
+          // 儲存到快取
+          apiCache.set(cacheKey, normalizedData, 60000); // 快取1分鐘
+          
+          return normalizedData;
+        }
+        
+        console.warn('API返回了非數組數據:', response.data);
+        return [];
+      } catch (error) {
+        lastError = error;
+        
+        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
+        if ((error.code === 'ECONNABORTED' || error.message.includes('timeout')) && timeoutAttempts < maxTimeoutAttempts) {
+          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
+          timeoutAttempts++;
+        } else {
+          // 其他錯誤或已達最大重試次數，跳出循環
+          break;
+        }
+      }
     }
     
-    // 標準化數據格式
-    const normalizedData = response.data.map(log => ({
-      ...log,
-      // 確保每個記錄都有 ID
-      id: log.id || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      // 標準化時間格式
-      start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
-      end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time,
-      // 標準化日期格式
-      created_at: log.created_at ? new Date(log.created_at).toISOString() : new Date().toISOString(),
-      // 確保這些字段至少有空字符串值
-      location: log.location || log.position_name || '',
-      position_name: log.position_name || log.location || '',
-      work_category_name: log.work_category_name || log.crop || '',
-      crop: log.crop || log.work_category_name || '',
-      status: log.status || 'pending',
-      work_hours: typeof log.work_hours === 'number' ? log.work_hours : 0
-    }));
-    
-    console.log('標準化後數據條數:', normalizedData.length);
-    if (normalizedData.length > 0) {
-      console.log('第一條標準化數據樣本:', {
-        id: normalizedData[0].id,
-        start_time: normalizedData[0].start_time,
-        end_time: normalizedData[0].end_time,
-        created_at: normalizedData[0].created_at
-      });
-    }
-    
-    return normalizedData;
-  } catch (error) {
-    console.error('搜尋工作日誌失敗:', {
-      message: error.message,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data
+    // 所有嘗試都失敗，記錄詳細錯誤並處理
+    console.error('搜尋工作日誌失敗 (所有嘗試):', {
+      message: lastError?.message,
+      status: lastError?.response?.status,
+      statusText: lastError?.response?.statusText,
+      url: lastError?.config?.url,
+      params: JSON.stringify(lastError?.config?.params)
     });
+    
+    // 特殊錯誤處理
+    if (lastError?.response?.status === 404) {
+      console.log('沒有找到符合條件的工作日誌');
+      return [];
+    }
     
     // 網絡離線處理
     if (!navigator.onLine) {
       console.warn('瀏覽器處於離線狀態');
+      return [];
     }
     
     // 身份驗證錯誤處理
-    if (error.response?.status === 401) {
+    if (lastError?.response?.status === 401) {
       console.warn('身份驗證已過期，需要重新登入');
+      // 可以在這裡添加重新導向到登入頁面的邏輯
+      return [];
     }
     
-    // 返回空數組以避免 UI 崩潰
+    // 若依然失敗，顯示友好錯誤訊息到控制台，但返回空數組避免UI崩潰
+    alert('搜尋工作日誌超時，請稍後再試或聯絡系統管理員。');
+    return [];
+  } catch (error) {
+    console.error('searchWorkLogs 處理發生意外錯誤:', error);
     return [];
   }
 };

@@ -139,6 +139,11 @@ async function initDbSchema() {
   }
 }
 
+// 監控記憶體使用
+setInterval(() => {
+  const memoryUsage = process.memoryUsage();
+  console.log(`Memory usage: ${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`);
+}, 10000);
 
 // 路由
 app.use('/api', routes);

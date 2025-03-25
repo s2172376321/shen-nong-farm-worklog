@@ -26,6 +26,21 @@ router.post('/',
   }
 );
 
+
+// 獲取特定使用者特定日期的工作日誌
+router.get('/user/:userId/date/:workDate', 
+  authMiddleware, 
+  WorkLogController.getUserDailyWorkLogs
+);
+
+
+// 批量審核工作日誌
+router.post('/batch-review', 
+  authMiddleware, 
+  authMiddleware.adminOnly, 
+  WorkLogController.batchReviewWorkLogs
+);
+
 // 搜索工作日誌
 router.get('/search', 
   authMiddleware, 

@@ -11,6 +11,8 @@ BEGIN
             crop VARCHAR(50) NOT NULL,
             start_time TIME NOT NULL,
             end_time TIME NOT NULL,
+            start_date DATE NOT NULL DEFAULT CURRENT_DATE,  // 新增 start_date
+            end_date DATE NOT NULL DEFAULT CURRENT_DATE,    // 新增 end_date
             work_categories work_category[] NOT NULL,
             details TEXT,
             harvest_quantity DECIMAL(10, 2),
@@ -19,13 +21,16 @@ BEGIN
             reviewed_at TIMESTAMP WITH TIME ZONE,
             reviewer_id UUID REFERENCES users(id),
             
-            CONSTRAINT check_time_range CHECK (start_time < end_time)
+            CONSTRAINT check_time_range CHECK (start_time < end_time),
+            CONSTRAINT check_date_range CHECK (start_date <= end_date)  // 新增日期約束
         );
 
         -- 建立索引
         CREATE INDEX IF NOT EXISTS idx_work_logs_user ON work_logs(user_id);
         CREATE INDEX IF NOT EXISTS idx_work_logs_status ON work_logs(status);
         CREATE INDEX IF NOT EXISTS idx_work_logs_created_at ON work_logs(created_at);
+        CREATE INDEX IF NOT EXISTS idx_work_logs_start_date ON work_logs(start_date);  // 新增 start_date 索引
+        CREATE INDEX IF NOT EXISTS idx_work_logs_end_date ON work_logs(end_date);      // 新增 end_date 索引
     END IF;
 EXCEPTION 
     WHEN OTHERS THEN
@@ -45,7 +50,9 @@ BEGIN
             COUNT(*) as total_logs,
             SUM(harvest_quantity) as total_harvest,
             AVG(EXTRACT(EPOCH FROM (end_time - start_time))/3600) as avg_work_hours,
-            ARRAY_AGG(DISTINCT crop) as unique_crops
+            ARRAY_AGG(DISTINCT crop) as unique_crops,
+            MIN(start_date) as earliest_date,   // 新增最早日期
+            MAX(end_date) as latest_date        // 新增最新日期
         FROM 
             work_logs
         GROUP BY 
