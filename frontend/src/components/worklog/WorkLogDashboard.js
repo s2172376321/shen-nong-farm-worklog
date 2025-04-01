@@ -2,22 +2,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  fetchLocationsByArea, 
-  fetchWorkCategories, 
-  getApiStatus,
-  getWorkLogsByDate,
-  getTodayWorkHours,
-  checkServerHealth
-} from '../../utils/api';
+import { fetchLocationsByArea, fetchWorkCategories, getApiStatus } from '../../utils/api';
 import { Button, Card, Input } from '../ui';
 import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
 import ApiDiagnostic from '../common/ApiDiagnostic';
+import { useWorkLog } from '../../hooks/useWorkLog';
+import UserDailyWorkLogs from './UserDailyWorkLogs';
 
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { fetchWorkLogs, clearCache } = useWorkLog();
   const [workLogs, setWorkLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -26,13 +22,15 @@ const WorkLogDashboard = () => {
   const [workCategories, setWorkCategories] = useState([]);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [showDateDetails, setShowDateDetails] = useState(false);
   
   // 過濾條件
   const [filters, setFilters] = useState({
     startDate: new Date().toISOString().split('T')[0], // 今天
     endDate: new Date().toISOString().split('T')[0],   // 今天
-    location: '',
-    crop: ''
+    areaName: '',
+    location_code: ''
   });
 
   // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
@@ -47,40 +45,30 @@ const WorkLogDashboard = () => {
     }
   }, []);
 
-  // 簡化版本的工作日誌查詢函數
+  // 載入工作日誌
   const loadWorkLogs = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     
     try {
-      // 如果有選擇日期，使用該日期；否則使用今天日期
-      const queryDate = filters.startDate || new Date().toISOString().split('T')[0];
-      console.log('查詢日期:', queryDate);
+      // 增加載入狀態日誌
+      console.log('開始載入工作日誌，過濾條件:', filters);
       
-      // 使用新的 API 函數
-      const logs = await getWorkLogsByDate(queryDate);
+      // 增加診斷資訊
+      const networkStatus = navigator.onLine ? '在線' : '離線';
+      const token = localStorage.getItem('token') ? '存在' : '不存在';
+      console.log('診斷資訊:', { networkStatus, token, timestamp: new Date().toISOString() });
       
-      // 根據其他過濾條件進行本地過濾
-      let filteredLogs = [...logs];
+      const data = await fetchWorkLogs(filters);
       
-      // 位置過濾
-      if (filters.location) {
-        filteredLogs = filteredLogs.filter(log => 
-          (log.location && log.location.toLowerCase().includes(filters.location.toLowerCase())) ||
-          (log.position_name && log.position_name.toLowerCase().includes(filters.location.toLowerCase()))
-        );
+      if (Array.isArray(data)) {
+        console.log(`成功載入 ${data.length} 條工作日誌`);
+        setWorkLogs(data);
+      } else {
+        console.error('工作日誌數據格式不正確:', data);
+        setWorkLogs([]);
+        setError('返回數據格式不正確，請聯繫系統管理員');
       }
-      
-      // 作物/工作類別過濾
-      if (filters.crop) {
-        filteredLogs = filteredLogs.filter(log => 
-          (log.crop && log.crop.toLowerCase().includes(filters.crop.toLowerCase())) ||
-          (log.work_category_name && log.work_category_name.toLowerCase().includes(filters.crop.toLowerCase()))
-        );
-      }
-      
-      console.log(`查詢到 ${logs.length} 條記錄，過濾後剩餘 ${filteredLogs.length} 條`);
-      setWorkLogs(filteredLogs);
     } catch (err) {
       console.error('載入工作日誌失敗:', err);
       
@@ -96,6 +84,7 @@ const WorkLogDashboard = () => {
         switch (err.response.status) {
           case 401:
             errorMessage = '登入狀態已失效，請重新登入';
+            // 可選：自動登出並重定向
             setTimeout(() => {
               logout();
               navigate('/login');
@@ -104,20 +93,25 @@ const WorkLogDashboard = () => {
           case 403:
             errorMessage = '您沒有權限查看工作日誌';
             break;
+          case 404:
+            errorMessage = '找不到工作日誌資源，請確認API設置';
+            break;
           case 500:
             errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
             break;
           default:
             errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
         }
+      } else if (err.request) {
+        errorMessage = '無法連接到伺服器，請檢查網絡連接';
       }
       
       setError(errorMessage);
-      setWorkLogs([]); // 重置工作日誌資料
+      setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
     } finally {
       setIsLoading(false);
     }
-  }, [filters, logout, navigate]);
+  }, [filters, fetchWorkLogs, logout, navigate]);
 
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
@@ -192,19 +186,37 @@ const WorkLogDashboard = () => {
     
     setFilters(prev => ({
       ...prev, 
-      location: locationData.locationName || ''
+      areaName: locationData.areaName || '',
+      location_code: locationData.locationCode || ''
     }));
   };
 
   // 刷新工作日誌列表
-  const refreshWorkLogs = () => {
-    loadWorkLogs();
+  const refreshWorkLogs = async () => {
+    await loadWorkLogs();
+  };
+
+  // 處理查看日期詳情
+  const handleViewDateDetails = (date) => {
+    setSelectedDate(date);
+    setShowDateDetails(true);
+  };
+
+  // 關閉日期詳情彈窗
+  const handleCloseDateDetails = () => {
+    setShowDateDetails(false);
+    setSelectedDate(null);
   };
 
   // 重試按鈕的處理函數
   const handleRetry = () => {
+    // 強制清除快取
+    if (typeof clearCache === 'function') {
+      clearCache();
+    }
+    
     // 重新載入資料
-    loadWorkLogs();
+    refreshWorkLogs();
   };
 
   // 格式化時間顯示
@@ -305,25 +317,37 @@ const WorkLogDashboard = () => {
             </div>
             
             <div>
-              <label className="block mb-2 text-sm">位置搜索</label>
-              <Input 
-                type="text"
-                name="location"
-                value={filters.location}
+              <label className="block mb-2 text-sm">區域</label>
+              <select
+                name="areaName"
+                value={filters.areaName}
                 onChange={handleFilterChange}
-                placeholder="輸入位置關鍵字..."
-              />
+                className="w-full bg-gray-700 text-white p-2 rounded-lg"
+              >
+                <option value="">所有區域</option>
+                {areaData && areaData.map(area => (
+                  <option key={area.areaName} value={area.areaName}>
+                    {area.areaName}
+                  </option>
+                ))}
+              </select>
             </div>
             
             <div>
-              <label className="block mb-2 text-sm">作物/工作類別搜索</label>
-              <Input 
-                type="text"
-                name="crop"
-                value={filters.crop}
+              <label className="block mb-2 text-sm">工作類別</label>
+              <select
+                name="work_category_code"
+                value={filters.work_category_code || ''}
                 onChange={handleFilterChange}
-                placeholder="輸入作物或工作類別關鍵字..."
-              />
+                className="w-full bg-gray-700 text-white p-2 rounded-lg"
+              >
+                <option value="">所有類別</option>
+                {workCategories.map(category => (
+                  <option key={category.工作內容代號} value={category.工作內容代號}>
+                    {category.工作內容名稱}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="mt-4 flex justify-end">
@@ -331,7 +355,7 @@ const WorkLogDashboard = () => {
               onClick={refreshWorkLogs}
               className="bg-green-600 hover:bg-green-700"
             >
-              查詢
+              重新整理
             </Button>
           </div>
         </Card>
@@ -383,6 +407,7 @@ const WorkLogDashboard = () => {
                     <th className="p-3 text-left">位置</th>
                     <th className="p-3 text-left">工作類別</th>
                     <th className="p-3 text-left">狀態</th>
+                    <th className="p-3 text-left">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -420,6 +445,14 @@ const WorkLogDashboard = () => {
                               log.status === 'rejected' ? '已拒絕' : '審核中'}
                           </span>
                         </td>
+                        <td className="p-3">
+                          <Button 
+                            onClick={() => handleViewDateDetails(new Date(log.created_at).toISOString().split('T')[0])}
+                            className="px-2 py-1 text-sm bg-blue-600 hover:bg-blue-700"
+                          >
+                            詳情
+                          </Button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -435,6 +468,19 @@ const WorkLogDashboard = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="w-full max-w-3xl">
             <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* 日誌詳情彈窗 */}
+      {showDateDetails && selectedDate && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-5xl">
+            <UserDailyWorkLogs 
+              userId={user.id}
+              workDate={selectedDate}
+              onClose={handleCloseDateDetails}
+            />
           </div>
         </div>
       )}

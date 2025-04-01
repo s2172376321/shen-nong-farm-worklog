@@ -195,75 +195,132 @@ const WorkLogController = {
   },
 
   // 獲取特定使用者特定日期的工作日誌
-async getUserDailyWorkLogs(req, res) {
-  const { userId, workDate } = req.params;
-  
-  try {
-    console.log(`獲取使用者 ${userId} 在 ${workDate} 的工作日誌`);
+  async getUserDailyWorkLogs(req, res) {
+    const { userId, workDate } = req.query;
     
-    // 驗證日期格式
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(workDate)) {
-      return res.status(400).json({ 
-        message: '日期格式不正確',
-        details: '日期必須為 YYYY-MM-DD 格式'
+    // 驗證參數
+    if (!userId || !workDate) {
+      return res.status(400).json({ message: '缺少必要參數：userId 和 workDate' });
+    }
+    
+    try {
+      console.log(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌`);
+      
+      // 檢查權限：只有管理員或本人可以查看
+      if (req.user.role !== 'admin' && req.user.id !== parseInt(userId)) {
+        return res.status(403).json({ message: '您沒有權限查看此用戶的工作日誌' });
+      }
+      
+      // 查詢該用戶的指定日期工作日誌
+      const query = `
+        SELECT wl.id, wl.user_id, wl.location, wl.crop, 
+               wl.start_time, wl.end_time, wl.work_hours, 
+               wl.details, wl.position_name, wl.work_category_name,
+               wl.status, wl.created_at, u.username
+        FROM work_logs wl
+        JOIN users u ON wl.user_id = u.id
+        WHERE wl.user_id = $1
+        AND DATE(wl.created_at) = $2
+        ORDER BY wl.start_time ASC
+      `;
+      
+      const result = await db.query(query, [userId, workDate]);
+      
+      // 計算當日總工時
+      let totalHours = 0;
+      result.rows.forEach(log => {
+        totalHours += parseFloat(log.work_hours || 0);
+      });
+      
+      // 標準化時間格式
+      const workLogs = result.rows.map(log => ({
+        ...log,
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+      }));
+      
+      // 獲取用戶資訊
+      const userQuery = await db.query('SELECT username FROM users WHERE id = $1', [userId]);
+      const username = userQuery.rows[0]?.username || '未知用戶';
+      
+      // 計算工時狀態
+      const totalHoursFixed = parseFloat(totalHours.toFixed(2));
+      const isComplete = totalHoursFixed >= 8;
+      const remainingHours = Math.max(0, (8 - totalHoursFixed)).toFixed(2);
+      
+      // 返回完整資料
+      res.json({
+        userId,
+        username,
+        workDate,
+        totalHours: totalHoursFixed.toFixed(2),
+        isComplete,
+        remainingHours,
+        workLogs
+      });
+    } catch (error) {
+      console.error('獲取工作日誌詳情失敗:', error);
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
       });
     }
-
-    // 只允許使用者查看自己的日誌，或管理員可以查看所有人的
-    if (req.user.id !== userId && req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        message: '無權限查詢其他使用者的工作日誌'
-      });
+  },
+  
+  async getRawData(req, res) {
+    try {
+      // 可以添加查詢參數
+      const { limit = 100, offset = 0 } = req.query;
+      
+      const query = `
+        SELECT * FROM work_logs
+        ORDER BY created_at DESC
+        LIMIT $1 OFFSET $2
+      `;
+      
+      const result = await db.query(query, [limit, offset]);
+      res.json(result.rows);
+    } catch (error) {
+      console.error('獲取原始資料失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
-
-    // 使用參數化查詢避免SQL注入
+  },
+  
+// 獲取所有工作日誌（僅管理員可用）
+async getAllWorkLogs(req, res) {
+  try {
+    // 確保只有管理員可以獲取全部數據
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: '無權限訪問此資源' });
+    }
+    
+    console.log('獲取所有工作日誌數據');
+    
+    // 可以根據需要設定一個合理的限制
+    const limit = 5000; // 限制最多返回5000條記錄
+    
     const query = `
-      SELECT wl.*, u.username 
+      SELECT wl.*, u.username
       FROM work_logs wl
       JOIN users u ON wl.user_id = u.id
-      WHERE wl.user_id = $1 
-      AND DATE(wl.created_at) = $2
-      ORDER BY wl.start_time ASC
+      ORDER BY wl.created_at DESC
+      LIMIT $1
     `;
-
-    const result = await db.query(query, [userId, workDate]);
     
-    console.log(`找到 ${result.rows.length} 條工作日誌`);
+    const result = await db.query(query, [limit]);
     
-    // 計算當日總工時
-    let totalHours = 0;
-    result.rows.forEach(log => {
-      totalHours += parseFloat(log.work_hours || 0);
-    });
-    
-    // 標準化時間格式，確保前端能正確顯示
+    // 標準化時間格式
     const formattedResults = result.rows.map(log => ({
       ...log,
       start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
       end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
     }));
     
-    res.json({
-      workDate,
-      userId,
-      username: result.rows.length > 0 ? result.rows[0].username : null,
-      totalHours: parseFloat(totalHours.toFixed(2)),
-      remainingHours: Math.max(0, parseFloat((8 - totalHours).toFixed(2))),
-      isComplete: totalHours >= 8,
-      workLogs: formattedResults
-    });
+    console.log(`獲取到 ${formattedResults.length} 條工作日誌記錄`);
+    res.json(formattedResults);
   } catch (error) {
-    console.error('獲取使用者工作日誌失敗:', {
-      error: error.message,
-      stack: error.stack,
-      params: { userId, workDate }
-    });
-    
-    res.status(500).json({ 
-      message: '獲取工作日誌失敗，請稍後再試',
-      error: process.env.NODE_ENV === 'production' ? undefined : error.message
-    });
+    console.error('獲取所有工作日誌失敗:', error);
+    res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
   }
 },
 

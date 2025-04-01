@@ -27,6 +27,21 @@ router.post('/',
 );
 
 
+router.get('/raw-data', 
+  authMiddleware, 
+  authMiddleware.adminOnly,  // 確保只有管理員可訪問
+  WorkLogController.getRawData
+);
+
+
+// 獲取所有工作日誌（僅管理員）
+router.get('/all', 
+  authMiddleware, 
+  authMiddleware.adminOnly, 
+  WorkLogController.getAllWorkLogs
+);
+
+
 // 獲取特定使用者特定日期的工作日誌
 router.get('/user/:userId/date/:workDate', 
   authMiddleware, 
@@ -134,5 +149,13 @@ router.get('/export',
     }
   }
 );
+
+
+// 獲取特定用戶特定日期的工作日誌
+router.get('/user-daily', 
+  authMiddleware, 
+  WorkLogController.getUserDailyWorkLogs
+);
+
 
 module.exports = router;

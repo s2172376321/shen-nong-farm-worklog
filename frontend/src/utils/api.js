@@ -69,44 +69,80 @@ export const markNoticeAsRead = async (noticeId) => {
 
 // ----- 用戶工作日誌 API -----
 // 獲取用戶特定日期的工作日誌
-// 獲取特定使用者特定日期的工作日誌
 export const getUserDailyWorkLogs = async (userId, workDate) => {
-  // 生成快取鍵
-  const cacheKey = `userWorkLogs:${userId}:${workDate}`;
-  
   // 檢查快取
+  const cacheKey = `userDailyWorkLogs:${userId}:${workDate}`;
   const cachedData = apiCache.get(cacheKey);
+  
   if (cachedData) {
-    console.log('使用快取的使用者工作日誌數據');
+    console.log(`使用快取的用戶 ${userId} ${workDate} 工作日誌數據`);
     return cachedData;
   }
   
   try {
-    console.log(`嘗試獲取使用者 ${userId} 在 ${workDate} 的工作日誌`);
+    console.log(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌`);
     
-    const response = await api.get(`/work-logs/user/${userId}/date/${workDate}`, {
-      timeout: 10000 // 10秒超時
+    const response = await api.get('/work-logs/user-daily', { 
+      params: { userId, workDate },
+      timeout: 8000
     });
     
-    console.log(`成功獲取 ${response.data.workLogs.length} 筆使用者工作日誌`);
+    // 標準化時間格式
+    if (response.data.workLogs && Array.isArray(response.data.workLogs)) {
+      response.data.workLogs = response.data.workLogs.map(log => ({
+        ...log,
+        start_time: log.start_time?.substring(0, 5) || log.start_time,
+        end_time: log.end_time?.substring(0, 5) || log.end_time
+      }));
+    }
     
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+    // 存入快取
+    apiCache.set(cacheKey, response.data, 300000); // 快取5分鐘
     
     return response.data;
   } catch (error) {
-    console.error('獲取使用者工作日誌失敗:', error);
+    console.error(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌失敗:`, error);
     
-    // 詳細記錄錯誤
+    // 提供更詳細的錯誤資訊
+    let errorMessage = '獲取工作日誌失敗';
+    
     if (error.response) {
-      console.error('服務器回應:', {
-        status: error.response.status,
-        data: error.response.data
-      });
+      // 服務器回應了錯誤
+      if (error.response.status === 404) {
+        errorMessage = '找不到該用戶或日期的工作日誌';
+      } else if (error.response.status === 403) {
+        errorMessage = '您沒有權限查看此用戶的工作日誌';
+      } else {
+        errorMessage = error.response.data?.message || errorMessage;
+      }
     } else if (error.request) {
-      console.error('未收到服務器回應:', error.request);
+      // 請求已發送但沒有收到回應
+      errorMessage = '伺服器無回應，請稍後再試';
     }
     
+    throw new Error(errorMessage);
+  }
+};
+
+// 獲取所有工作日誌（僅管理員）
+export const getAllWorkLogs = async () => {
+  // 檢查快取
+  const cachedData = apiCache.get('allWorkLogs');
+  if (cachedData) {
+    console.log('使用快取的所有工作日誌數據');
+    return cachedData;
+  }
+  
+  try {
+    console.log('開始獲取所有工作日誌');
+    const response = await api.get('/work-logs/all');
+    
+    // 儲存到快取 - 設置較長的快取時間，減少重複請求
+    apiCache.set('allWorkLogs', response.data, 1800000); // 30分鐘快取
+    
+    return response.data;
+  } catch (error) {
+    console.error('獲取所有工作日誌失敗:', error);
     throw error;
   }
 };
