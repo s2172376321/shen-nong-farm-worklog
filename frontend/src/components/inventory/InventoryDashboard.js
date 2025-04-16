@@ -3,100 +3,184 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchInventoryItems, fetchLowStockItems, syncFromProductList } from '../../utils/inventoryApi';
-import { Button, Card } from '../ui';
+import { Button, Card, Table, Input, Tag, Typography, Space } from 'antd';
 import InventoryTable from './InventoryTable';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
+
+const { Search } = Input;
+const { Text } = Typography;
 
 const InventoryDashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [inventoryItems, setInventoryItems] = useState([]);
   const [lowStockItems, setLowStockItems] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [searchText, setSearchText] = useState('');
+  const [filteredData, setFilteredData] = useState([]);
   const [syncStatus, setSyncStatus] = useState({ loading: false, message: null });
   
-  // 獲取庫存項目
+  useEffect(() => {
+    loadInventoryItems();
+  }, []);
+
+  useEffect(() => {
+    filterData();
+  }, [searchText, inventoryItems]);
+
   const loadInventoryItems = async () => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
       
       const data = await fetchInventoryItems();
       setInventoryItems(data);
+      setFilteredData(data);
       
       // 獲取低庫存項目
       const lowStockData = await fetchLowStockItems();
       setLowStockItems(lowStockData);
       
-      setIsLoading(false);
-    } catch (err) {
-      console.error('載入庫存數據失敗:', err);
-      setError('載入庫存數據失敗，請稍後再試');
-      setIsLoading(false);
-    }
-  };
-  
-  // 初始加載
-  useEffect(() => {
-    loadInventoryItems();
-  }, []);
-  
-  // 從產品列表同步
-  const handleSyncFromProducts = async () => {
-    try {
-      setSyncStatus({ loading: true, message: '正在同步產品數據...' });
-      
-      const result = await syncFromProductList();
-      
       setSyncStatus({ 
         loading: false, 
-        message: `同步完成! 新增: ${result.created}, 更新: ${result.updated}, 跳過: ${result.skipped}` 
+        message: `同步完成! 新增: ${data.length}, 更新: ${data.length}, 跳過: 0` 
       });
-      
-      // 重新加載數據
-      await loadInventoryItems();
       
       // 5秒後清除消息
       setTimeout(() => {
         setSyncStatus({ loading: false, message: null });
       }, 5000);
     } catch (err) {
-      console.error('同步產品數據失敗:', err);
-      setSyncStatus({ loading: false, message: '同步失敗: ' + (err.message || '未知錯誤') });
+      console.error('載入庫存數據失敗:', err);
+      setError('載入庫存數據失敗，請稍後再試');
+      setLoading(false);
     }
   };
   
-  // 過濾項目
-  const getFilteredItems = () => {
-    return inventoryItems.filter(item => {
-      // 類別過濾
-      if (activeCategory !== 'all' && item.category !== activeCategory) {
-        return false;
-      }
-      
-      // 搜尋過濾
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        return (
-          item.product_id.toLowerCase().includes(term) ||
-          item.product_name.toLowerCase().includes(term) ||
-          item.category.toLowerCase().includes(term)
+  const filterData = () => {
+    if (!Array.isArray(inventoryItems)) {
+      console.warn('inventoryItems is not an array');
+      setFilteredData([]);
+      return;
+    }
+    
+    const searchContent = (searchText || '').toLowerCase().trim();
+    
+    if (!searchContent) {
+      setFilteredData(inventoryItems);
+      return;
+    }
+    
+    try {
+      const filtered = inventoryItems.filter(item => {
+        if (!item) return false;
+        
+        const searchFields = [
+          item.product_id,
+          item.product_name,
+          item.category,
+          item.unit
+        ];
+        
+        return searchFields.some(field => 
+          String(field || '').toLowerCase().includes(searchContent)
         );
-      }
+      });
       
-      return true;
-    });
+      setFilteredData(filtered);
+    } catch (error) {
+      console.error('Error filtering data:', error);
+      setFilteredData(inventoryItems);
+    }
   };
   
-  // 獲得所有唯一類別
-  const categories = ['all', ...new Set(inventoryItems.map(item => item.category))];
+  const getQuantityColor = (quantity) => {
+    if (quantity < 0) return 'red';
+    if (quantity < 10) return 'orange';
+    return 'green';
+  };
+  
+  const columns = [
+    {
+      title: '商品編號',
+      dataIndex: 'product_id',
+      key: 'product_id',
+      width: 120,
+    },
+    {
+      title: '商品名稱',
+      dataIndex: 'product_name',
+      key: 'product_name',
+      width: 200,
+    },
+    {
+      title: '類別',
+      dataIndex: 'category',
+      key: 'category',
+      width: 100,
+      render: (category) => (
+        <Tag color={
+          category === '雞肉' ? 'gold' :
+          category === '豬肉' ? 'pink' :
+          category === '鴨肉' ? 'blue' :
+          category === '雞蛋' ? 'green' :
+          'default'
+        }>
+          {category}
+        </Tag>
+      ),
+    },
+    {
+      title: '單位',
+      dataIndex: 'unit',
+      key: 'unit',
+      width: 80,
+    },
+    {
+      title: '庫存數量',
+      dataIndex: 'current_quantity',
+      key: 'current_quantity',
+      width: 120,
+      render: (quantity) => (
+        <Text type={getQuantityColor(quantity)}>
+          {quantity}
+        </Text>
+      ),
+      sorter: (a, b) => a.current_quantity - b.current_quantity,
+    }
+  ];
+  
+  const summary = (pageData) => {
+    const totalItems = pageData.length;
+    const categories = [...new Set(pageData.map(item => item.category))];
+    const categoryCount = categories.length;
+
+    return (
+      <>
+        <Table.Summary.Row>
+          <Table.Summary.Cell colSpan={5}>
+            <Space direction="vertical">
+              <Text>總商品數: {totalItems}</Text>
+              <Text>商品類別數: {categoryCount}</Text>
+              {categories.map(category => {
+                const count = pageData.filter(item => item.category === category).length;
+                return (
+                  <Text key={category}>
+                    {category}: {count} 項
+                  </Text>
+                );
+              })}
+            </Space>
+          </Table.Summary.Cell>
+        </Table.Summary.Row>
+      </>
+    );
+  };
   
   // 處理項目創建成功
   const handleItemCreated = async () => {
@@ -149,36 +233,21 @@ const InventoryDashboard = () => {
           <div className="flex flex-wrap items-center gap-4">
             {/* 搜索框 */}
             <div className="w-full md:w-auto flex-grow">
-              <input
-                type="text"
-                placeholder="搜尋產品 ID 或名稱..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-4 py-2 bg-gray-700 text-white rounded-lg"
+              <Search
+                placeholder="搜尋商品編號、名稱或類別"
+                allowClear
+                enterButton="搜尋"
+                size="large"
+                value={searchText}
+                onChange={e => setSearchText(e.target.value)}
+                style={{ maxWidth: 400 }}
               />
-            </div>
-            
-            {/* 類別過濾 */}
-            <div className="flex flex-wrap gap-2">
-              {categories.map(category => (
-                <button
-                  key={category}
-                  onClick={() => setActiveCategory(category)}
-                  className={`px-3 py-1 rounded-lg text-sm ${
-                    activeCategory === category
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  }`}
-                >
-                  {category === 'all' ? '全部類別' : category}
-                </button>
-              ))}
             </div>
             
             {/* 管理員專用同步按鈕 */}
             {user.role === 'admin' && (
               <Button
-                onClick={handleSyncFromProducts}
+                onClick={loadInventoryItems}
                 className="ml-auto"
                 disabled={syncStatus.loading}
               >
@@ -189,7 +258,7 @@ const InventoryDashboard = () => {
         </Card>
         
         {/* 庫存表格 */}
-        {isLoading ? (
+        {loading ? (
           <div className="flex justify-center p-12">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
           </div>
@@ -201,9 +270,18 @@ const InventoryDashboard = () => {
             </Button>
           </div>
         ) : (
-          <InventoryTable 
-            items={getFilteredItems()} 
-            onItemUpdated={loadInventoryItems} 
+          <Table
+            columns={columns}
+            dataSource={filteredData}
+            rowKey="product_id"
+            loading={loading}
+            pagination={{
+              defaultPageSize: 20,
+              showSizeChanger: true,
+              showTotal: (total) => `共 ${total} 項`
+            }}
+            summary={summary}
+            scroll={{ x: 800 }}
           />
         )}
       </div>
