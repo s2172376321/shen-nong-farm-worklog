@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchInventoryItems, updateInventoryItem } from '../../utils/inventoryApi';
-import { Button, Input, Card, Table, Modal, message } from 'antd';
+import { Button, Card, Input } from '../ui';
+import { Table, Modal, message } from 'antd';
 
-function InventoryManagement() {
+const InventoryManagement = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [inventoryItems, setInventoryItems] = useState([]);
@@ -177,6 +178,6 @@ function InventoryManagement() {
       </Card>
     </div>
   );
-}
+};
 
 export default InventoryManagement; 
