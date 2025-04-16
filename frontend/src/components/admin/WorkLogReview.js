@@ -19,6 +19,7 @@ const WorkLogReview = () => {
   const [selectedUserLog, setSelectedUserLog] = useState(null);
   const [showUserLogDetails, setShowUserLogDetails] = useState(false);
   const [users, setUsers] = useState([]); // 存儲所有使用者列表，用於下拉選單
+  const timeouts = [5000, 10000]; // 第一次嘗試 5 秒，第二次 10 秒
 
   // 返回函數
   const handleGoBack = () => {
@@ -30,38 +31,66 @@ const WorkLogReview = () => {
     const loadAllWorkLogs = async () => {
       try {
         setIsLoading(true);
-        // 這裡使用 searchWorkLogs 但不傳入任何過濾條件，讓它返回所有數據
-        // 如果後端有專門的API端點獲取所有工作日誌，可以在api.js添加對應函數並使用
-        const data = await searchWorkLogs({});
-        setAllWorkLogs(data);
+        setError(null); // 清除之前的錯誤
         
-        // 從所有工作日誌中提取不重複的使用者列表
-        const uniqueUsers = [];
-        const userMap = {};
+        // 添加重試機制
+        let retryCount = 0;
+        const maxRetries = 2;
+        let lastError = null;
         
-        data.forEach(log => {
-          if (log.user_id && !userMap[log.user_id]) {
-            userMap[log.user_id] = true;
-            uniqueUsers.push({
-              id: log.user_id,
-              username: log.username || '未知使用者'
+        while (retryCount <= maxRetries) {
+          try {
+            const data = await searchWorkLogs({
+              startDate: filter.date,
+              endDate: filter.date,
+              limit: 50
             });
+            
+            if (!data || !Array.isArray(data)) {
+              throw new Error('獲取數據格式錯誤');
+            }
+            
+            setAllWorkLogs(data);
+            
+            // 從所有工作日誌中提取不重複的使用者列表
+            const uniqueUsers = [];
+            const userMap = {};
+            
+            data.forEach(log => {
+              if (log.user_id && !userMap[log.user_id]) {
+                userMap[log.user_id] = true;
+                uniqueUsers.push({
+                  id: log.user_id,
+                  username: log.username || '未知使用者'
+                });
+              }
+            });
+            
+            setUsers(uniqueUsers);
+            applyFilters(data);
+            return; // 成功後直接返回
+          } catch (err) {
+            lastError = err;
+            retryCount++;
+            if (retryCount <= maxRetries) {
+              console.log(`重試加載數據 (${retryCount}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒後重試
+            }
           }
-        });
+        }
         
-        setUsers(uniqueUsers);
-        
-        // 應用初始篩選
-        applyFilters(data);
-        setIsLoading(false);
+        // 如果所有重試都失敗了
+        throw lastError;
       } catch (err) {
-        setError('載入工作日誌失敗');
+        console.error('載入工作日誌失敗:', err);
+        setError(`載入工作日誌失敗: ${err.message || '未知錯誤'}`);
+      } finally {
         setIsLoading(false);
       }
     };
 
     loadAllWorkLogs();
-  }, []); // 只在組件掛載時載入一次
+  }, [filter.date]); // 只在日期改變時重新加載
 
   // 應用篩選邏輯
   const applyFilters = (logs = allWorkLogs) => {
@@ -238,7 +267,10 @@ const WorkLogReview = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500"></div>
+        <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-white">正在載入工作日誌...</p>
+        </div>
       </div>
     );
   }
@@ -271,8 +303,14 @@ const WorkLogReview = () => {
       <h1 className="text-2xl font-bold mb-6">工作日誌審核</h1>
 
       {error && (
-        <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          {error}
+        <div className="bg-red-600 text-white p-3 rounded-lg mb-4 flex justify-between items-center">
+          <span>{error}</span>
+          <Button 
+            onClick={loadAllWorkLogs}
+            className="ml-4"
+          >
+            重試
+          </Button>
         </div>
       )}
 

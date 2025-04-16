@@ -3,10 +3,13 @@
 -- Drop table if it exists (only for development)
 -- DROP TABLE IF EXISTS work_logs;
 
+-- 確保 UUID 擴展已安裝
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Create the work_logs table with the updated schema
 CREATE TABLE IF NOT EXISTS work_logs (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES users(id),
   location_code VARCHAR(20) NOT NULL,
   position_code VARCHAR(20) NOT NULL,
   position_name VARCHAR(100) NOT NULL,
@@ -20,7 +23,7 @@ CREATE TABLE IF NOT EXISTS work_logs (
   product_name VARCHAR(200),
   product_quantity DECIMAL(10, 2) DEFAULT 0,
   status VARCHAR(20) DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-  reviewer_id INTEGER REFERENCES users(id),
+  reviewer_id UUID REFERENCES users(id),
   reviewed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

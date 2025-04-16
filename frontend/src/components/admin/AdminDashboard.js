@@ -48,10 +48,19 @@ const AdminDashboard = () => {
       icon: '📰'
     },
     {
-      title: '帳號設定',
+      title: '庫存管理',
+      component: () => {
+        navigate('/inventory');
+        return null;
+      },
+      description: '管理系統庫存',
+      icon: '📦'
+    },
+    {
+      title: '修改密碼',
       component: ChangePassword,
-      description: '修改密碼與綁定Google帳號',
-      icon: '⚙️'
+      description: '修改您的登入密碼',
+      icon: '🔒'
     }
   ];
 

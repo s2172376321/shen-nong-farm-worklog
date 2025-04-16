@@ -538,9 +538,20 @@ export const getWorkLogsByDate = async (workDate) => {
 // 工作日誌審核
 export const reviewWorkLog = async (workLogId, status) => {
   try {
-    console.log(`審核工作日誌 ${workLogId}, 狀態: ${status}`);
+    console.log(`開始審核工作日誌:`, {
+      workLogId,
+      status,
+      timestamp: new Date().toISOString()
+    });
     
     const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+    
+    console.log(`工作日誌審核成功:`, {
+      workLogId,
+      status: response.data.status,
+      reviewedAt: response.data.reviewedAt,
+      timestamp: new Date().toISOString()
+    });
     
     // 審核後清除相關快取
     apiCache.clear('workLogs');
@@ -549,8 +560,24 @@ export const reviewWorkLog = async (workLogId, status) => {
     
     return response.data;
   } catch (error) {
-    console.error('審核工作日誌失敗:', error);
-    throw error;
+    console.error('審核工作日誌失敗:', {
+      workLogId,
+      status,
+      error: error.response?.data || error.message,
+      timestamp: new Date().toISOString()
+    });
+    
+    // 根據錯誤類型返回不同的錯誤訊息
+    if (error.response) {
+      // 伺服器返回的錯誤
+      throw new Error(error.response.data.message || '審核工作日誌失敗');
+    } else if (error.request) {
+      // 請求發送但沒有收到回應
+      throw new Error('無法連接到伺服器，請檢查網路連接');
+    } else {
+      // 其他錯誤
+      throw new Error('審核工作日誌時發生錯誤');
+    }
   }
 };
 

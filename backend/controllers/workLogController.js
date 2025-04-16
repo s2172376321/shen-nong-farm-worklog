@@ -631,19 +631,25 @@ if (startDate && endDate) {
       console.log('工作日誌審核請求:', {
         workLogId,
         status,
-        reviewerId: req.user.id
+        reviewerId: req.user.id,
+        timestamp: new Date().toISOString()
       });
   
       // 檢查工作日誌是否存在
-      const checkQuery = 'SELECT id, status FROM work_logs WHERE id = $1';
+      const checkQuery = 'SELECT id, status, user_id FROM work_logs WHERE id = $1';
       const checkResult = await db.query(checkQuery, [workLogId]);
       
       if (checkResult.rows.length === 0) {
         console.log(`工作日誌 ID ${workLogId} 不存在`);
-        return res.status(404).json({ message: '工作日誌不存在' });
+        return res.status(404).json({ 
+          message: '工作日誌不存在',
+          workLogId,
+          timestamp: new Date().toISOString()
+        });
       }
       
-      console.log(`找到工作日誌，當前狀態: ${checkResult.rows[0].status}`);
+      const workLog = checkResult.rows[0];
+      console.log(`找到工作日誌，當前狀態: ${workLog.status}, 用戶ID: ${workLog.user_id}`);
   
       // 定義更新查詢
       const query = `
@@ -652,7 +658,7 @@ if (startDate && endDate) {
             reviewed_at = CURRENT_TIMESTAMP, 
             reviewer_id = $2
         WHERE id = $3
-        RETURNING id
+        RETURNING id, status, reviewed_at
       `;
   
       const values = [
@@ -663,16 +669,32 @@ if (startDate && endDate) {
   
       const result = await db.query(query, values);
       
-      console.log(`工作日誌 ID ${workLogId} 審核成功，狀態更新為 ${status}`);
+      console.log(`工作日誌審核成功:`, {
+        workLogId: result.rows[0].id,
+        newStatus: result.rows[0].status,
+        reviewedAt: result.rows[0].reviewed_at,
+        reviewerId: req.user.id
+      });
       
       res.json({ 
         message: '工作日誌覆核成功',
         workLogId: result.rows[0].id,
-        status: status
+        status: result.rows[0].status,
+        reviewedAt: result.rows[0].reviewed_at
       });
     } catch (error) {
-      console.error('覆核工作日誌失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      console.error('覆核工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack,
+        workLogId,
+        status,
+        reviewerId: req.user.id,
+        timestamp: new Date().toISOString()
+      });
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: error.message
+      });
     }
   },
 

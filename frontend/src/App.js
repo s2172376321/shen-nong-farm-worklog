@@ -14,7 +14,7 @@ import NoticeBoard from './components/common/NoticeBoard';
 import UserSettings from './components/user/UserSettings';
 import PrivateRoute from './components/common/PrivateRoute';
 import GoogleCallback from './components/auth/GoogleCallback'; 
-import InventoryManagement from './components/inventory/InventoryManagement'; // 新增庫存管理頁面
+import InventoryManagement from './components/inventory/InventoryManagement';
 
 function AppContent() {
   const { user, isLoading } = useAuth();

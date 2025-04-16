@@ -1,6 +1,6 @@
 // 位置：frontend/src/components/inventory/ScanItemModal.js
 import React, { useState, useEffect, useRef } from 'react';
-import { Button } from '../ui';
+import { Button } from 'antd';
 
 const ScanItemModal = ({ onClose, onScanSuccess }) => {
   const [isScanning, setIsScanning] = useState(false);
