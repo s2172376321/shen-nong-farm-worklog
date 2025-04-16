@@ -1,5 +1,5 @@
 // 位置：frontend/src/components/worklog/WorkLogDashboard.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchLocationsByArea, fetchWorkCategories, getApiStatus } from '../../utils/api';
@@ -8,22 +8,24 @@ import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
 import ApiDiagnostic from '../common/ApiDiagnostic';
 import { useWorkLog } from '../../hooks/useWorkLog';
-import UserDailyWorkLogs from './UserDailyWorkLogs';
 
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { fetchWorkLogs, clearCache } = useWorkLog();
+  const { fetchWorkLogs, refreshWorkLogs, isLoading, error, isInitialLoadDone, manualRefreshCount } = useWorkLog();
   const [workLogs, setWorkLogs] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [areaData, setAreaData] = useState([]);
   const [workCategories, setWorkCategories] = useState([]);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [serverStatus, setServerStatus] = useState({ status: 'unknown', message: '檢查連線中...' });
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [showDateDetails, setShowDateDetails] = useState(false);
+  
+  // 用於控制加載動畫的狀態
+  const [localLoading, setLocalLoading] = useState(true);
+  // 記錄初始加載狀態
+  const initialLoadRef = useRef(false);
+  // 記錄最後一次數據加載時間
+  const lastLoadTimeRef = useRef(0);
   
   // 過濾條件
   const [filters, setFilters] = useState({
@@ -45,134 +47,118 @@ const WorkLogDashboard = () => {
     }
   }, []);
 
-  // 載入工作日誌
-  const loadWorkLogs = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  // 載入工作日誌，使用優化後的 fetchWorkLogs
+  const loadWorkLogs = useCallback(async (forceRefresh = false) => {
+    // 防止頻繁重複加載
+    const now = Date.now();
+    const timeSinceLastLoad = now - lastLoadTimeRef.current;
+    
+    // 如果不是強制刷新且距離上次加載不到3秒，則跳過
+    if (!forceRefresh && timeSinceLastLoad < 3000 && initialLoadRef.current) {
+      console.log(`跳過加載，距離上次加載僅 ${timeSinceLastLoad}ms`);
+      return;
+    }
+    
+    setLocalLoading(true);
     
     try {
-      // 增加載入狀態日誌
-      console.log('開始載入工作日誌，過濾條件:', filters);
+      console.log('開始載入工作日誌, forceRefresh:', forceRefresh);
       
-      // 增加診斷資訊
-      const networkStatus = navigator.onLine ? '在線' : '離線';
-      const token = localStorage.getItem('token') ? '存在' : '不存在';
-      console.log('診斷資訊:', { networkStatus, token, timestamp: new Date().toISOString() });
-      
-      const data = await fetchWorkLogs(filters);
+      // 使用優化後的 fetchWorkLogs，可選強制刷新
+      const options = { forceRefresh };
+      const data = await fetchWorkLogs(filters, options);
       
       if (Array.isArray(data)) {
-        console.log(`成功載入 ${data.length} 條工作日誌`);
         setWorkLogs(data);
+        console.log(`工作日誌加載成功，項目數:`, data.length);
       } else {
-        console.error('工作日誌數據格式不正確:', data);
+        console.warn('工作日誌數據格式不正確:', data);
         setWorkLogs([]);
-        setError('返回數據格式不正確，請聯繫系統管理員');
       }
+      
+      // 更新最後加載時間和初始加載標記
+      lastLoadTimeRef.current = now;
+      initialLoadRef.current = true;
     } catch (err) {
-      console.error('載入工作日誌失敗:', err);
-      
-      // 提供更有用的錯誤訊息
-      let errorMessage = '載入工作日誌失敗，請稍後再試';
-      
-      if (!navigator.onLine) {
-        errorMessage = '網絡連接中斷，請檢查您的網絡連接';
-      } else if (err.message && err.message.includes('timeout')) {
-        errorMessage = '伺服器響應超時，請稍後再試';
-      } else if (err.response) {
-        // 處理特定的HTTP錯誤
-        switch (err.response.status) {
-          case 401:
-            errorMessage = '登入狀態已失效，請重新登入';
-            // 可選：自動登出並重定向
-            setTimeout(() => {
-              logout();
-              navigate('/login');
-            }, 2000);
-            break;
-          case 403:
-            errorMessage = '您沒有權限查看工作日誌';
-            break;
-          case 404:
-            errorMessage = '找不到工作日誌資源，請確認API設置';
-            break;
-          case 500:
-            errorMessage = '伺服器內部錯誤，請聯繫系統管理員';
-            break;
-          default:
-            errorMessage = `伺服器錯誤 (${err.response.status})，請稍後再試`;
-        }
-      } else if (err.request) {
-        errorMessage = '無法連接到伺服器，請檢查網絡連接';
+      console.error('工作日誌加載失敗:', err);
+      // 僅在強制刷新時顯示錯誤
+      if (forceRefresh) {
+        // 由於 useWorkLog hook 已經處理了錯誤，這裡不需要額外處理
       }
-      
-      setError(errorMessage);
-      setWorkLogs([]); // 重置工作日誌資料，避免顯示舊資料
     } finally {
-      setIsLoading(false);
+      setLocalLoading(false);
     }
-  }, [filters, fetchWorkLogs, logout, navigate]);
+  }, [fetchWorkLogs, filters]);
 
   // 載入基礎數據（位置和工作類別）
   const loadBaseData = useCallback(async () => {
-    setIsLoading(true);
+    setLocalLoading(true);
     
     try {
-      // 單獨處理每個API呼叫，確保一個失敗不會影響另一個
-      try {
-        console.log('載入位置數據中...');
-        const locationData = await fetchLocationsByArea();
-        setAreaData(locationData);
-        console.log(`成功載入 ${locationData.length} 個區域位置數據`);
-      } catch (locError) {
-        console.error('載入位置資料失敗:', locError);
-        // 設置默認數據
+      // 使用 Promise.allSettled 確保即使其中一個請求失敗也不會影響另一個
+      const results = await Promise.allSettled([
+        fetchLocationsByArea(),
+        fetchWorkCategories()
+      ]);
+      
+      // 處理位置數據
+      if (results[0].status === 'fulfilled') {
+        setAreaData(results[0].value);
+      } else {
+        console.error('載入位置資料失敗:', results[0].reason);
         setAreaData([
           { areaName: 'A區', locations: [] },
-          { areaName: 'B區', locations: [] },
-          { areaName: 'C區', locations: [] }
+          { areaName: 'B區', locations: [] }
         ]);
       }
       
-      try {
-        console.log('載入工作類別數據中...');
-        const categoryData = await fetchWorkCategories();
-        setWorkCategories(categoryData);
-        console.log(`成功載入 ${categoryData.length} 個工作類別`);
-      } catch (catError) {
-        console.error('載入工作類別資料失敗:', catError);
-        // 設置默認數據
-        setWorkCategories([
-          { 工作內容代號: '1', 工作內容名稱: '整地' },
-          { 工作內容代號: '2', 工作內容名稱: '種植' },
-          { 工作內容代號: '3', 工作內容名稱: '施肥' },
-          { 工作內容代號: '4', 工作內容名稱: '澆水' },
-          { 工作內容代號: '5', 工作內容名稱: '收成' }
-        ]);
+      // 處理工作類別數據
+      if (results[1].status === 'fulfilled') {
+        setWorkCategories(results[1].value);
+      } else {
+        console.error('載入工作類別資料失敗:', results[1].reason);
+        setWorkCategories([]);
       }
     } catch (err) {
       console.error('載入基礎數據失敗:', err);
     } finally {
-      setIsLoading(false);
+      setLocalLoading(false);
     }
   }, []);
 
-  // 組件掛載後載入數據
+  // 組件掛載後載入數據 - 只執行一次
   useEffect(() => {
     // 檢查伺服器狀態
     checkServerStatus();
-    // 每30秒檢查一次
-    const intervalId = setInterval(checkServerStatus, 30000);
+    
+    // 每30秒檢查一次伺服器狀態
+    const statusInterval = setInterval(checkServerStatus, 30000);
     
     // 載入基礎數據
     loadBaseData();
     
-    // 載入工作日誌
-    loadWorkLogs();
+    // 進行初始工作日誌載入
+    loadWorkLogs(false);
     
     // 清理函數
-    return () => clearInterval(intervalId);
+    return () => {
+      clearInterval(statusInterval);
+    };
   }, [checkServerStatus, loadBaseData, loadWorkLogs]);
+
+  // 當過濾條件變更時重新載入
+  useEffect(() => {
+    if (initialLoadRef.current) {
+      loadWorkLogs(false);
+    }
+  }, [filters, loadWorkLogs]);
+
+  // 監聽強制刷新狀態
+  useEffect(() => {
+    if (manualRefreshCount > 0) {
+      loadWorkLogs(true);
+    }
+  }, [manualRefreshCount, loadWorkLogs]);
 
   // 處理過濾器變更
   const handleFilterChange = (e) => {
@@ -192,31 +178,8 @@ const WorkLogDashboard = () => {
   };
 
   // 刷新工作日誌列表
-  const refreshWorkLogs = async () => {
-    await loadWorkLogs();
-  };
-
-  // 處理查看日期詳情
-  const handleViewDateDetails = (date) => {
-    setSelectedDate(date);
-    setShowDateDetails(true);
-  };
-
-  // 關閉日期詳情彈窗
-  const handleCloseDateDetails = () => {
-    setShowDateDetails(false);
-    setSelectedDate(null);
-  };
-
-  // 重試按鈕的處理函數
-  const handleRetry = () => {
-    // 強制清除快取
-    if (typeof clearCache === 'function') {
-      clearCache();
-    }
-    
-    // 重新載入資料
-    refreshWorkLogs();
+  const handleManualRefresh = () => {
+    refreshWorkLogs(filters);
   };
 
   // 格式化時間顯示
@@ -249,6 +212,9 @@ const WorkLogDashboard = () => {
     }
   };
 
+  // 判斷是否顯示加載狀態
+  const shouldShowLoading = isLoading || localLoading;
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-6xl mx-auto">
@@ -276,9 +242,9 @@ const WorkLogDashboard = () => {
           </div>
         )}
 
-        {/* 工作時間統計 */}
+        {/* 工作時間統計 - 傳入 refreshTrigger 避免重複查詢 */}
         <div className="mb-6">
-          <WorkLogStats />
+          <WorkLogStats refreshTrigger={manualRefreshCount} />
         </div>
 
         {/* 工作日誌表單 */}
@@ -286,6 +252,7 @@ const WorkLogDashboard = () => {
           <div className="mb-6">
             <WorkLogForm 
               onSubmitSuccess={() => {
+                // 表單提交成功後刷新數據
                 refreshWorkLogs();
                 setShowForm(false);
               }} 
@@ -352,10 +319,11 @@ const WorkLogDashboard = () => {
           </div>
           <div className="mt-4 flex justify-end">
             <Button 
-              onClick={refreshWorkLogs}
+              onClick={handleManualRefresh}
               className="bg-green-600 hover:bg-green-700"
+              disabled={shouldShowLoading}
             >
-              重新整理
+              {shouldShowLoading ? '載入中...' : '手動刷新'}
             </Button>
           </div>
         </Card>
@@ -364,7 +332,7 @@ const WorkLogDashboard = () => {
         <Card>
           <h2 className="text-lg font-semibold p-4 border-b border-gray-700">工作日誌列表</h2>
           
-          {isLoading ? (
+          {shouldShowLoading ? (
             <div className="flex justify-center p-8">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
             </div>
@@ -381,7 +349,7 @@ const WorkLogDashboard = () => {
                 </ul>
               </div>
               <div className="flex space-x-4 justify-center">
-                <Button onClick={handleRetry}>重試載入</Button>
+                <Button onClick={handleManualRefresh}>重試載入</Button>
                 <Button 
                   onClick={() => setShowDiagnostic(true)}
                   variant="secondary"
@@ -407,7 +375,6 @@ const WorkLogDashboard = () => {
                     <th className="p-3 text-left">位置</th>
                     <th className="p-3 text-left">工作類別</th>
                     <th className="p-3 text-left">狀態</th>
-                    <th className="p-3 text-left">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -445,14 +412,6 @@ const WorkLogDashboard = () => {
                               log.status === 'rejected' ? '已拒絕' : '審核中'}
                           </span>
                         </td>
-                        <td className="p-3">
-                          <Button 
-                            onClick={() => handleViewDateDetails(new Date(log.created_at).toISOString().split('T')[0])}
-                            className="px-2 py-1 text-sm bg-blue-600 hover:bg-blue-700"
-                          >
-                            詳情
-                          </Button>
-                        </td>
                       </tr>
                     );
                   })}
@@ -468,19 +427,6 @@ const WorkLogDashboard = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="w-full max-w-3xl">
             <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
-          </div>
-        </div>
-      )}
-
-      {/* 日誌詳情彈窗 */}
-      {showDateDetails && selectedDate && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="w-full max-w-5xl">
-            <UserDailyWorkLogs 
-              userId={user.id}
-              workDate={selectedDate}
-              onClose={handleCloseDateDetails}
-            />
           </div>
         </div>
       )}
