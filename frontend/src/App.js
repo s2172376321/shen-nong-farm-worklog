@@ -14,6 +14,7 @@ import NoticeBoard from './components/common/NoticeBoard';
 import UserSettings from './components/user/UserSettings';
 import PrivateRoute from './components/common/PrivateRoute';
 import GoogleCallback from './components/auth/GoogleCallback'; 
+import InventoryManagement from './components/inventory/InventoryManagement'; // 新增庫存管理頁面
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -81,6 +82,13 @@ function AppContent() {
           <Route path="/notices" element={
             <PrivateRoute>
               <NoticeBoard />
+            </PrivateRoute>
+          } />
+          
+          {/* 庫存管理路由 - 需要登入 */}
+          <Route path="/inventory" element={
+            <PrivateRoute>
+              <InventoryManagement />
             </PrivateRoute>
           } />
           
