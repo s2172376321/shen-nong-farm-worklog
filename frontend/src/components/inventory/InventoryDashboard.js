@@ -1,10 +1,9 @@
 // 位置：frontend/src/components/inventory/InventoryDashboard.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchInventoryItems, fetchLowStockItems } from '../../utils/inventoryApi';
 import { Button, Card, Table, Input, Tag, Typography, Space, Popover } from 'antd';
-import InventoryTable from './InventoryTable';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
@@ -25,6 +24,44 @@ const InventoryDashboard = () => {
   const [searchText, setSearchText] = useState('');
   const [filteredData, setFilteredData] = useState([]);
   const [syncStatus, setSyncStatus] = useState({ loading: false, message: null });
+
+  // 將 filterData 移到這裡，在 useEffect 之前
+  const filterData = useCallback(() => {
+    if (!Array.isArray(inventoryItems)) {
+      console.warn('inventoryItems is not an array');
+      setFilteredData([]);
+      return;
+    }
+    
+    const searchContent = (searchText || '').toLowerCase().trim();
+    
+    if (!searchContent) {
+      setFilteredData(inventoryItems);
+      return;
+    }
+    
+    try {
+      const filtered = inventoryItems.filter(item => {
+        if (!item) return false;
+        
+        const searchFields = [
+          item.product_id,
+          item.product_name,
+          item.category,
+          item.unit
+        ];
+        
+        return searchFields.some(field => 
+          String(field || '').toLowerCase().includes(searchContent)
+        );
+      });
+      
+      setFilteredData(filtered);
+    } catch (error) {
+      console.error('Error filtering data:', error);
+      setFilteredData(inventoryItems);
+    }
+  }, [inventoryItems, searchText]);
   
   useEffect(() => {
     loadInventoryItems();
@@ -64,43 +101,6 @@ const InventoryDashboard = () => {
       setLoading(false);
     }
   };
-  
-  const filterData = React.useCallback(() => {
-    if (!Array.isArray(inventoryItems)) {
-      console.warn('inventoryItems is not an array');
-      setFilteredData([]);
-      return;
-    }
-    
-    const searchContent = (searchText || '').toLowerCase().trim();
-    
-    if (!searchContent) {
-      setFilteredData(inventoryItems);
-      return;
-    }
-    
-    try {
-      const filtered = inventoryItems.filter(item => {
-        if (!item) return false;
-        
-        const searchFields = [
-          item.product_id,
-          item.product_name,
-          item.category,
-          item.unit
-        ];
-        
-        return searchFields.some(field => 
-          String(field || '').toLowerCase().includes(searchContent)
-        );
-      });
-      
-      setFilteredData(filtered);
-    } catch (error) {
-      console.error('Error filtering data:', error);
-      setFilteredData(inventoryItems);
-    }
-  }, [inventoryItems, searchText]);
   
   const getQuantityColor = (quantity) => {
     if (quantity < 0) return 'red';
