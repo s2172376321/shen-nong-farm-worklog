@@ -4,7 +4,7 @@ import axios from 'axios';
 // 快取存儲
 const apiCache = {
   data: {},
-  set: function(key, value, ttl = 300000) { // 預設快取5分鐘 (300000毫秒)
+  set: function(key, value, ttl = 300000) {
     this.data[key] = {
       value,
       expiry: Date.now() + ttl
@@ -32,83 +32,86 @@ const apiCache = {
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
   withCredentials: true,
-  timeout: 15000  // 增加超時時間到15秒
+  timeout: 30000,  // 增加超時時間到30秒
+  headers: {
+    'Content-Type': 'application/json'
+  }
 });
 
-// 節流 Map
-const throttleMap = new Map();
-
-// 節流函數
-const throttle = (key, fn, delay = 3000) => {
-  const now = Date.now();
-  
-  if (throttleMap.has(key)) {
-    const { timestamp } = throttleMap.get(key);
-    if (now - timestamp < delay) {
-      console.log(`請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
-      return Promise.reject(new Error('Request throttled'));
-    }
-  }
-  
-  throttleMap.set(key, { timestamp: now });
-  
-  return fn().finally(() => {
-    // 請求完成後不要立即刪除，而是延遲一段時間
-    setTimeout(() => {
-      throttleMap.delete(key);
-    }, delay);
-  });
-};
-
-// 攔截器：為每個請求添加 Token
+// 請求攔截器
 api.interceptors.request.use(
   config => {
+    // 添加時間戳防止快取
+    if (config.method === 'get') {
+      config.params = {
+        ...config.params,
+        _t: Date.now()
+      };
+    }
+    
+    // 添加 token
     const token = localStorage.getItem('token');
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
     
-    // 對於文件上傳請求，不設置 Content-Type，讓瀏覽器自動設置
-    if (config.data instanceof FormData) {
-      delete config.headers['Content-Type'];
-    }
+    console.log('發送請求:', {
+      url: config.url,
+      method: config.method,
+      params: config.params
+    });
     
-    console.log('發送API請求:', config.url);
     return config;
   },
   error => {
-    console.error('API請求錯誤:', error);
+    console.error('請求配置錯誤:', error);
     return Promise.reject(error);
   }
 );
 
-// 響應攔截器：統一處理錯誤
+// 響應攔截器
 api.interceptors.response.use(
   response => {
-    console.log('API響應成功:', response.config.url);
+    console.log('請求成功:', {
+      url: response.config.url,
+      status: response.status,
+      data: response.data
+    });
     return response;
   },
   error => {
-    // 詳細記錄錯誤信息
-    console.error('API響應錯誤:', {
+    console.error('請求失敗:', {
       url: error.config?.url,
       status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message
+      message: error.message,
+      data: error.response?.data
     });
-    
-    // 處理特定錯誤類型
-    if (error.response && error.response.status === 401) {
-      // 處理未授權錯誤，可能是token過期
-      console.warn('授權已過期或無效，將重定向到登入頁面');
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
-      return Promise.reject(new Error('認證已過期，請重新登入'));
+
+    // 處理特定錯誤
+    if (error.code === 'ECONNABORTED') {
+      return Promise.reject(new Error('請求超時，請檢查網絡連接'));
     }
-    
-    return Promise.reject(error);
+
+    if (!error.response) {
+      return Promise.reject(new Error('無法連接到伺服器，請檢查網絡連接'));
+    }
+
+    // 處理特定 HTTP 狀態碼
+    switch (error.response.status) {
+      case 401:
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+        return Promise.reject(new Error('認證已過期，請重新登入'));
+      case 403:
+        return Promise.reject(new Error('您沒有權限執行此操作'));
+      case 404:
+        return Promise.reject(new Error('找不到請求的資源'));
+      case 500:
+        return Promise.reject(new Error('伺服器內部錯誤，請稍後再試'));
+      default:
+        return Promise.reject(error.response.data?.message || error.message || '請求失敗');
+    }
   }
 );
 
@@ -1217,92 +1220,28 @@ return {
 }
 };
 
-// ----- 系統檢查 API -----
-// 健康檢查API，檢查伺服器連線狀態
-export const checkServerHealth = async () => {
-  try {
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3002/api';
-    console.log('正在檢查伺服器健康狀態:', `${baseUrl}/health-check`);
-    
-    const response = await fetch(`${baseUrl}/health-check`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      credentials: 'include'  // 添加這個以支持跨域認證
-    });
+// 節流 Map 和函數
+const throttleMap = new Map();
 
-    console.log('健康檢查響應狀態:', response.status);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+const throttle = (key, fn, delay = 3000) => {
+  const now = Date.now();
+  
+  if (throttleMap.has(key)) {
+    const { timestamp } = throttleMap.get(key);
+    if (now - timestamp < delay) {
+      console.log(`請求 ${key} 被節流，上次請求只有 ${now - timestamp}ms 前`);
+      return Promise.reject(new Error('Request throttled'));
     }
-    
-    const data = await response.json();
-    console.log('健康檢查響應數據:', data);
-    
-    return {
-      status: data.status || 'online',
-      message: data.message || 'Server is running',
-      serverTime: data.serverTime
-    };
-  } catch (error) {
-    console.error('健康檢查失敗:', {
-      error: error.message,
-      type: error.name,
-      stack: error.stack
-    });
-    throw new Error(`無法連接到後端服務: ${error.message}`);
   }
-};
-
-// 認證測試 API
-export const testAuth = async () => {
-try {
-const response = await api.get('/auth/test');
-console.log('認證狀態:', response.data);
-return response.data;
-} catch (err) {
-console.error('認證測試失敗:', err);
-// 如果是403錯誤，可能需要重新登入
-if (err.response && err.response.status === 403) {
-  console.warn('權限被拒絕，將重新登入');
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
-}
-throw err;
-}
-};
-
-// 取得 API 狀態
-export const getApiStatus = async () => {
-try {
-// 使用現有的健康檢查函數
-const healthStatus = await checkServerHealth();
-
-// 擴展傳回的狀態資訊
-return {
-  ...healthStatus,
-  cacheStatus: {
-    size: Object.keys(apiCache.data).length,
-    keys: Object.keys(apiCache.data)
-  },
-  throttleStatus: {
-    size: throttleMap.size,
-    keys: Array.from(throttleMap.keys())
-  },
-  timestamp: new Date().toISOString()
-};
-} catch (error) {
-console.error('獲取API狀態失敗:', error);
-return {
-  status: 'error',
-  message: '無法獲取API狀態資訊',
-  error: error.message,
-  timestamp: new Date().toISOString()
-};
-}
+  
+  throttleMap.set(key, { timestamp: now });
+  
+  return fn().finally(() => {
+    // 請求完成後延遲清除
+    setTimeout(() => {
+      throttleMap.delete(key);
+    }, delay);
+  });
 };
 
 export { apiCache, throttle };

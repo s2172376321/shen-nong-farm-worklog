@@ -81,47 +81,6 @@ app.use(fileUpload({
   debug: process.env.NODE_ENV !== 'production' // 在非生产环境下启用调试
 }));
 
-// 添加健康检查路由
-app.get('/api/db-status', async (req, res) => {
-  try {
-    // 简单查询测试
-    const result = await db.query('SELECT NOW()');
-    res.json({ 
-      status: 'connected', 
-      time: result.rows[0].now,
-      poolStats: db.getPoolStats()
-    });
-  } catch (err) {
-    console.error('资料库连接测试失败:', err);
-    res.status(500).json({ 
-      status: 'error', 
-      message: err.message,
-      code: err.code
-    });
-  }
-});
-
-// 在路由初始化前添加
-app.get('/api/health-check', async (req, res) => {
-  try {
-    // 简单查询测试
-    const result = await db.query('SELECT NOW()');
-    res.json({ 
-      status: 'online', 
-      message: '服务正常运行中',
-      serverTime: result.rows[0].now,
-      poolStats: db.getPoolStats()
-    });
-  } catch (err) {
-    console.error('健康检查失败:', err);
-    res.status(500).json({ 
-      status: 'error', 
-      message: '服务异常',
-      error: process.env.NODE_ENV === 'production' ? undefined : err.message
-    });
-  }
-});
-
 // 初始化数据库架构
 async function initDbSchema() {
   try {

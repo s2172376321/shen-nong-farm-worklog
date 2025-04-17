@@ -2,17 +2,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { fetchLocationsByArea, fetchWorkCategories, getApiStatus } from '../../utils/api';
+import { fetchLocationsByArea, fetchWorkCategories } from '../../utils/api';
 import { Button, Card, Input } from '../ui';
 import WorkLogForm from './WorkLogForm';
 import WorkLogStats from './WorkLogStats';
-import ApiDiagnostic from '../common/ApiDiagnostic';
 import { useWorkLog } from '../../hooks/useWorkLog';
+import { useApiStatus } from '../../context/ApiStatusProvider';
 
 const WorkLogDashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { fetchWorkLogs, refreshWorkLogs, isLoading, error, isInitialLoadDone, manualRefreshCount } = useWorkLog();
+  const { isOnline, showStatus, setShowStatus } = useApiStatus();
   const [workLogs, setWorkLogs] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [areaData, setAreaData] = useState([]);
@@ -34,18 +35,6 @@ const WorkLogDashboard = () => {
     areaName: '',
     location_code: ''
   });
-
-  // 檢查伺服器狀態 - 使用 useCallback 避免重複創建函數
-  const checkServerStatus = useCallback(async () => {
-    try {
-      const status = await getApiStatus();
-      setServerStatus(status);
-      console.log('伺服器狀態檢查結果:', status);
-    } catch (err) {
-      console.error('檢查伺服器狀態失敗:', err);
-      setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
-    }
-  }, []);
 
   // 載入工作日誌，使用優化後的 fetchWorkLogs
   const loadWorkLogs = useCallback(async (forceRefresh = false) => {
@@ -128,23 +117,12 @@ const WorkLogDashboard = () => {
 
   // 組件掛載後載入數據 - 只執行一次
   useEffect(() => {
-    // 檢查伺服器狀態
-    checkServerStatus();
-    
-    // 每30秒檢查一次伺服器狀態
-    const statusInterval = setInterval(checkServerStatus, 30000);
-    
     // 載入基礎數據
     loadBaseData();
     
     // 進行初始工作日誌載入
     loadWorkLogs(false);
-    
-    // 清理函數
-    return () => {
-      clearInterval(statusInterval);
-    };
-  }, [checkServerStatus, loadBaseData, loadWorkLogs]);
+  }, [loadBaseData, loadWorkLogs]);
 
   // 當過濾條件變更時重新載入
   useEffect(() => {
@@ -229,18 +207,6 @@ const WorkLogDashboard = () => {
             </Button>
           </div>
         </div>
-
-        {/* 伺服器連線狀態 */}
-        {serverStatus.status !== 'online' && (
-          <div className={`mb-4 p-3 rounded-lg text-center ${
-            serverStatus.status === 'offline' ? 'bg-red-700' : 'bg-yellow-700'
-          }`}>
-            <p className="font-medium">{serverStatus.message}</p>
-            {serverStatus.status === 'offline' && (
-              <p className="text-sm mt-1">請檢查網路連線或聯絡系統管理員</p>
-            )}
-          </div>
-        )}
 
         {/* 工作時間統計 - 傳入 refreshTrigger 避免重複查詢 */}
         <div className="mb-6">
@@ -426,7 +392,7 @@ const WorkLogDashboard = () => {
       {showDiagnostic && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="w-full max-w-3xl">
-            <ApiDiagnostic onClose={() => setShowDiagnostic(false)} />
+            {/* 診斷工具內容 */}
           </div>
         </div>
       )}

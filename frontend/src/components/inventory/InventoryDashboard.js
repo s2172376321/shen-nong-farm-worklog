@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchInventoryItems, fetchLowStockItems } from '../../utils/inventoryApi';
-import { Button, Card, Table, Input, Tag, Typography, Space, Popover } from 'antd';
+import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert } from 'antd';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
@@ -79,12 +79,18 @@ const InventoryDashboard = () => {
       setError(null);
       
       const data = await fetchInventoryItems();
+      if (!Array.isArray(data)) {
+        throw new Error('返回的數據格式不正確');
+      }
+      
       setInventoryItems(data);
       setFilteredData(data);
       
       // 獲取低庫存項目
       const lowStockData = await fetchLowStockItems();
-      setLowStockItems(lowStockData);
+      if (Array.isArray(lowStockData)) {
+        setLowStockItems(lowStockData);
+      }
       
       setSyncStatus({ 
         loading: false, 
@@ -97,7 +103,8 @@ const InventoryDashboard = () => {
       }, 5000);
     } catch (err) {
       console.error('載入庫存數據失敗:', err);
-      setError('載入庫存數據失敗，請稍後再試');
+      setError(err.message || '載入庫存數據失敗，請稍後再試');
+    } finally {
       setLoading(false);
     }
   };
@@ -222,124 +229,103 @@ const InventoryDashboard = () => {
     navigate(`/inventory/${itemId}`);
   };
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">庫存管理</h1>
-          <div className="flex space-x-2">
-            <Button 
-              onClick={() => setShowScanner(true)}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              掃描QR碼
-            </Button>
-            {user.role === 'admin' && (
-              <Button 
-                onClick={() => setShowNewItemForm(true)}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                新增庫存項目
-              </Button>
-            )}
-          </div>
-        </div>
-        
-        {/* 低庫存提醒 */}
-        {lowStockItems.length > 0 && (
-          <LowStockAlert items={lowStockItems} className="mb-6" />
-        )}
-        
-        {/* 同步狀態 */}
-        {syncStatus.message && (
-          <div className={`mb-4 p-3 rounded-lg bg-${syncStatus.loading ? 'yellow' : 'green'}-700`}>
-            <p className="font-medium">{syncStatus.message}</p>
-          </div>
-        )}
-        
-        <Card className="mb-6 p-4">
-          <div className="flex flex-wrap items-center gap-4">
-            {/* 搜索框 */}
-            <div className="w-full md:w-auto flex-grow">
-              <Search
-                placeholder="搜尋商品編號、名稱或類別"
-                allowClear
-                enterButton="搜尋"
-                size="large"
-                value={searchText}
-                onChange={e => setSearchText(e.target.value)}
-                style={{ maxWidth: 400 }}
-              />
-            </div>
-            
-            {/* 管理員專用同步按鈕 */}
-            {user.role === 'admin' && (
-              <Button
-                onClick={loadInventoryItems}
-                className="ml-auto"
-                disabled={syncStatus.loading}
-              >
-                {syncStatus.loading ? '同步中...' : '從產品列表同步'}
-              </Button>
-            )}
+  if (loading) {
+    return (
+      <div className="inventory-dashboard">
+        <Card title="庫存管理">
+          <div className="flex justify-center items-center p-8">
+            <Space direction="vertical" align="center">
+              <Spin size="large" />
+              <Text>載入庫存數據中...</Text>
+            </Space>
           </div>
         </Card>
-        
-        {/* 庫存表格 */}
-        {loading ? (
-          <div className="flex justify-center p-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-          </div>
-        ) : error ? (
-          <div className="bg-red-600 text-white p-4 rounded-lg">
-            <p>{error}</p>
-            <Button onClick={loadInventoryItems} className="mt-4">
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="inventory-dashboard">
+        <Card title="庫存管理">
+          <div className="flex flex-col items-center p-8">
+            <Alert
+              message="載入失敗"
+              description={error}
+              type="error"
+              showIcon
+              style={{ marginBottom: 16, width: '100%' }}
+            />
+            <Button type="primary" onClick={loadInventoryItems}>
               重試
             </Button>
           </div>
-        ) : (
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inventory-dashboard">
+      <Card title="庫存管理">
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <div className="flex justify-between items-center">
+            <Space>
+              <Button type="primary" onClick={() => navigate('/inventory/list')}>
+                查看完整庫存清單
+              </Button>
+              {user.role === 'admin' && (
+                <>
+                  <Button onClick={() => setShowNewItemForm(true)}>
+                    新增庫存項目
+                  </Button>
+                  <Button onClick={() => setShowScanner(true)}>
+                    掃描 QR Code
+                  </Button>
+                </>
+              )}
+            </Space>
+            <Search
+              placeholder="搜索商品名稱或類別"
+              onSearch={value => setSearchText(value)}
+              style={{ width: 300 }}
+            />
+          </div>
+
+          {lowStockItems.length > 0 && (
+            <LowStockAlert items={lowStockItems} />
+          )}
+
           <Table
-            columns={columns}
             dataSource={filteredData}
-            rowKey="product_id"
+            columns={columns}
+            rowKey="id"
             loading={loading}
             pagination={{
-              defaultPageSize: 20,
+              defaultPageSize: 10,
               showSizeChanger: true,
               showTotal: (total) => `共 ${total} 項`
             }}
             summary={summary}
-            scroll={{ x: 800 }}
+          />
+        </Space>
+
+        {showNewItemForm && (
+          <NewItemForm
+            visible={showNewItemForm}
+            onClose={() => setShowNewItemForm(false)}
+            onSuccess={handleItemCreated}
           />
         )}
-      </div>
-      
-      {/* 新增項目表單彈窗 */}
-      {showNewItemForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">新增庫存項目</h2>
-              <Button 
-                onClick={() => setShowNewItemForm(false)}
-                variant="secondary"
-                className="py-1 px-2"
-              >
-                關閉
-              </Button>
-            </div>
-            <NewItemForm onSuccess={handleItemCreated} />
-          </div>
-        </div>
-      )}
-      
-      {/* 掃描 QR 碼彈窗 */}
-      {showScanner && (
-        <ScanItemModal 
-          onClose={() => setShowScanner(false)} 
-          onScanSuccess={handleScanSuccess}
-        />
-      )}
+
+        {showScanner && (
+          <ScanItemModal
+            visible={showScanner}
+            onClose={() => setShowScanner(false)}
+            onScanSuccess={handleScanSuccess}
+          />
+        )}
+      </Card>
     </div>
   );
 };

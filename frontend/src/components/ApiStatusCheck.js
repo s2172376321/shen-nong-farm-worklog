@@ -67,11 +67,7 @@ const ApiStatusCheck = () => {
     );
   };
 
-  return (
-    <div style={{ padding: '16px' }}>
-      {renderStatus()}
-    </div>
-  );
+  return null;
 };
 
 export default ApiStatusCheck; 

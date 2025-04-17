@@ -7,8 +7,6 @@ import {
   fetchLocations, 
   fetchWorkCategories, 
   fetchProducts, 
-  checkServerHealth,
-  fetchLocationCrops,
   getWorkLogsByDate,  // 新增：引入新的 API 函數
   getTodayWorkHours,  // 新增：引入新的工時統計函數
   createWorkLog,      // 保留現有的創建函數
@@ -82,25 +80,6 @@ const WorkLogForm = ({ onSubmitSuccess }) => {
   const [csvFile, setCsvFile] = useState(null);
   const [csvError, setCsvError] = useState(null);
   const [csvSuccess, setCsvSuccess] = useState(null);
-
-  // 檢查伺服器連線狀態
-  useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const status = await checkServerHealth();
-        setServerStatus(status);
-        console.log('伺服器狀態檢查結果:', status);
-      } catch (err) {
-        console.error('檢查伺服器狀態失敗:', err);
-        setServerStatus({ status: 'offline', message: '無法連線到伺服器' });
-      }
-    };
-    
-    checkConnection();
-    // 每30秒檢查一次
-    const interval = setInterval(checkConnection, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   // 加載位置數據
   const loadLocations = useCallback(async () => {
@@ -808,22 +787,6 @@ if (!workLog.crop && availableCrops.length > 0) {
 const handleSubmit = async (e) => {
   e.preventDefault();
   
-  // 檢查伺服器連線狀態
-  if (serverStatus.status === 'offline') {
-    alert('無法連線至伺服器，請稍後再試。');
-    return;
-  }
-  
-  // 驗證認證狀態
-  const token = localStorage.getItem('token');
-  if (!token) {
-    alert('您的登入狀態已失效，請重新登入');
-    logout(); // 導向登入頁面
-    return;
-  }
-  
-  console.log('正在提交工作日誌，認證令牌存在:', !!token);
-  
   // 表單驗證
   if (!validateForm()) {
     // 滾動到第一個錯誤欄位
@@ -997,18 +960,6 @@ return (
 
 
       <h2 className="text-2xl font-bold mb-4 text-center">工作日誌登錄</h2>
-      
-      {/* 伺服器連線狀態 */}
-      {serverStatus.status !== 'online' && (
-        <div className={`mb-4 p-3 rounded-lg text-center ${
-          serverStatus.status === 'offline' ? 'bg-red-700' : 'bg-yellow-700'
-        }`}>
-          <p className="font-medium">{serverStatus.message}</p>
-          {serverStatus.status === 'offline' && (
-            <p className="text-sm mt-1">請檢查網路連線或聯絡系統管理員</p>
-          )}
-        </div>
-      )}
       
       {/* 上傳方式切換 */}
       <div className="mb-4 flex justify-center space-x-4">
@@ -1414,7 +1365,7 @@ return (
             <Button 
               type="submit" 
               className="w-full"
-              disabled={isLoading || serverStatus.status === 'offline'}
+              disabled={isLoading}
             >
               {isLoading ? '提交中...' : '提交工作日誌'}
             </Button>
