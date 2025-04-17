@@ -314,7 +314,10 @@ const InventoryDashboard = () => {
           <NewItemForm
             visible={showNewItemForm}
             onClose={() => setShowNewItemForm(false)}
-            onSuccess={handleItemCreated}
+            onSuccess={() => {
+              setShowNewItemForm(false);
+              loadInventoryItems();
+            }}
           />
         )}
 

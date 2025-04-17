@@ -130,37 +130,6 @@ export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
   }
 };
 
-// 透過產品ID獲取庫存項目
-export const fetchInventoryItemByProductId = async (productId) => {
-  // 檢查快取
-  const cacheKey = `inventoryItemByProduct:${productId}`;
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log(`使用快取的產品 ${productId} 庫存項目`);
-    return cachedData;
-  }
-  
-  try {
-    const response = await api.get(`/inventory/product/${productId}`, {
-      timeout: 10000
-    });
-    
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
-    
-    return response.data;
-  } catch (error) {
-    console.error(`獲取產品 ${productId} 庫存項目失敗:`, error);
-    
-    // 如果是 404 錯誤（找不到），則不拋出錯誤，而是返回 null
-    if (error.response && error.response.status === 404) {
-      return null;
-    }
-    
-    throw error;
-  }
-};
-
 // 獲取庫存交易歷史
 export const fetchInventoryTransactions = async (filters = {}) => {
   // 檢查快取
@@ -219,6 +188,39 @@ export const syncFromProductList = async () => {
     return response.data;
   } catch (error) {
     console.error('批量更新庫存項目失敗:', error);
+    throw error;
+  }
+};
+
+// 創建庫存領用記錄
+export const createInventoryCheckout = async (checkoutData) => {
+  try {
+    const response = await api.post('/inventory/checkout', checkoutData);
+    return response.data;
+  } catch (error) {
+    console.error('創建庫存領用記錄失敗:', error);
+    throw error;
+  }
+};
+
+// 獲取庫存領用記錄列表
+export const fetchInventoryCheckouts = async (filters = {}) => {
+  try {
+    const response = await api.get('/inventory/checkouts', { params: filters });
+    return response.data;
+  } catch (error) {
+    console.error('獲取庫存領用記錄失敗:', error);
+    throw error;
+  }
+};
+
+// 根據產品ID查詢庫存項目
+export const fetchInventoryItemByProductId = async (productId) => {
+  try {
+    const response = await api.get(`/inventory/product/${productId}`);
+    return response.data;
+  } catch (error) {
+    console.error('獲取庫存項目失敗:', error);
     throw error;
   }
 };

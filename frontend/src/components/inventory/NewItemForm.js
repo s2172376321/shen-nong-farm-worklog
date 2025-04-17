@@ -2,9 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { createInventoryItem, fetchInventoryItemByProductId } from '../../utils/inventoryApi';
 import { fetchProducts } from '../../utils/api';
-import { Button, Input } from '../ui';
+import { Modal, Form, Input, InputNumber, Select, Button, message } from 'antd';
 
-const NewItemForm = ({ onSuccess }) => {
+const NewItemForm = ({ visible, onClose, onSuccess }) => {
+  const [form] = Form.useForm();
   const [formData, setFormData] = useState({
     product_id: '',
     product_name: '',
@@ -34,13 +35,16 @@ const NewItemForm = ({ onSuccess }) => {
         }
       } catch (err) {
         console.error('載入產品數據失敗:', err);
+        message.error('載入產品數據失敗');
       } finally {
         setIsLoadingProducts(false);
       }
     };
     
-    loadProducts();
-  }, []);
+    if (visible) {
+      loadProducts();
+    }
+  }, [visible]);
 
   // 處理表單變更
   const handleChange = (e) => {
@@ -71,13 +75,10 @@ const NewItemForm = ({ onSuccess }) => {
   };
 
   // 處理數值變更
-  const handleNumberChange = (e) => {
-    const { name, value } = e.target;
-    const numValue = value === '' ? 0 : Number(value);
-    
+  const handleNumberChange = (name, value) => {
     setFormData(prev => ({
       ...prev,
-      [name]: numValue
+      [name]: value
     }));
   };
 
@@ -85,17 +86,15 @@ const NewItemForm = ({ onSuccess }) => {
   const handleSelectSuggestion = async (product) => {
     setShowSuggestions(false);
     
-    // 檢查該產品ID是否已經存在於庫存中
     try {
       const existingItem = await fetchInventoryItemByProductId(product.商品編號);
       
       if (existingItem) {
-        setError(`產品ID "${product.商品編號}" 已存在於庫存中`);
+        message.error(`產品ID "${product.商品編號}" 已存在於庫存中`);
         return;
       }
       
-      // 設置表單資料
-      setFormData({
+      const newData = {
         product_id: product.商品編號 || '',
         product_name: product.規格 || product.商品編號 || '',
         category: getCategoryFromProductId(product.商品編號),
@@ -103,12 +102,13 @@ const NewItemForm = ({ onSuccess }) => {
         unit: product.單位 || '個',
         current_quantity: 0,
         min_quantity: isMaterialOrFeedType(product.商品編號) ? 10 : 0
-      });
+      };
+      
+      setFormData(newData);
+      form.setFieldsValue(newData);
     } catch (err) {
-      console.error('檢查產品ID時發生錯誤:', err);
-      // 如果是404錯誤，表示產品ID不存在於庫存中，可以繼續
       if (err.response && err.response.status === 404) {
-        setFormData({
+        const newData = {
           product_id: product.商品編號 || '',
           product_name: product.規格 || product.商品編號 || '',
           category: getCategoryFromProductId(product.商品編號),
@@ -116,7 +116,13 @@ const NewItemForm = ({ onSuccess }) => {
           unit: product.單位 || '個',
           current_quantity: 0,
           min_quantity: isMaterialOrFeedType(product.商品編號) ? 10 : 0
-        });
+        };
+        
+        setFormData(newData);
+        form.setFieldsValue(newData);
+      } else {
+        console.error('檢查產品ID時發生錯誤:', err);
+        message.error('檢查產品ID時發生錯誤');
       }
     }
   };
@@ -151,242 +157,164 @@ const NewItemForm = ({ onSuccess }) => {
   };
 
   // 提交表單
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
+  const handleSubmit = async () => {
     try {
       setIsLoading(true);
       setError(null);
       
-      // 驗證必填欄位
-      if (!formData.product_id.trim()) {
-        throw new Error('產品編號不能為空');
-      }
-      
-      if (!formData.product_name.trim()) {
-        throw new Error('產品名稱不能為空');
-      }
-      
-      if (!formData.unit.trim()) {
-        throw new Error('單位不能為空');
-      }
+      const values = await form.validateFields();
       
       // 檢查該產品ID是否已經存在於庫存中
       try {
-        const existingItem = await fetchInventoryItemByProductId(formData.product_id);
+        const existingItem = await fetchInventoryItemByProductId(values.product_id);
         
         if (existingItem) {
-          throw new Error(`產品ID "${formData.product_id}" 已存在於庫存中`);
+          throw new Error(`產品ID "${values.product_id}" 已存在於庫存中`);
         }
       } catch (err) {
-        // 如果是404錯誤，表示產品ID不存在於庫存中，可以繼續
         if (!err.response || err.response.status !== 404) {
           throw err;
         }
       }
       
       // 提交新項目
-      await createInventoryItem(formData);
+      await createInventoryItem(values);
       
-      // 成功後重置表單
-      setFormData({
-        product_id: '',
-        product_name: '',
-        category: '',
-        description: '',
-        unit: '',
-        current_quantity: 0,
-        min_quantity: 0
-      });
-      
-      setSuccess(true);
-      
-      // 3秒後關閉成功訊息
-      setTimeout(() => {
-        setSuccess(false);
-        onSuccess && onSuccess();
-      }, 2000);
+      message.success('庫存項目創建成功！');
+      form.resetFields();
+      onSuccess && onSuccess();
+      onClose && onClose();
     } catch (err) {
       console.error('創建庫存項目失敗:', err);
-      setError(err.message || '創建庫存項目失敗，請稍後再試');
+      message.error(err.message || '創建庫存項目失敗，請稍後再試');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div>
-      {error && (
-        <div className="bg-red-600 text-white p-3 rounded-lg mb-4">
-          {error}
-        </div>
-      )}
-      
-      {success && (
-        <div className="bg-green-600 text-white p-3 rounded-lg mb-4">
-          庫存項目創建成功!
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 產品ID */}
-          <div className="relative">
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              產品編號 <span className="text-red-500">*</span>
-            </label>
-            <Input
-              type="text"
-              name="product_id"
-              value={formData.product_id}
-              onChange={handleChange}
-              required
-              placeholder="請輸入產品編號"
-              autoComplete="off"
-            />
-            {showSuggestions && (
-              <div className="absolute z-10 mt-1 w-full bg-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                {productSuggestions.map(product => (
-                  <div 
-                    key={product.商品編號}
-                    className="p-2 hover:bg-gray-600 cursor-pointer"
-                    onClick={() => handleSelectSuggestion(product)}
-                  >
-                    <div className="font-medium">{product.商品編號}</div>
-                    <div className="text-sm text-gray-400">{product.規格} ({product.單位 || '單位不明'})</div>
-                  </div>
-                ))}
-                {isLoadingProducts && (
-                  <div className="p-2 text-center text-gray-400">
-                    載入中...
-                  </div>
-                )}
-              </div>
-            )}
-            <p className="text-xs text-gray-400 mt-1">
-              提示: 輸入產品編號可以自動填入相關資訊
-            </p>
-          </div>
-          
-          {/* 產品名稱 */}
-          <div>
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              產品名稱 <span className="text-red-500">*</span>
-            </label>
-            <Input
-              type="text"
-              name="product_name"
-              value={formData.product_name}
-              onChange={handleChange}
-              required
-              placeholder="請輸入產品名稱"
-            />
-          </div>
-          
-          {/* 類別 */}
-          <div>
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              類別
-            </label>
-            <select
-              name="category"
-              value={formData.category}
-              onChange={handleChange}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
-            >
-              <option value="">選擇類別</option>
-              <option value="葉菜類">葉菜類</option>
-              <option value="水果類">水果類</option>
-              <option value="瓜果類">瓜果類</option>
-              <option value="家禽類">家禽類</option>
-              <option value="魚類">魚類</option>
-              <option value="加工品類">加工品類</option>
-              <option value="葉菜種子種苗">葉菜種子種苗</option>
-              <option value="水果種子種苗">水果種子種苗</option>
-              <option value="肥料">肥料</option>
-              <option value="資材">資材</option>
-              <option value="飼料">飼料</option>
-              <option value="其他">其他</option>
-            </select>
-          </div>
-          
-          {/* 單位 */}
-          <div>
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              單位 <span className="text-red-500">*</span>
-            </label>
-            <Input
-              type="text"
-              name="unit"
-              value={formData.unit}
-              onChange={handleChange}
-              required
-              placeholder="例如：個、斤、包、公斤等"
-            />
-          </div>
-          
-          {/* 初始庫存 */}
-          <div>
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              初始庫存
-            </label>
-            <Input
-              type="number"
-              name="current_quantity"
-              value={formData.current_quantity}
-              onChange={handleNumberChange}
-              min="0"
-              step="0.01"
-              placeholder="0"
-            />
-          </div>
-          
-          {/* 最低庫存量 */}
-          <div>
-            <label className="block mb-2 text-sm font-medium text-gray-300">
-              最低庫存量
-            </label>
-            <Input
-              type="number"
-              name="min_quantity"
-              value={formData.min_quantity}
-              onChange={handleNumberChange}
-              min="0"
-              step="0.01"
-              placeholder="0"
-            />
-            <p className="text-xs text-gray-400 mt-1">
-              當庫存低於此值時會顯示警告
-            </p>
-          </div>
-        </div>
-        
-        {/* 描述 */}
-        <div>
-          <label className="block mb-2 text-sm font-medium text-gray-300">
-            描述
-          </label>
-          <textarea
-            name="description"
-            value={formData.description}
-            onChange={handleChange}
-            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
-            rows="3"
-            placeholder="選填"
+    <Modal
+      title="新增庫存項目"
+      open={visible}
+      onCancel={onClose}
+      footer={[
+        <Button key="back" onClick={onClose}>
+          取消
+        </Button>,
+        <Button
+          key="submit"
+          type="primary"
+          loading={isLoading}
+          onClick={handleSubmit}
+        >
+          確定
+        </Button>
+      ]}
+      width={720}
+    >
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={formData}
+      >
+        <Form.Item
+          name="product_id"
+          label="產品編號"
+          rules={[{ required: true, message: '請輸入產品編號' }]}
+        >
+          <Input
+            placeholder="請輸入產品編號"
+            onChange={(e) => handleChange(e)}
+            autoComplete="off"
           />
-        </div>
+        </Form.Item>
         
-        <div className="pt-2">
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="w-full"
-          >
-            {isLoading ? '處理中...' : '建立庫存項目'}
-          </Button>
-        </div>
-      </form>
-    </div>
+        {showSuggestions && (
+          <div className="mb-4 bg-white rounded-lg shadow-lg max-h-60 overflow-y-auto">
+            {productSuggestions.map(product => (
+              <div
+                key={product.商品編號}
+                className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                onClick={() => handleSelectSuggestion(product)}
+              >
+                {product.商品編號} - {product.規格}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Form.Item
+          name="product_name"
+          label="產品名稱"
+          rules={[{ required: true, message: '請輸入產品名稱' }]}
+        >
+          <Input placeholder="請輸入產品名稱" />
+        </Form.Item>
+
+        <Form.Item
+          name="category"
+          label="類別"
+          rules={[{ required: true, message: '請選擇類別' }]}
+        >
+          <Select placeholder="請選擇類別">
+            <Select.Option value="葉菜類">葉菜類</Select.Option>
+            <Select.Option value="水果類">水果類</Select.Option>
+            <Select.Option value="瓜果類">瓜果類</Select.Option>
+            <Select.Option value="家禽類">家禽類</Select.Option>
+            <Select.Option value="魚類">魚類</Select.Option>
+            <Select.Option value="加工品類">加工品類</Select.Option>
+            <Select.Option value="葉菜種子種苗">葉菜種子種苗</Select.Option>
+            <Select.Option value="水果種子種苗">水果種子種苗</Select.Option>
+            <Select.Option value="肥料">肥料</Select.Option>
+            <Select.Option value="資材">資材</Select.Option>
+            <Select.Option value="飼料">飼料</Select.Option>
+            <Select.Option value="其他">其他</Select.Option>
+          </Select>
+        </Form.Item>
+
+        <Form.Item
+          name="unit"
+          label="單位"
+          rules={[{ required: true, message: '請輸入單位' }]}
+        >
+          <Input placeholder="請輸入單位" />
+        </Form.Item>
+
+        <Form.Item
+          name="current_quantity"
+          label="當前數量"
+          rules={[{ required: true, message: '請輸入當前數量' }]}
+        >
+          <InputNumber
+            min={0}
+            placeholder="請輸入當前數量"
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="min_quantity"
+          label="最小庫存量"
+          rules={[{ required: true, message: '請輸入最小庫存量' }]}
+        >
+          <InputNumber
+            min={0}
+            placeholder="請輸入最小庫存量"
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+
+        <Form.Item
+          name="description"
+          label="描述"
+        >
+          <Input.TextArea
+            rows={4}
+            placeholder="請輸入描述（選填）"
+          />
+        </Form.Item>
+      </Form>
+    </Modal>
   );
 };
 

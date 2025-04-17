@@ -3,6 +3,7 @@ const db = require('../config/database');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs').promises;
+const { validateInventoryItem } = require('../utils/validation');
 
 const InventoryController = {
   // 獲取所有庫存項目
@@ -620,6 +621,150 @@ const InventoryController = {
     // 嘗試匹配前四位數字
     const prefix = productId.substring(0, 4);
     return categoryMap[prefix] || '其他';
+  },
+
+  // 創建庫存領用記錄
+  async createInventoryCheckout(req, res) {
+    const client = await db.connect();
+    
+    try {
+      const {
+        inventory_id,
+        product_id,
+        user_id,
+        user_name,
+        quantity,
+        purpose,
+        checkout_date
+      } = req.body;
+
+      // 驗證必填欄位
+      if (!inventory_id || !product_id || !user_id || !user_name || !quantity || !purpose || !checkout_date) {
+        return res.status(400).json({ message: '所有欄位都是必填的' });
+      }
+
+      // 開始事務
+      await client.query('BEGIN');
+
+      // 檢查庫存是否足夠
+      const inventoryResult = await client.query(
+        'SELECT current_quantity FROM inventory_items WHERE id = $1',
+        [inventory_id]
+      );
+
+      if (inventoryResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ message: '找不到指定的庫存項目' });
+      }
+
+      const currentQuantity = inventoryResult.rows[0].current_quantity;
+      if (currentQuantity < quantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: '庫存數量不足' });
+      }
+
+      // 創建領用記錄
+      const result = await client.query(
+        `INSERT INTO inventory_checkouts 
+         (inventory_id, product_id, user_id, user_name, quantity, purpose, checkout_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [inventory_id, product_id, user_id, user_name, quantity, purpose, checkout_date]
+      );
+
+      // 提交事務
+      await client.query('COMMIT');
+
+      res.status(201).json(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('創建庫存領用記錄失敗:', error);
+      res.status(500).json({ message: '創建庫存領用記錄失敗' });
+    } finally {
+      client.release();
+    }
+  },
+
+  // 獲取庫存領用記錄
+  async getInventoryCheckouts(req, res) {
+    try {
+      const {
+        start_date,
+        end_date,
+        user_id,
+        inventory_id,
+        product_id,
+        limit = 100,
+        offset = 0
+      } = req.query;
+
+      let query = `
+        SELECT c.*, i.product_name, i.unit
+        FROM inventory_checkouts c
+        LEFT JOIN inventory_items i ON c.inventory_id = i.id
+        WHERE 1=1
+      `;
+      const params = [];
+      let paramCount = 1;
+
+      // 添加過濾條件
+      if (start_date) {
+        query += ` AND c.checkout_date >= $${paramCount}`;
+        params.push(start_date);
+        paramCount++;
+      }
+      if (end_date) {
+        query += ` AND c.checkout_date <= $${paramCount}`;
+        params.push(end_date);
+        paramCount++;
+      }
+      if (user_id) {
+        query += ` AND c.user_id = $${paramCount}`;
+        params.push(user_id);
+        paramCount++;
+      }
+      if (inventory_id) {
+        query += ` AND c.inventory_id = $${paramCount}`;
+        params.push(inventory_id);
+        paramCount++;
+      }
+      if (product_id) {
+        query += ` AND c.product_id = $${paramCount}`;
+        params.push(product_id);
+        paramCount++;
+      }
+
+      // 添加排序和分頁
+      query += ` ORDER BY c.checkout_date DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+      params.push(limit, offset);
+
+      const result = await db.query(query, params);
+      res.json(result.rows);
+    } catch (error) {
+      console.error('獲取庫存領用記錄失敗:', error);
+      res.status(500).json({ message: '獲取庫存領用記錄失敗' });
+    }
+  },
+
+  // 根據產品ID獲取庫存項目
+  async getInventoryItemByProductId(req, res) {
+    try {
+      const { productId } = req.params;
+      
+      const result = await db.query(
+        'SELECT * FROM inventory_items WHERE product_id = $1',
+        [productId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ message: '找不到指定的庫存項目' });
+      }
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('獲取庫存項目失敗:', error);
+      res.status(500).json({ message: '獲取庫存項目失敗' });
+    }
   }
 };
 
