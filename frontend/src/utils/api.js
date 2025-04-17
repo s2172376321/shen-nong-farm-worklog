@@ -1220,20 +1220,41 @@ return {
 // ----- 系統檢查 API -----
 // 健康檢查API，檢查伺服器連線狀態
 export const checkServerHealth = async () => {
-try {
-const response = await api.get('/health-check', { timeout: 5000 });
-return {
-  status: 'online',
-  message: response.data?.message || '伺服器連線正常',
-  serverTime: response.data?.serverTime
-};
-} catch (error) {
-return {
-  status: 'offline',
-  message: '無法連線到伺服器',
-  error: error.message
-};
-}
+  try {
+    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3002/api';
+    console.log('正在檢查伺服器健康狀態:', `${baseUrl}/health-check`);
+    
+    const response = await fetch(`${baseUrl}/health-check`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include'  // 添加這個以支持跨域認證
+    });
+
+    console.log('健康檢查響應狀態:', response.status);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log('健康檢查響應數據:', data);
+    
+    return {
+      status: data.status || 'online',
+      message: data.message || 'Server is running',
+      serverTime: data.serverTime
+    };
+  } catch (error) {
+    console.error('健康檢查失敗:', {
+      error: error.message,
+      type: error.name,
+      stack: error.stack
+    });
+    throw new Error(`無法連接到後端服務: ${error.message}`);
+  }
 };
 
 // 認證測試 API

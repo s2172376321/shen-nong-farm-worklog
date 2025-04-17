@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { fetchInventoryItems, fetchLowStockItems, syncFromProductList } from '../../utils/inventoryApi';
-import { Button, Card, Table, Input, Tag, Typography, Space } from 'antd';
+import { fetchInventoryItems, fetchLowStockItems } from '../../utils/inventoryApi';
+import { Button, Card, Table, Input, Tag, Typography, Space, Popover } from 'antd';
 import InventoryTable from './InventoryTable';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
+import { QRCodeSVG } from 'qrcode.react';
 
 const { Search } = Input;
 const { Text } = Typography;
@@ -30,8 +31,10 @@ const InventoryDashboard = () => {
   }, []);
 
   useEffect(() => {
-    filterData();
-  }, [searchText, inventoryItems]);
+    if (inventoryItems) {
+      filterData();
+    }
+  }, [searchText, inventoryItems, filterData]);
 
   const loadInventoryItems = async () => {
     try {
@@ -62,7 +65,7 @@ const InventoryDashboard = () => {
     }
   };
   
-  const filterData = () => {
+  const filterData = React.useCallback(() => {
     if (!Array.isArray(inventoryItems)) {
       console.warn('inventoryItems is not an array');
       setFilteredData([]);
@@ -97,7 +100,7 @@ const InventoryDashboard = () => {
       console.error('Error filtering data:', error);
       setFilteredData(inventoryItems);
     }
-  };
+  }, [inventoryItems, searchText]);
   
   const getQuantityColor = (quantity) => {
     if (quantity < 0) return 'red';
@@ -106,6 +109,31 @@ const InventoryDashboard = () => {
   };
   
   const columns = [
+    {
+      title: 'QR碼',
+      key: 'qr_code',
+      width: 100,
+      render: (_, record) => (
+        <Popover 
+          content={
+            <div className="p-2">
+              <QRCodeSVG 
+                value={record.product_id}
+                size={128}
+                level="H"
+                includeMargin={true}
+              />
+            </div>
+          }
+          title={`${record.product_name} (${record.product_id})`}
+          trigger="click"
+        >
+          <Button type="text" size="small">
+            查看QR碼
+          </Button>
+        </Popover>
+      ),
+    },
     {
       title: '商品編號',
       dataIndex: 'product_id',

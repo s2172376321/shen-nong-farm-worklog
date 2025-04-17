@@ -22,11 +22,20 @@ const corsOptions = {
     'http://localhost:3000', 
     'http://localhost:3001', 
     'http://127.0.0.1:3000', 
-    'http://127.0.0.1:3001'
-  ],
+    'http://127.0.0.1:3001',
+    process.env.FRONTEND_URL // 添加生產環境的域名
+  ].filter(Boolean), // 移除 undefined 值
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  credentials: true,
+  maxAge: 86400 // 預取請求的快取時間（24小時）
 };
 
 // 應用 CORS 到所有請求
@@ -34,9 +43,6 @@ app.use(cors(corsOptions));
 
 // 回應 OPTIONS 請求
 app.options('*', cors(corsOptions));
-
-
-
 
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
@@ -51,7 +57,10 @@ app.use(express.json({ limit: '5mb' })); // 增加限制大小
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // 安全中间件
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}));
 
 // 速率限制
 const limiter = rateLimit({
@@ -71,9 +80,6 @@ app.use(fileUpload({
   useTempFiles: false, // 不使用临时文件，直接将文件存放在内存中
   debug: process.env.NODE_ENV !== 'production' // 在非生产环境下启用调试
 }));
-
-// 回应 OPTIONS 请求
-app.options('*', cors(corsOptions));
 
 // 添加健康检查路由
 app.get('/api/db-status', async (req, res) => {

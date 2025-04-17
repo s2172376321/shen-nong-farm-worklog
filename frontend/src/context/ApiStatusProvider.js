@@ -1,5 +1,5 @@
 // 位置：frontend/src/context/ApiStatusProvider.js
-import React, { createContext, useState, useEffect, useContext } from 'react';
+import React, { createContext, useState, useEffect, useContext, useCallback } from 'react';
 import { checkServerHealth } from '../utils/api';
 
 // 創建 API 狀態上下文
@@ -18,49 +18,82 @@ export const ApiStatusProvider = ({ children }) => {
   const [apiStatus, setApiStatus] = useState(null);
   const [lastChecked, setLastChecked] = useState(null);
   const [checkCount, setCheckCount] = useState(0);
+  const [retryAttempts, setRetryAttempts] = useState(0);
   
   // 檢查 API 狀態
-  const checkApiStatus = async () => {
+  const checkApiStatus = useCallback(async () => {
+    // 如果已經在檢查中，則不重複檢查
+    if (isChecking) {
+      console.log('已經在檢查中，跳過此次檢查');
+      return;
+    }
+    
     setIsChecking(true);
+    console.log('開始檢查 API 狀態...');
     
     try {
-      console.log("正在檢查後端 API 狀態...");
       const health = await checkServerHealth();
+      console.log('API 回應:', health);
       
-      console.log("API 狀態檢查結果:", health);
-      
-      setApiStatus(health);
-      setIsApiReady(health.status === 'online');
-      setLastChecked(new Date());
+      if (health.status === 'online') {
+        setApiStatus(health);
+        setIsApiReady(true);
+        setLastChecked(new Date());
+        setRetryAttempts(0); // 重置重試次數
+      } else {
+        throw new Error(health.message || 'API 未就緒');
+      }
     } catch (error) {
-      console.error("API 狀態檢查錯誤:", error);
+      console.error('API 檢查錯誤:', error);
       setApiStatus({
         status: 'error',
-        message: '無法連接到後端服務',
-        error: error.message
+        message: error.message || '無法連接到後端服務',
       });
       setIsApiReady(false);
+      
+      // 如果重試次數小於3次，自動重試
+      if (retryAttempts < 3) {
+        console.log(`將在 3 秒後重試 (第 ${retryAttempts + 1} 次)`);
+        setTimeout(() => {
+          setRetryAttempts(prev => prev + 1);
+          setCheckCount(prev => prev + 1);
+        }, 3000);
+      }
     } finally {
       setIsChecking(false);
+      console.log('API 檢查完成');
     }
-  };
+  }, [isChecking, retryAttempts]); // 只依賴真正需要的狀態
   
-  // 重試檢查
-  const retryCheck = () => {
+  // 手動重試檢查
+  const retryCheck = useCallback(() => {
+    setRetryAttempts(0); // 重置重試次數
     setCheckCount(prev => prev + 1);
-  };
+  }, []); // 不需要任何依賴
   
   // 在應用程序啟動時檢查 API 狀態
   useEffect(() => {
-    checkApiStatus();
+    let intervalId;
     
-    // 定期檢查 API 狀態 (每 3 分鐘)
-    const intervalId = setInterval(() => {
+    const runCheck = () => {
       checkApiStatus();
-    }, 3 * 60 * 1000);
+      
+      // 定期檢查 API 狀態 (每 3 分鐘)
+      intervalId = setInterval(() => {
+        if (isApiReady) { // 只在 API 就緒時進行定期檢查
+          checkApiStatus();
+        }
+      }, 3 * 60 * 1000);
+    };
+
+    runCheck();
     
-    return () => clearInterval(intervalId);
-  }, [checkCount]);
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [checkCount, checkApiStatus, isApiReady]);
   
   return (
     <ApiStatusContext.Provider 

@@ -27,68 +27,68 @@ const WorkLogReview = () => {
   };
 
   // 載入所有工作日誌
-  useEffect(() => {
-    const loadAllWorkLogs = async () => {
-      try {
-        setIsLoading(true);
-        setError(null); // 清除之前的錯誤
-        
-        // 添加重試機制
-        let retryCount = 0;
-        const maxRetries = 2;
-        let lastError = null;
-        
-        while (retryCount <= maxRetries) {
-          try {
-            const data = await searchWorkLogs({
-              startDate: filter.date,
-              endDate: filter.date,
-              limit: 50
-            });
-            
-            if (!data || !Array.isArray(data)) {
-              throw new Error('獲取數據格式錯誤');
+  const loadAllWorkLogs = async () => {
+    try {
+      setIsLoading(true);
+      setError(null); // 清除之前的錯誤
+      
+      // 添加重試機制
+      let retryCount = 0;
+      const maxRetries = 2;
+      let lastError = null;
+      
+      while (retryCount <= maxRetries) {
+        try {
+          const data = await searchWorkLogs({
+            startDate: filter.date,
+            endDate: filter.date,
+            limit: 50
+          });
+          
+          if (!data || !Array.isArray(data)) {
+            throw new Error('獲取數據格式錯誤');
+          }
+          
+          setAllWorkLogs(data);
+          
+          // 從所有工作日誌中提取不重複的使用者列表
+          const uniqueUsers = [];
+          const userMap = {};
+          
+          data.forEach(log => {
+            if (log.user_id && !userMap[log.user_id]) {
+              userMap[log.user_id] = true;
+              uniqueUsers.push({
+                id: log.user_id,
+                username: log.username || '未知使用者'
+              });
             }
-            
-            setAllWorkLogs(data);
-            
-            // 從所有工作日誌中提取不重複的使用者列表
-            const uniqueUsers = [];
-            const userMap = {};
-            
-            data.forEach(log => {
-              if (log.user_id && !userMap[log.user_id]) {
-                userMap[log.user_id] = true;
-                uniqueUsers.push({
-                  id: log.user_id,
-                  username: log.username || '未知使用者'
-                });
-              }
-            });
-            
-            setUsers(uniqueUsers);
-            applyFilters(data);
-            return; // 成功後直接返回
-          } catch (err) {
-            lastError = err;
-            retryCount++;
-            if (retryCount <= maxRetries) {
-              console.log(`重試加載數據 (${retryCount}/${maxRetries})`);
-              await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒後重試
-            }
+          });
+          
+          setUsers(uniqueUsers);
+          applyFilters(data);
+          return; // 成功後直接返回
+        } catch (err) {
+          lastError = err;
+          retryCount++;
+          if (retryCount <= maxRetries) {
+            console.log(`重試加載數據 (${retryCount}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒後重試
           }
         }
-        
-        // 如果所有重試都失敗了
-        throw lastError;
-      } catch (err) {
-        console.error('載入工作日誌失敗:', err);
-        setError(`載入工作日誌失敗: ${err.message || '未知錯誤'}`);
-      } finally {
-        setIsLoading(false);
       }
-    };
+      
+      // 如果所有重試都失敗了
+      throw lastError;
+    } catch (err) {
+      console.error('載入工作日誌失敗:', err);
+      setError(`載入工作日誌失敗: ${err.message || '未知錯誤'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadAllWorkLogs();
   }, [filter.date]); // 只在日期改變時重新加載
 

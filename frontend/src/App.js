@@ -14,7 +14,7 @@ import NoticeBoard from './components/common/NoticeBoard';
 import UserSettings from './components/user/UserSettings';
 import PrivateRoute from './components/common/PrivateRoute';
 import GoogleCallback from './components/auth/GoogleCallback'; 
-import InventoryManagement from './components/inventory/InventoryManagement';
+import InventoryDashboard from './components/inventory/InventoryDashboard';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -88,7 +88,7 @@ function AppContent() {
           {/* 庫存管理路由 - 需要登入 */}
           <Route path="/inventory" element={
             <PrivateRoute>
-              <InventoryManagement />
+              <InventoryDashboard />
             </PrivateRoute>
           } />
           
