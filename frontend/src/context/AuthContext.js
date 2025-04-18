@@ -128,7 +128,7 @@ export const AuthProvider = ({ children }) => {
         throw new Error('缺少 Google 憑證');
       }
       
-      // 使用明確的 token 參數名稱
+      // 使用明確的 credential 參數名稱
       logAuth('調用 Google 登入 API');
       const response = await googleLogin(credential);
       
@@ -162,31 +162,12 @@ export const AuthProvider = ({ children }) => {
         redirectBasedOnRole(response.user.role);
       }, 100);
       
-      return response.user;
+      return response;
     } catch (error) {
-      logAuth('Google 登入過程中發生錯誤', { 
-        message: error.message,
-        stack: error.stack?.substring(0, 100),
-        response: error.response?.data,
-        status: error.response?.status
+      logAuth('Google 登入失敗', { 
+        error: error.message,
+        response: error.response?.data
       });
-      
-      // 提供更多錯誤診斷
-      if (error.response) {
-        logAuth('伺服器響應錯誤', {
-          status: error.response.status,
-          data: error.response.data
-        });
-      } else if (error.request) {
-        logAuth('未收到伺服器響應', {
-          request: 'Request sent but no response'
-        });
-      } else {
-        logAuth('請求設置錯誤', {
-          setupError: error.message
-        });
-      }
-      
       throw error;
     }
   };

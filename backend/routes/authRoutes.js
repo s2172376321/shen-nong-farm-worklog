@@ -40,6 +40,11 @@ router.post('/login',
 // Google 登入路由
 router.post('/google-login', 
   (req, res) => {
+    console.log('收到 Google 登入請求:', {
+      hasCredential: !!req.body.credential,
+      hasClientId: !!req.body.clientId
+    });
+    
     if (typeof AuthController.googleLogin !== 'function') {
       return res.status(500).json({ message: '伺服器配置錯誤：Google 登入控制器未定義' });
     }

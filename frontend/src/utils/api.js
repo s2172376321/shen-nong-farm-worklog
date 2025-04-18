@@ -271,8 +271,9 @@ export const googleLogin = async (credential) => {
   try {
     console.log('調用 API: 發送Google憑證，長度:', credential?.length);
     
-    // 使用'token'參數名稱，與後端對應
-    const response = await api.post('/auth/google-login', { token: credential });
+    const response = await api.post('/google-login', { 
+      credential: credential
+    });
     
     console.log('Google登入API成功');
     

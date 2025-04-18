@@ -20,7 +20,10 @@ class GoogleAuthService {
       });
 
       const payload = ticket.getPayload();
-      console.log('Token 驗證成功，獲取用戶資料');
+      console.log('Token 驗證成功，獲取用戶資料:', {
+        email: payload['email'],
+        name: payload['name']
+      });
       
       return {
         googleId: payload['sub'],
