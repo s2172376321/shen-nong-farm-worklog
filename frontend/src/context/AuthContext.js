@@ -78,14 +78,23 @@ export const AuthProvider = ({ children }) => {
   // 一般登入
   const login = async (username, password) => {
     try {
-      logAuth('嘗試使用用戶名密碼登入', { username });
+      logAuth('嘗試使用用戶名密碼登入', { 
+        username,
+        hasPassword: !!password
+      });
       
       if (!username || !password) {
         logAuth('登入失敗：缺少用戶名或密碼');
         throw new Error('請輸入用戶名和密碼');
       }
       
-      const response = await loginUser(username, password);
+      // 確保請求體格式正確
+      const loginData = {
+        username: username.trim(),
+        password: password
+      };
+      
+      const response = await loginUser(loginData.username, loginData.password);
       logAuth('登入 API 響應成功', { 
         hasToken: !!response.token,
         hasUser: !!response.user
@@ -110,7 +119,8 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       logAuth('登入過程中發生錯誤', { 
         message: error.message,
-        response: error.response?.data
+        response: error.response?.data,
+        request: error.request ? '請求已發送' : '請求未發送'
       });
       throw error;
     }

@@ -12,8 +12,8 @@ const ValidationMiddleware = {
     }
 
     // 驗證使用者名稱
-    if (username.length < 2 || username.length > 50) {
-      return res.status(400).json({ message: '使用者名稱長度必須在2-50字元之間' });
+    if (username.length < 4 || username.length > 20) {
+      return res.status(400).json({ message: '使用者名稱長度必須在4-20字元之間' });
     }
 
     // 驗證電子郵件
@@ -21,16 +21,10 @@ const ValidationMiddleware = {
       return res.status(400).json({ message: '無效的電子郵件格式' });
     }
 
-    // 驗證密碼強度
-    if (!validator.isStrongPassword(password, {
-      minLength: 8,
-      minLowercase: 1,
-      minUppercase: 1,
-      minNumbers: 1,
-      minSymbols: 1
-    })) {
+    // 驗證密碼長度
+    if (password.length < 8) {
       return res.status(400).json({ 
-        message: '密碼必須至少8個字元，包含大小寫字母、數字和特殊符號' 
+        message: '密碼必須至少8個字元' 
       });
     }
 
@@ -39,16 +33,11 @@ const ValidationMiddleware = {
 
   // 登入驗證
   validateLogin(req, res, next) {
-    const { email, password } = req.body;
+    const { username, password } = req.body;
 
     // 檢查必填欄位
-    if (!email || !password) {
-      return res.status(400).json({ message: '請填寫電子郵件和密碼' });
-    }
-
-    // 驗證電子郵件
-    if (!validator.isEmail(email)) {
-      return res.status(400).json({ message: '無效的電子郵件格式' });
+    if (!username || !password) {
+      return res.status(400).json({ message: '請填寫帳號和密碼' });
     }
 
     next();
@@ -63,9 +52,9 @@ const ValidationMiddleware = {
       return res.status(400).json({ message: '請提供使用者帳號' });
     }
 
-    // 檢查長度 6-20 字元
-    if (username.length < 3 || username.length > 20) {
-      return res.status(400).json({ message: '使用者帳號長度必須在3-20字元之間' });
+    // 檢查長度 4-20 字元
+    if (username.length < 4 || username.length > 20) {
+      return res.status(400).json({ message: '使用者帳號長度必須在4-20字元之間' });
     }
 
     // 只允許英文、數字、底線

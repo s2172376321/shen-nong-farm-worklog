@@ -145,7 +145,7 @@ const UserManagement = () => {
             <label className="block text-sm text-gray-400 mb-1">使用者帳號</label>
             <Input
               type="text"
-              placeholder="帳號 (6-20字元，僅英文、數字和底線)"
+              placeholder="帳號 (4-20字元，僅英文、數字和底線)"
               value={selectedUser ? selectedUser.username : newUser.username}
               onChange={(e) => 
                 selectedUser
@@ -181,7 +181,7 @@ const UserManagement = () => {
               <label className="block text-sm text-gray-400 mb-1">密碼</label>
               <Input
                 type="password"
-                placeholder="密碼 (至少8字元，包含大小寫字母、數字和特殊符號)"
+                placeholder="密碼 (至少8字元)"
                 value={newUser.password}
                 onChange={(e) => setNewUser({...newUser, password: e.target.value})}
                 required

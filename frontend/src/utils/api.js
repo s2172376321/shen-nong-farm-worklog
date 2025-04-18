@@ -30,17 +30,18 @@ const apiCache = {
 
 // 創建 axios 實例
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3002/api',
-  withCredentials: true,
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
   timeout: 30000,
+  withCredentials: true,
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
   }
 });
 
 // 請求攔截器
 api.interceptors.request.use(
-  config => {
+  (config) => {
     // 添加時間戳防止快取
     if (config.method === 'get') {
       config.params = {
@@ -48,70 +49,69 @@ api.interceptors.request.use(
         _t: Date.now()
       };
     }
-    
-    // 添加 token
+
+    // 添加認證 token
     const token = localStorage.getItem('token');
     if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
+      config.headers.Authorization = `Bearer ${token}`;
     }
-    
-    console.log('發送請求:', {
-      url: config.url,
-      method: config.method,
-      params: config.params
-    });
-    
+
     return config;
   },
-  error => {
-    console.error('請求配置錯誤:', error);
+  (error) => {
+    console.error('Request error:', error);
     return Promise.reject(error);
   }
 );
 
 // 響應攔截器
 api.interceptors.response.use(
-  response => {
-    console.log('請求成功:', {
+  (response) => {
+    console.log('Response success:', {
       url: response.config.url,
       status: response.status,
-      data: response.data
+      timestamp: new Date().toISOString()
     });
     return response;
   },
-  error => {
-    console.error('請求失敗:', {
+  (error) => {
+    console.error('Response error:', {
       url: error.config?.url,
       status: error.response?.status,
       message: error.message,
-      data: error.response?.data
+      timestamp: new Date().toISOString()
     });
 
     // 處理特定錯誤
-    if (error.code === 'ECONNABORTED') {
-      return Promise.reject(new Error('請求超時，請檢查網絡連接'));
+    if (error.response) {
+      switch (error.response.status) {
+        case 401:
+          // 未授權，清除 token 並重定向到登入頁
+          localStorage.removeItem('token');
+          window.location.href = '/login';
+          break;
+        case 403:
+          // 權限不足
+          console.error('Permission denied');
+          break;
+        case 404:
+          // 資源不存在
+          console.error('Resource not found');
+          break;
+        case 429:
+          // 請求過多
+          console.error('Too many requests');
+          break;
+        case 500:
+          // 伺服器錯誤
+          console.error('Server error');
+          break;
+        default:
+          console.error('Unknown error');
+      }
     }
 
-    if (!error.response) {
-      return Promise.reject(new Error('無法連接到伺服器，請檢查網絡連接'));
-    }
-
-    // 處理特定 HTTP 狀態碼
-    switch (error.response.status) {
-      case 401:
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/login';
-        return Promise.reject(new Error('認證已過期，請重新登入'));
-      case 403:
-        return Promise.reject(new Error('您沒有權限執行此操作'));
-      case 404:
-        return Promise.reject(new Error('找不到請求的資源'));
-      case 500:
-        return Promise.reject(new Error('伺服器內部錯誤，請稍後再試'));
-      default:
-        return Promise.reject(error.response.data?.message || error.message || '請求失敗');
-    }
+    return Promise.reject(error);
   }
 );
 
@@ -252,26 +252,152 @@ export const websocket = new WebSocketService();
 
 // ----- 認證相關 API -----
 export const loginUser = async (username, password) => {
-  try {
-    console.log('嘗試登入用戶:', username);
-    const response = await api.post('/auth/login', { username, password });
-    console.log('登入成功:', response.data);
-    
-    // 登入成功後連接 WebSocket
-    websocket.connect();
-    
-    return response.data;
-  } catch (error) {
-    console.error('登入失敗:', error);
-    throw error;
-  }
+  let retryCount = 0;
+  const maxRetries = 3;
+  const retryDelay = 1000; // 1 秒
+
+  const attemptLogin = async () => {
+    try {
+      // 驗證參數
+      if (!username || !password) {
+        throw new Error('請填寫使用者名稱和密碼');
+      }
+
+      // 驗證使用者名稱格式 (4-20位元的數字)
+      const usernameRegex = /^\d{4,20}$/;
+      if (!usernameRegex.test(username)) {
+        throw new Error('使用者名稱必須是4-20位元的數字');
+      }
+      
+      // 驗證密碼長度 (至少8個字元)
+      if (password.length < 8) {
+        throw new Error('密碼必須至少8個字元');
+      }
+
+      console.log('嘗試登入用戶:', {
+        username,
+        hasPassword: !!password,
+        timestamp: new Date().toISOString(),
+        apiUrl: api.defaults.baseURL,
+        retryCount
+      });
+      
+      // 確保請求體格式正確
+      const requestBody = {
+        username: username.trim(),
+        password: password
+      };
+
+      // 添加請求配置
+      const config = {
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 10000 + (retryCount * 2000) // 隨重試次數增加超時時間
+      };
+
+      // 發送請求前記錄
+      console.log('發送登入請求:', {
+        url: '/auth/login',
+        method: 'POST',
+        body: { ...requestBody, password: '[已隱藏]' },
+        timestamp: new Date().toISOString(),
+        retryCount
+      });
+
+      const response = await api.post('/auth/login', requestBody, config);
+      
+      // 檢查回應格式
+      if (!response.data || !response.data.token) {
+        throw new Error('伺服器回應格式錯誤');
+      }
+      
+      // 記錄成功回應
+      console.log('登入成功:', {
+        status: response.status,
+        hasToken: !!response.data.token,
+        timestamp: new Date().toISOString()
+      });
+      
+      return response.data;
+    } catch (error) {
+      // 詳細記錄錯誤
+      console.error('登入失敗:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        request: error.request ? '請求已發送' : '請求未發送',
+        timestamp: new Date().toISOString(),
+        retryCount
+      });
+
+      // 如果是網路錯誤且還有重試機會，則重試
+      if (!error.response && retryCount < maxRetries) {
+        retryCount++;
+        console.log(`等待 ${retryDelay}ms 後進行第 ${retryCount} 次重試...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        return attemptLogin();
+      }
+      
+      // 如果是自定義錯誤訊息，直接拋出
+      if (error.message && (
+        error.message.includes('使用者名稱必須是') || 
+        error.message.includes('密碼必須至少') ||
+        error.message.includes('請填寫使用者名稱和密碼')
+      )) {
+        throw error;
+      }
+      
+      // 處理 API 錯誤回應
+      if (error.response) {
+        // 如果伺服器返回了錯誤訊息，使用伺服器的錯誤訊息
+        if (error.response.data && error.response.data.message) {
+          throw new Error(error.response.data.message);
+        }
+        
+        // 根據狀態碼提供預設錯誤訊息
+        switch (error.response.status) {
+          case 400:
+            // 檢查是否有更詳細的錯誤訊息
+            if (error.response.data && error.response.data.error) {
+              throw new Error(`請求格式錯誤: ${error.response.data.error}`);
+            } else if (error.response.data && error.response.data.details) {
+              throw new Error(`請求格式錯誤: ${error.response.data.details}`);
+            } else {
+              throw new Error('請填寫正確的使用者名稱和密碼');
+            }
+          case 401:
+            throw new Error('使用者名稱或密碼錯誤');
+          case 403:
+            throw new Error('您沒有權限登入系統');
+          case 429:
+            throw new Error('登入嘗試過於頻繁，請稍後再試');
+          case 500:
+            throw new Error('伺服器錯誤，請稍後再試');
+          default:
+            throw new Error('登入失敗，請稍後再試');
+        }
+      }
+      
+      // 處理網路錯誤
+      if (error.request) {
+        throw new Error('無法連接到伺服器，請檢查網路連接');
+      }
+      
+      // 其他錯誤
+      throw new Error('登入過程中發生未知錯誤');
+    }
+  };
+
+  return attemptLogin();
 };
 
 export const googleLogin = async (credential) => {
   try {
     console.log('調用 API: 發送Google憑證，長度:', credential?.length);
     
-    const response = await api.post('/google-login', { 
+    const response = await api.post('/auth/google-login', { 
       credential: credential
     });
     

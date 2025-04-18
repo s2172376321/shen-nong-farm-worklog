@@ -19,7 +19,7 @@ const RegisterPage = () => {
   // 檢查使用者帳號可用性
   useEffect(() => {
     const checkUsername = async () => {
-      if (formData.username.length >= 6) {
+      if (formData.username.length >= 4) {
         try {
           const response = await fetch(`/api/users/check-username/${formData.username}`);
           const data = await response.json();
@@ -44,15 +44,80 @@ const RegisterPage = () => {
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (isLoading) return;
+    
+    // 驗證表單
+    if (!formData.username || !formData.password || !formData.confirmPassword) {
+      setError('請填寫所有欄位');
+      return;
+    }
+    
+    // 驗證使用者名稱格式 (4-20位元的數字)
+    const usernameRegex = /^\d{4,20}$/;
+    if (!usernameRegex.test(formData.username)) {
+      setError('使用者名稱必須是4-20位元的數字');
+      return;
+    }
+    
+    // 驗證密碼長度 (至少8個字元)
+    if (formData.password.length < 8) {
+      setError('密碼必須至少8個字元');
+      return;
+    }
+    
+    // 驗證密碼確認
+    if (formData.password !== formData.confirmPassword) {
+      setError('兩次輸入的密碼不一致');
+      return;
+    }
+    
     setIsLoading(true);
     setError(null);
-
+    
     try {
+      // 檢查使用者名稱是否可用
+      const availabilityCheck = await checkUsernameAvailability(formData.username);
+      
+      if (!availabilityCheck.available) {
+        setError('此使用者名稱已被使用');
+        setIsLoading(false);
+        return;
+      }
+      
+      // 註冊使用者
       await registerUser(formData);
-      // 註冊成功後導向登入頁面
-      window.location.href = '/login';
+      
+      // 註冊成功後自動登入
+      const loginSuccess = await login(formData.username, formData.password);
+      
+      if (loginSuccess) {
+        navigate('/dashboard');
+      } else {
+        setError('註冊成功，但自動登入失敗，請手動登入');
+      }
     } catch (err) {
-      setError(err.response?.data?.message || '註冊失敗，請稍後再試');
+      console.error('註冊失敗:', err);
+      
+      if (err.response) {
+        switch (err.response.status) {
+          case 400:
+            setError(err.response.data?.message || '註冊資料格式錯誤');
+            break;
+          case 409:
+            setError('此使用者名稱已被使用');
+            break;
+          case 500:
+            setError('伺服器錯誤，請稍後再試');
+            break;
+          default:
+            setError(err.response.data?.message || '註冊失敗，請稍後再試');
+        }
+      } else if (err.request) {
+        setError('無法連接到伺服器，請檢查網路連接');
+      } else {
+        setError(err.message || '註冊過程中發生未知錯誤');
+      }
+    } finally {
       setIsLoading(false);
     }
   };
@@ -73,19 +138,40 @@ const RegisterPage = () => {
 
         <form onSubmit={handleRegister} className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">使用者帳號</label>
-            <Input
-              type="text"
-              placeholder="帳號 (6-20字元，僅英文、數字和底線)"
+            <Input 
+              type="text" 
+              placeholder="使用者帳號 (4-20位元數字)" 
               value={formData.username}
               onChange={(e) => setFormData({...formData, username: e.target.value})}
+              disabled={isLoading}
               required
+              pattern="\d{4,20}"
+              title="請輸入4-20位元的數字"
             />
-            {usernameAvailable !== null && (
-              <p className={`text-sm mt-1 ${usernameAvailable ? 'text-green-500' : 'text-red-500'}`}>
-                {usernameAvailable ? '此帳號可以使用' : '此帳號已被使用'}
-              </p>
-            )}
+          </div>
+          <div>
+            <Input 
+              type="password" 
+              placeholder="密碼 (至少8個字元)" 
+              value={formData.password}
+              onChange={(e) => setFormData({...formData, password: e.target.value})}
+              disabled={isLoading}
+              required
+              minLength="8"
+              title="密碼必須至少8個字元"
+            />
+          </div>
+          <div>
+            <Input 
+              type="password" 
+              placeholder="確認密碼" 
+              value={formData.confirmPassword}
+              onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+              disabled={isLoading}
+              required
+              minLength="8"
+              title="密碼必須至少8個字元"
+            />
           </div>
           
           <div>
@@ -95,17 +181,6 @@ const RegisterPage = () => {
               placeholder="電子郵件"
               value={formData.email}
               onChange={(e) => setFormData({...formData, email: e.target.value})}
-              required
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">密碼</label>
-            <Input
-              type="password"
-              placeholder="密碼 (至少8字元，包含大小寫字母、數字和特殊符號)"
-              value={formData.password}
-              onChange={(e) => setFormData({...formData, password: e.target.value})}
               required
             />
           </div>

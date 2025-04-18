@@ -1,6 +1,6 @@
 // 位置：frontend/src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { ApiStatusProvider } from './context/ApiStatusProvider';
 
@@ -18,94 +18,40 @@ import InventoryList from './components/inventory/InventoryList';
 import InventoryDetail from './components/inventory/InventoryDetail';
 
 function AppContent() {
-  const { user, isLoading } = useAuth();
-
-  // 載入中狀態
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-900">
-        <div className="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
   return (
     <Router>
       <Routes>
         {/* 公開路由 */}
-        <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage />} />
+        <Route path="/login" element={<LoginPage />} />
         
         {/* Google 登入回調路由 */}
         <Route path="/auth/google/callback" element={<GoogleCallback />} />
         
-        {/* 首頁路由 - 根據使用者角色重定向 */}
-        <Route path="/" element={
-          user ? (
-            user.role === 'admin' ? 
-              <Navigate to="/admin" /> : 
-              <Navigate to="/dashboard" />
-          ) : (
-            <Navigate to="/login" />
-          )
-        } />
+        {/* 首頁路由 - 直接導向儀表板 */}
+        <Route path="/" element={<UserDashboard />} />
         
         {/* 使用者儀表板路由 */}
-        <Route path="/dashboard" element={
-          <PrivateRoute>
-            <UserDashboard />
-          </PrivateRoute>
-        } />
+        <Route path="/dashboard" element={<UserDashboard />} />
         
-        {/* 工作日誌路由 - 需要一般用戶權限 */}
-        <Route path="/work-log" element={
-          <PrivateRoute>
-            <WorkLogDashboard />
-          </PrivateRoute>
-        } />
+        {/* 工作日誌路由 */}
+        <Route path="/work-log" element={<WorkLogDashboard />} />
         
         {/* 使用者設定路由 */}
-        <Route path="/settings" element={
-          <PrivateRoute>
-            <UserSettings />
-          </PrivateRoute>
-        } />
+        <Route path="/settings" element={<UserSettings />} />
         
-        {/* 公告欄路由 - 需要登入 */}
-        <Route path="/notices" element={
-          <PrivateRoute>
-            <NoticeBoard />
-          </PrivateRoute>
-        } />
+        {/* 公告欄路由 */}
+        <Route path="/notices" element={<NoticeBoard />} />
         
-        {/* 庫存管理路由 - 需要登入 */}
-        <Route path="/inventory" element={
-          <PrivateRoute>
-            <InventoryDashboard />
-          </PrivateRoute>
-        } />
+        {/* 庫存管理路由 */}
+        <Route path="/inventory" element={<InventoryDashboard />} />
+        <Route path="/inventory/list" element={<InventoryList />} />
+        <Route path="/inventory/:id" element={<InventoryDetail />} />
         
-        {/* 庫存清單路由 - 需要登入 */}
-        <Route path="/inventory/list" element={
-          <PrivateRoute>
-            <InventoryList />
-          </PrivateRoute>
-        } />
+        {/* 管理員路由 */}
+        <Route path="/admin/*" element={<AdminDashboard />} />
         
-        <Route path="/inventory/:id" element={
-          <PrivateRoute>
-            <InventoryDetail />
-          </PrivateRoute>
-        } />
-        
-        {/* 管理員路由 - 需要管理員權限 */}
-        <Route path="/admin/*" element={
-          <PrivateRoute adminOnly={true}>
-            <AdminDashboard />
-          </PrivateRoute>
-        } />
-        
-        {/* 預設路由 - 重定向到登入頁 */}
-        <Route path="*" element={<Navigate to="/login" />} />
+        {/* 預設路由 - 重定向到儀表板 */}
+        <Route path="*" element={<UserDashboard />} />
       </Routes>
     </Router>
   );

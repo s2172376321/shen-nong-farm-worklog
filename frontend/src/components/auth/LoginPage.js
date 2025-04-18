@@ -34,34 +34,50 @@ const LoginPage = () => {
       return;
     }
     
+    // 驗證使用者名稱格式 (4-20位元的數字)
+    const usernameRegex = /^\d{4,20}$/;
+    if (!usernameRegex.test(username)) {
+      setError('使用者名稱必須是4-20位元的數字');
+      return;
+    }
+    
+    // 驗證密碼長度 (至少8個字元)
+    if (password.length < 8) {
+      setError('密碼必須至少8個字元');
+      return;
+    }
+    
     setIsLoading(true);
     setError(null);
     
     try {
-      console.log('嘗試使用帳號密碼登入...');
-      await login(username, password);
+      console.log('嘗試使用帳號密碼登入...', {
+        username,
+        hasPassword: !!password,
+        timestamp: new Date().toISOString()
+      });
       
-      // 登入成功後，AuthContext 中的 redirectBasedOnRole 會處理跳轉
-      // 不需要在這裡手動導航
+      // 確保請求體格式正確
+      const loginData = {
+        username: username.trim(),
+        password: password
+      };
+      
+      const success = await login(loginData.username, loginData.password);
+      
+      if (success) {
+        // 登入成功，導向到對應的頁面
+        if (user && user.role === 'admin') {
+          navigate('/admin');
+        } else {
+          navigate('/dashboard');
+        }
+      }
     } catch (err) {
       console.error('登入失敗:', err);
       
-      // 提供更友好的錯誤訊息
-      if (err.response) {
-        if (err.response.status === 401) {
-          setError('帳號或密碼不正確');
-        } else if (err.response.status === 403) {
-          setError('您沒有權限登入系統');
-        } else if (err.response.status >= 500) {
-          setError('伺服器錯誤，請稍後再試');
-        } else {
-          setError(err.response.data?.message || '登入失敗，請檢查帳號密碼');
-        }
-      } else if (err.request) {
-        setError('無法連接到伺服器，請檢查網路連接');
-      } else {
-        setError(err.message || '登入過程中發生未知錯誤');
-      }
+      // 顯示錯誤訊息
+      setError(err.message || '登入失敗，請稍後再試');
     } finally {
       setIsLoading(false);
     }
@@ -85,21 +101,25 @@ const LoginPage = () => {
           <div>
             <Input 
               type="text" 
-              placeholder="帳號" 
+              placeholder="使用者帳號 (4-20位元數字)" 
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               disabled={isLoading}
               required
+              pattern="\d{4,20}"
+              title="請輸入4-20位元的數字"
             />
           </div>
           <div>
             <Input 
               type="password" 
-              placeholder="密碼" 
+              placeholder="密碼 (至少8個字元)" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={isLoading}
               required
+              minLength="8"
+              title="密碼必須至少8個字元"
             />
           </div>
           <Button 

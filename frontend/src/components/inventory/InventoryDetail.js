@@ -20,11 +20,8 @@ const InventoryDetail = () => {
   // 加載項目詳情
   useEffect(() => {
     const loadDetails = async () => {
-      // UUID 格式驗證
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      
-      if (!itemId || !uuidRegex.test(itemId)) {
-        setError('無效的庫存項目ID格式');
+      if (!itemId) {
+        setError('無效的庫存項目ID');
         setIsLoading(false);
         return;
       }

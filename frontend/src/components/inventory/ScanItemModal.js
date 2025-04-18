@@ -1,5 +1,5 @@
 // 位置：frontend/src/components/inventory/ScanItemModal.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal, message } from 'antd';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import InventoryCheckoutForm from './InventoryCheckoutForm';
@@ -9,7 +9,7 @@ const ScanItemModal = ({ visible, onClose, onScanSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [scannedItem, setScannedItem] = useState(null);
   const [showCheckoutForm, setShowCheckoutForm] = useState(false);
-  const [scanner, setScanner] = useState(null);
+  const scannerRef = useRef(null);
 
   const handleScan = useCallback(async (decodedText) => {
     try {
@@ -35,8 +35,8 @@ const ScanItemModal = ({ visible, onClose, onScanSuccess }) => {
       setScannedItem(item);
       setShowCheckoutForm(true);
       
-      if (scanner) {
-        scanner.clear();
+      if (scannerRef.current) {
+        scannerRef.current.clear();
       }
     } catch (error) {
       console.error('掃描處理失敗:', error);
@@ -44,7 +44,7 @@ const ScanItemModal = ({ visible, onClose, onScanSuccess }) => {
     } finally {
       setLoading(false);
     }
-  }, [scanner]);
+  }, []);
 
   const handleError = useCallback((error) => {
     console.error('掃描錯誤:', error);
@@ -61,22 +61,22 @@ const ScanItemModal = ({ visible, onClose, onScanSuccess }) => {
       });
 
       qrScanner.render(handleScan, handleError);
-      setScanner(qrScanner);
+      scannerRef.current = qrScanner;
     } else {
       // 清理掃描器
-      if (scanner) {
-        scanner.clear();
+      if (scannerRef.current) {
+        scannerRef.current.clear();
       }
       setScannedItem(null);
       setShowCheckoutForm(false);
     }
 
     return () => {
-      if (scanner) {
-        scanner.clear();
+      if (scannerRef.current) {
+        scannerRef.current.clear();
       }
     };
-  }, [visible, handleScan, handleError, scanner]);
+  }, [visible, handleScan, handleError]);
 
   const handleCheckoutSuccess = () => {
     setScannedItem(null);
