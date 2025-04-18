@@ -371,12 +371,12 @@ async getAllWorkLogs(req, res) {
 // 優化後的 searchWorkLogs 函數
 async searchWorkLogs(req, res) {
   // 提取查詢參數
-  const { startDate, endDate, status } = req.query;
+  const { startDate, endDate, status, page = 1, limit = 20 } = req.query;
   const userId = req.user.id;
 
   try {
     console.log('收到工作日誌搜索請求:', {
-      startDate, endDate, status,
+      startDate, endDate, status, page, limit,
       userId,
       userRole: req.user?.role
     });
@@ -402,23 +402,24 @@ async searchWorkLogs(req, res) {
       paramIndex++;
     }
 
-// 日期條件是必須的，確保有日期範圍
-if (startDate && endDate) {
-  queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
-  values.push(startDate, endDate);
-  paramIndex += 2;
-} else if (startDate) {
-  // 如果只有開始日期，查詢單日
-  queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
-  values.push(startDate);
-  paramIndex++;
-} else {
-  // 默認查詢今天
-  const today = new Date().toISOString().split('T')[0];
-  queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
-  values.push(today);
-  paramIndex++;
-}
+    // 日期條件是必須的，確保有日期範圍
+    if (startDate && endDate) {
+      queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+      values.push(startDate, endDate);
+      paramIndex += 2;
+    } else if (startDate) {
+      // 如果只有開始日期，查詢單日
+      queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
+      values.push(startDate);
+      paramIndex++;
+    } else {
+      // 默認查詢今天
+      const today = new Date().toISOString().split('T')[0];
+      queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
+      values.push(today);
+      paramIndex++;
+    }
+
     // 添加狀態過濾
     if (status) {
       queryText += ` AND wl.status = $${paramIndex}`;
@@ -429,8 +430,10 @@ if (startDate && endDate) {
     // 添加排序
     queryText += ' ORDER BY wl.created_at DESC';
     
-    // 限制結果數量，避免返回過多數據
-    queryText += ' LIMIT 100';
+    // 添加分頁
+    const offset = (page - 1) * limit;
+    queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    values.push(limit, offset);
 
     console.log('執行 SQL:', queryText);
     console.log('參數:', values);
@@ -447,7 +450,20 @@ if (startDate && endDate) {
       end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
     }));
     
-    res.json(formattedResults);
+    // 獲取總記錄數
+    const countQuery = queryText.replace(/SELECT.*?FROM/, 'SELECT COUNT(*) FROM').split('ORDER BY')[0];
+    const countResult = await db.query(countQuery, values.slice(0, -2));
+    const totalCount = parseInt(countResult.rows[0].count);
+    
+    res.json({
+      data: formattedResults,
+      pagination: {
+        total: totalCount,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
   } catch (error) {
     console.error('查詢工作日誌失敗:', {
       error: error.message,

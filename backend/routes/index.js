@@ -17,7 +17,7 @@ router.use('/notices', noticeRoutes);
 router.use('/users', userRoutes);
 router.use('/stats', statsRoutes);
 router.use('/data', dataRoutes);  // 添加這一行
-router.use('/inventory', inventoryRoutes); // 添加庫存路由
+router.use('/inventory', inventoryRoutes); // 註冊庫存路由
 
 
 module.exports = router;

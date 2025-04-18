@@ -110,7 +110,17 @@ setInterval(() => {
   console.log(`Memory usage: ${Math.round(memoryUsage.heapUsed / 1024 / 1024)} MB / ${Math.round(memoryUsage.heapTotal / 1024 / 1024)} MB`);
 }, 10000);
 
-// 路由
+// 路由導入
+const authRoutes = require('./routes/authRoutes');
+const workLogRoutes = require('./routes/workLogRoutes');
+const attachmentRoutes = require('./routes/attachmentRoutes');
+const inventoryRoutes = require('./routes/inventoryRoutes');
+
+// 路由註冊
+app.use('/api/auth', authRoutes);
+app.use('/api/work-logs', workLogRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api', attachmentRoutes);
 app.use('/api', routes);
 
 // 错误处理中间件

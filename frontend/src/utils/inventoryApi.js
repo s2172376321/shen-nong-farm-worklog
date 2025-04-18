@@ -11,7 +11,7 @@ export const fetchInventoryItems = async () => {
   }
   
   try {
-    const response = await api.get('/inventory', {
+    const response = await api.get('/inventory/', {
       timeout: 10000 // 10秒超時
     });
     
@@ -51,26 +51,30 @@ export const fetchLowStockItems = async () => {
 
 // 獲取單一庫存項目詳情
 export const fetchInventoryItemDetails = async (itemId) => {
-  // 檢查快取
-  const cacheKey = `inventoryItem:${itemId}`;
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log(`使用快取的庫存項目 ${itemId} 詳情`);
-    return cachedData;
-  }
-  
   try {
     const response = await api.get(`/inventory/${itemId}`, {
-      timeout: 10000
+      timeout: 5000 // 5秒超時
     });
-    
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
     
     return response.data;
   } catch (error) {
-    console.error(`獲取庫存項目 ${itemId} 詳情失敗:`, error);
-    throw error;
+    console.error('獲取庫存項目詳情失敗:', error);
+    
+    // 檢查是否為超時錯誤
+    if (error.code === 'ECONNABORTED') {
+      throw new Error('請求超時，請檢查網路連接');
+    }
+    
+    // 檢查是否為 404 錯誤
+    if (error.response?.status === 404) {
+      throw new Error('找不到該庫存項目');
+    }
+    
+    // 其他錯誤
+    throw new Error(
+      error.response?.data?.message || 
+      '獲取庫存項目詳情失敗，請稍後再試'
+    );
   }
 };
 

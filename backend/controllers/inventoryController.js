@@ -32,35 +32,90 @@ const InventoryController = {
   async getItemDetails(req, res) {
     const { itemId } = req.params;
 
+    // 驗證UUID格式
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!itemId || !uuidRegex.test(itemId)) {
+      return res.status(400).json({
+        success: false,
+        message: '無效的庫存項目ID格式'
+      });
+    }
+
     try {
-      // 查詢庫存項目
-      const itemQuery = `
-        SELECT * FROM inventory_items WHERE id = $1
+      // 使用單一查詢獲取所有需要的數據
+      const query = `
+        WITH item_data AS (
+          SELECT 
+            i.*,
+            COALESCE(
+              (SELECT SUM(quantity) 
+               FROM inventory_transactions 
+               WHERE inventory_item_id = i.id AND transaction_type = 'in'),
+              0
+            ) as total_in,
+            COALESCE(
+              (SELECT SUM(quantity) 
+               FROM inventory_transactions 
+               WHERE inventory_item_id = i.id AND transaction_type = 'out'),
+              0
+            ) as total_out
+          FROM inventory_items i
+          WHERE i.id = $1
+        ),
+        transaction_data AS (
+          SELECT 
+            t.*,
+            u.username,
+            u.display_name as user_display_name
+          FROM inventory_transactions t
+          LEFT JOIN users u ON t.user_id = u.id
+          WHERE t.inventory_item_id = $1
+          ORDER BY t.created_at DESC
+          LIMIT 100
+        )
+        SELECT 
+          json_build_object(
+            'item', (SELECT row_to_json(item_data) FROM item_data),
+            'transactions', COALESCE(
+              (SELECT json_agg(t) FROM transaction_data t),
+              '[]'::json
+            )
+          ) as result
       `;
-      const itemResult = await db.query(itemQuery, [itemId]);
       
-      if (itemResult.rows.length === 0) {
-        return res.status(404).json({ message: '找不到該庫存項目' });
+      const result = await db.query(query, [itemId]);
+      
+      if (!result.rows[0] || !result.rows[0].result || !result.rows[0].result.item) {
+        return res.status(404).json({ 
+          success: false,
+          message: '找不到該庫存項目'
+        });
       }
       
-      // 查詢最近的交易記錄
-      const transactionsQuery = `
-        SELECT t.*, u.username 
-        FROM inventory_transactions t
-        LEFT JOIN users u ON t.user_id = u.id
-        WHERE t.inventory_item_id = $1
-        ORDER BY t.created_at DESC
-        LIMIT 20
-      `;
-      const transactionsResult = await db.query(transactionsQuery, [itemId]);
+      // 格式化數據
+      const data = result.rows[0].result;
+      data.item.current_quantity = parseFloat(data.item.current_quantity).toFixed(2);
+      data.item.min_quantity = parseFloat(data.item.min_quantity).toFixed(2);
       
+      // 格式化交易記錄中的數量
+      if (data.transactions) {
+        data.transactions = data.transactions.map(t => ({
+          ...t,
+          quantity: parseFloat(t.quantity).toFixed(2)
+        }));
+      }
+
       res.json({
-        item: itemResult.rows[0],
-        transactions: transactionsResult.rows
+        success: true,
+        ...data
       });
     } catch (error) {
       console.error('獲取庫存項目詳情失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      res.status(500).json({ 
+        success: false,
+        message: '獲取庫存項目詳情失敗，請稍後再試',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   },
 
@@ -764,6 +819,64 @@ const InventoryController = {
     } catch (error) {
       console.error('獲取庫存項目失敗:', error);
       res.status(500).json({ message: '獲取庫存項目失敗' });
+    }
+  },
+
+  // 刪除庫存項目
+  async deleteItem(req, res) {
+    const { itemId } = req.params;
+    const client = await db.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // 檢查是否存在相關交易記錄
+      const transactionCheck = await client.query(
+        'SELECT COUNT(*) FROM inventory_transactions WHERE inventory_item_id = $1',
+        [itemId]
+      );
+
+      if (transactionCheck.rows[0].count > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ 
+          message: '無法刪除此庫存項目，因為已存在相關交易記錄'
+        });
+      }
+
+      // 刪除QR碼檔案（如果存在）
+      const qrQuery = 'SELECT qr_code_url FROM inventory_items WHERE id = $1';
+      const qrResult = await client.query(qrQuery, [itemId]);
+      
+      if (qrResult.rows.length > 0 && qrResult.rows[0].qr_code_url) {
+        const qrPath = path.join(__dirname, '../../public', qrResult.rows[0].qr_code_url);
+        try {
+          await fs.unlink(qrPath);
+        } catch (err) {
+          console.error('刪除QR碼檔案失敗:', err);
+          // 繼續執行，不中斷刪除操作
+        }
+      }
+
+      // 刪除庫存項目
+      const deleteQuery = 'DELETE FROM inventory_items WHERE id = $1 RETURNING *';
+      const result = await client.query(deleteQuery, [itemId]);
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ message: '找不到該庫存項目' });
+      }
+
+      await client.query('COMMIT');
+      res.json({ 
+        message: '庫存項目已成功刪除',
+        deletedItem: result.rows[0]
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('刪除庫存項目失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+    } finally {
+      client.release();
     }
   }
 };

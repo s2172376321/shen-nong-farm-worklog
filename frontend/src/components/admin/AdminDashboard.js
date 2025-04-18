@@ -50,8 +50,14 @@ const AdminDashboard = () => {
     {
       title: '庫存管理',
       component: () => {
-        navigate('/inventory');
-        return null;
+        const handleClick = () => {
+          navigate('/inventory');
+        };
+        return (
+          <div onClick={handleClick} style={{ cursor: 'pointer' }}>
+            庫存管理
+          </div>
+        );
       },
       description: '管理系統庫存',
       icon: '📦'

@@ -15,6 +15,7 @@ import PrivateRoute from './components/common/PrivateRoute';
 import GoogleCallback from './components/auth/GoogleCallback'; 
 import InventoryDashboard from './components/inventory/InventoryDashboard';
 import InventoryList from './components/inventory/InventoryList';
+import InventoryDetail from './components/inventory/InventoryDetail';
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -87,6 +88,12 @@ function AppContent() {
         <Route path="/inventory/list" element={
           <PrivateRoute>
             <InventoryList />
+          </PrivateRoute>
+        } />
+        
+        <Route path="/inventory/:id" element={
+          <PrivateRoute>
+            <InventoryDetail />
           </PrivateRoute>
         } />
         

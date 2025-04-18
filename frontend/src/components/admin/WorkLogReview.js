@@ -1,7 +1,7 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
 import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
-import { searchWorkLogs, reviewWorkLog } from '../../utils/api';
+import { searchWorkLogs, reviewWorkLog, getWorkLogAttachments, uploadWorkLogAttachment, downloadWorkLogAttachment, deleteWorkLogAttachment } from '../../utils/api';
 import UserDailyWorkLogs from '../worklog/UserDailyWorkLogs';
 
 const WorkLogReview = () => {
@@ -20,6 +20,8 @@ const WorkLogReview = () => {
   const [showUserLogDetails, setShowUserLogDetails] = useState(false);
   const [users, setUsers] = useState([]); // 存儲所有使用者列表，用於下拉選單
   const timeouts = [5000, 10000]; // 第一次嘗試 5 秒，第二次 10 秒
+  const [attachments, setAttachments] = useState({});
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
   // 返回函數
   const handleGoBack = () => {
@@ -263,6 +265,66 @@ const WorkLogReview = () => {
       userId: ''
     });
   };
+
+  // 添加加載附件列表的函數
+  const loadAttachments = async (workLogId) => {
+    try {
+      const attachmentList = await getWorkLogAttachments(workLogId);
+      setAttachments(prev => ({
+        ...prev,
+        [workLogId]: attachmentList
+      }));
+    } catch (error) {
+      console.error('加載附件失敗:', error);
+    }
+  };
+
+  // 添加上傳附件的函數
+  const handleAttachmentUpload = async (workLogId, file) => {
+    try {
+      setUploadingAttachment(true);
+      await uploadWorkLogAttachment(workLogId, file);
+      await loadAttachments(workLogId);
+    } catch (error) {
+      console.error('上傳附件失敗:', error);
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  // 添加下載附件的函數
+  const handleAttachmentDownload = async (attachmentId, fileName) => {
+    try {
+      const blob = await downloadWorkLogAttachment(attachmentId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      console.error('下載附件失敗:', error);
+    }
+  };
+
+  // 添加刪除附件的函數
+  const handleAttachmentDelete = async (workLogId, attachmentId) => {
+    try {
+      await deleteWorkLogAttachment(attachmentId);
+      await loadAttachments(workLogId);
+    } catch (error) {
+      console.error('刪除附件失敗:', error);
+    }
+  };
+
+  // 在組件中添加 useEffect
+  useEffect(() => {
+    if (selectedUserLog?.log?.id) {
+      loadAttachments(selectedUserLog.log.id);
+    }
+  }, [selectedUserLog?.log?.id]);
 
   if (isLoading) {
     return (
@@ -534,6 +596,51 @@ const WorkLogReview = () => {
           </div>
         </div>
       )}
+
+      {/* 在工單詳情中添加附件部分 */}
+      <div className="mt-4">
+        <h4 className="text-lg font-semibold mb-2">附件</h4>
+        
+        {/* 上傳按鈕 */}
+        <div className="mb-4">
+          <input
+            type="file"
+            id={`attachment-upload-${selectedUserLog?.log.id}`}
+            className="hidden"
+            onChange={(e) => handleAttachmentUpload(selectedUserLog?.log.id, e.target.files[0])}
+          />
+          <Button
+            onClick={() => document.getElementById(`attachment-upload-${selectedUserLog?.log.id}`).click()}
+            disabled={uploadingAttachment}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+          >
+            {uploadingAttachment ? '上傳中...' : '上傳附件'}
+          </Button>
+        </div>
+        
+        {/* 附件列表 */}
+        <div className="space-y-2">
+          {attachments[selectedUserLog?.log.id]?.map(attachment => (
+            <div key={attachment.id} className="flex items-center justify-between bg-gray-800 p-2 rounded">
+              <span className="text-sm">{attachment.file_name}</span>
+              <div className="flex space-x-2">
+                <Button
+                  onClick={() => handleAttachmentDownload(attachment.id, attachment.file_name)}
+                  className="px-2 py-1 text-sm bg-green-600 hover:bg-green-700"
+                >
+                  下載
+                </Button>
+                <Button
+                  onClick={() => handleAttachmentDelete(selectedUserLog?.log.id, attachment.id)}
+                  className="px-2 py-1 text-sm bg-red-600 hover:bg-red-700"
+                >
+                  刪除
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 };

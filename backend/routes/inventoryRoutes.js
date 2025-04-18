@@ -30,13 +30,19 @@ router.post('/',
 );
 
 // 更新庫存項目
-router.put('/:itemId', 
-  authMiddleware.adminOnly, 
+router.put('/:itemId',
+  authMiddleware.adminOnly,
   InventoryController.updateItem
 );
 
+// 刪除庫存項目
+router.delete('/:itemId',
+  authMiddleware.adminOnly,
+  InventoryController.deleteItem
+);
+
 // 調整庫存數量 (進貨、出貨、直接調整)
-router.post('/:itemId/adjust', 
+router.post('/:itemId/adjust',
   InventoryController.adjustQuantity
 );
 

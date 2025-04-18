@@ -10,7 +10,8 @@ import {
   getWorkLogsByDate,  // 新增：引入新的 API 函數
   getTodayWorkHours,  // 新增：引入新的工時統計函數
   createWorkLog,      // 保留現有的創建函數
-  uploadCSV           // 保留現有的上傳函數
+  uploadCSV,          // 保留現有的上傳函數
+  fetchLocationCrops  // 添加這一行
 } from '../../utils/api';
 
 const WorkLogForm = ({ onSubmitSuccess }) => {
