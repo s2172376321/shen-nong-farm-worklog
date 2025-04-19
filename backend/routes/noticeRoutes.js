@@ -10,6 +10,12 @@ router.get('/',
   NoticeController.getAllNotices
 );
 
+// 獲取未讀公告數量
+router.get('/unread-count', 
+  authMiddleware, 
+  NoticeController.getUnreadCount
+);
+
 // 創建公告（僅管理員）
 router.post('/', 
   authMiddleware, 
@@ -35,12 +41,6 @@ router.delete('/:noticeId',
 router.post('/:noticeId/read', 
   authMiddleware, 
   NoticeController.markAsRead
-);
-
-// 獲取未讀公告數量
-router.get('/unread-count', 
-  authMiddleware, 
-  NoticeController.getUnreadCount
 );
 
 module.exports = router;

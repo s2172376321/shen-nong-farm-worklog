@@ -11,23 +11,28 @@ export const fetchInventoryItems = async () => {
   }
   
   try {
-    const response = await api.get('/inventory/', {
-      timeout: 15000, // 增加超時時間到15秒
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      },
+    console.log('開始請求庫存數據，API URL:', api.defaults.baseURL);
+    
+    const response = await api.get('/inventory', {
+      timeout: 15000,
       validateStatus: function (status) {
-        return status >= 200 && status < 300; // 只接受2xx的響應
+        return status >= 200 && status < 300;
       }
     });
     
+    console.log('收到庫存數據響應:', {
+      status: response.status,
+      hasData: !!response.data,
+      dataType: typeof response.data
+    });
+    
     if (!response.data) {
+      console.warn('伺服器返回空數據');
       throw new Error('伺服器返回空數據');
     }
     
     // 儲存到快取
-    apiCache.set('inventoryItems', response.data, 60000); // 快取1分鐘
+    apiCache.set('inventoryItems', response.data, 60000);
     
     return response.data;
   } catch (error) {
@@ -35,8 +40,24 @@ export const fetchInventoryItems = async () => {
       message: error.message,
       status: error.response?.status,
       data: error.response?.data,
+      config: error.config,
+      baseURL: api.defaults.baseURL,
+      fullURL: error.config?.url ? `${api.defaults.baseURL}${error.config.url}` : 'unknown',
       timestamp: new Date().toISOString()
     });
+
+    if (error.response?.status === 404) {
+      throw new Error(`找不到庫存資料，請確認 API 路徑是否正確 (${api.defaults.baseURL}/inventory)`);
+    }
+
+    if (error.code === 'ECONNABORTED') {
+      throw new Error('請求超時，請檢查網路連接');
+    }
+
+    if (!error.response) {
+      throw new Error(`無法連接到伺服器 (${api.defaults.baseURL})，請檢查網路連接`);
+    }
+
     throw new Error(error.response?.data?.message || '獲取庫存項目失敗，請稍後再試');
   }
 };
@@ -55,13 +76,29 @@ export const fetchLowStockItems = async () => {
       timeout: 10000
     });
     
+    if (!response.data) {
+      return [];
+    }
+    
     // 儲存到快取
-    apiCache.set('lowStockItems', response.data, 60000); // 快取1分鐘
+    apiCache.set('lowStockItems', response.data, 60000);
     
     return response.data;
   } catch (error) {
-    console.error('獲取低庫存項目失敗:', error);
-    throw error;
+    console.error('獲取低庫存項目失敗:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      config: error.config,
+      timestamp: new Date().toISOString()
+    });
+    
+    // 如果是 404，返回空數組而不是拋出錯誤
+    if (error.response?.status === 404) {
+      return [];
+    }
+    
+    return []; // 出錯時返回空數組，避免阻止主頁面載入
   }
 };
 

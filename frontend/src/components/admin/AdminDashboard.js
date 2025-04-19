@@ -88,15 +88,38 @@ const AdminDashboard = () => {
       try {
         const statsData = await fetchDashboardStats();
         setStats(statsData);
+        setError(null);  // 清除任何之前的錯誤
         setIsLoading(false);
       } catch (err) {
-        setError('載入統計資訊失敗');
+        console.error('載入統計資訊失敗:', err);
+        // 根據錯誤類型設置不同的錯誤訊息
+        if (err.response) {
+          if (err.response.status === 404) {
+            setError('找不到統計資料，請確認 API 路徑是否正確');
+          } else if (err.response.status === 401) {
+            setError('您的登入已過期，請重新登入');
+            logout();  // 登出用戶
+            navigate('/login');  // 導向登入頁面
+          } else {
+            setError(`載入統計資訊失敗: ${err.response.data?.message || '未知錯誤'}`);
+          }
+        } else if (err.request) {
+          setError('無法連接到伺服器，請檢查網路連線');
+        } else {
+          setError(`載入統計資訊失敗: ${err.message}`);
+        }
+        // 設置預設值
+        setStats({
+          totalUsers: 0,
+          pendingWorkLogs: 0,
+          unreadNotices: 0
+        });
         setIsLoading(false);
       }
     };
 
     loadStats();
-  }, []);
+  }, [navigate, logout]);  // 添加 navigate 和 logout 作為依賴
 
   // 載入未讀公告數量
   useEffect(() => {

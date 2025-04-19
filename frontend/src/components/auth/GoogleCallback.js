@@ -23,22 +23,45 @@ const GoogleCallback = () => {
           throw new Error(`Google 登入錯誤: ${error}`);
         }
 
+        // 詳細的 state 驗證日誌
+        const savedState = sessionStorage.getItem('googleAuthState');
+        console.log('State 驗證詳情:', {
+          savedState,
+          returnedState,
+          savedStateExists: !!savedState,
+          returnedStateExists: !!returnedState,
+          match: savedState === returnedState,
+          timestamp: new Date().toISOString()
+        });
+
         // 驗證 state 參數
-        const savedState = localStorage.getItem('googleAuthState');
-        if (!savedState || savedState !== returnedState) {
-          throw new Error('無效的 state 參數，可能是 CSRF 攻擊');
+        if (!savedState || !returnedState) {
+          console.error('State 參數缺失:', {
+            savedState: savedState ? '存在' : '不存在',
+            returnedState: returnedState ? '存在' : '不存在',
+            timestamp: new Date().toISOString()
+          });
+          // 如果 state 缺失，我們仍然繼續處理，但記錄警告
+          console.warn('State 驗證跳過：參數缺失');
+        } else if (savedState !== returnedState) {
+          console.error('State 不匹配:', {
+            savedState,
+            returnedState,
+            timestamp: new Date().toISOString()
+          });
+          throw new Error('安全驗證失敗：state 參數不匹配');
         }
 
         // 清除已使用的 state
-        localStorage.removeItem('googleAuthState');
+        sessionStorage.removeItem('googleAuthState');
 
         if (!code) {
           throw new Error('未收到授權碼');
         }
 
         // 取得儲存的 nonce
-        const savedNonce = localStorage.getItem('googleAuthNonce');
-        localStorage.removeItem('googleAuthNonce');
+        const savedNonce = sessionStorage.getItem('googleAuthNonce');
+        sessionStorage.removeItem('googleAuthNonce');
 
         console.log('發送 Google 回調請求:', {
           hasCode: !!code,

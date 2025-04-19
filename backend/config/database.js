@@ -6,87 +6,110 @@ const { Pool } = require('pg');
 
 class Database {
   constructor() {
+    // 輸出環境變數值（不包含密碼）
+    console.log('Database Configuration:', {
+      user: process.env.DB_USER,
+      host: process.env.DB_HOST,
+      database: process.env.DB_NAME,
+      port: process.env.DB_PORT || 5432,
+      ssl: process.env.NODE_ENV === 'production'
+    });
+
     this.pool = new Pool({
       user: process.env.DB_USER,
       host: process.env.DB_HOST,
       database: process.env.DB_NAME,
       password: process.env.DB_PASSWORD,
       port: process.env.DB_PORT || 5432,
-      max: 10, // 減少最大連線數以避免資源過度使用
-      idleTimeoutMillis: 30000, // 連線閒置30秒後關閉
-      connectionTimeoutMillis: 10000, // 增加到10秒，處理較慢的網絡環境
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-      statement_timeout: 15000, // 15秒查詢超時
-      query_timeout: 15000, // 15秒查詢超時
+      max: 20, // 增加連接池大小
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     });
+
+    // 測試連接
+    this.testConnection();
 
     // 連線池事件監聽
     this.pool.on('error', (err) => {
-      console.error('資料庫連線池異常', err);
+      console.error('資料庫連線池錯誤:', {
+        message: err.message,
+        code: err.code,
+        stack: err.stack
+      });
     });
 
-    // 追蹤連線池狀態
     this.pool.on('connect', () => {
-      console.log('DB 連線已建立');
+      console.log('新的資料庫連線已建立');
     });
 
     this.pool.on('acquire', () => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('DB 連線已從池中獲取');
-      }
+      console.log('資料庫連線已從池中獲取');
     });
 
     this.pool.on('remove', () => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('DB 連線已從池中移除');
-      }
+      console.log('資料庫連線已從池中移除');
     });
-
-    // 記錄初始化成功
-    console.log('資料庫連線池已初始化');
   }
 
-  // 執行查詢，增加錯誤處理和重試機制
+  // 測試資料庫連接
+  async testConnection() {
+    try {
+      const client = await this.pool.connect();
+      console.log('資料庫連接測試成功');
+      
+      // 測試查詢
+      const result = await client.query('SELECT NOW()');
+      console.log('資料庫時間:', result.rows[0].now);
+      
+      client.release();
+    } catch (error) {
+      console.error('資料庫連接測試失敗:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      // 不要立即結束程序，讓應用程序有機會重試
+    }
+  }
+
+  // 執行查詢的方法
   async query(text, params, retryCount = 3) {
     const start = Date.now();
     
     try {
-      // 為查詢添加超時
-      const queryOptions = {
-        text,
-        values: params,
-        timeout: 15000 // 15秒超時
-      };
+      console.log('執行查詢:', {
+        query: text.substring(0, 200),
+        params: params ? JSON.stringify(params).substring(0, 200) : 'none'
+      });
+
+      const result = await this.pool.query(text, params);
       
-      const result = await this.pool.query(queryOptions);
-      
-      // 記錄查詢時間（僅在非生產環境）
-      if (process.env.NODE_ENV !== 'production') {
-        const duration = Date.now() - start;
-        console.log(`查詢執行時間: ${duration}ms`);
-      }
+      const duration = Date.now() - start;
+      console.log(`查詢完成: ${duration}ms, 影響的行數: ${result.rowCount}`);
       
       return result;
     } catch (error) {
-      // 檢查是否為連接問題，並且還有重試次數
-      if ((error.code === 'ECONNREFUSED' || error.code === '08006' || error.code === '08001' || 
-          error.code === '57014' || error.code === '57P01') && retryCount > 0) {
-        console.warn(`資料庫連線失敗或查詢超時，${retryCount}秒後重試...`);
-        
-        // 等待一秒後重試
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        return this.query(text, params, retryCount - 1);
-      }
-      
-      // 其他錯誤，記錄詳細信息並拋出
       console.error('查詢執行錯誤:', {
         error: error.message,
         code: error.code,
-        query: text.substring(0, 200) + (text.length > 200 ? '...' : ''),
-        params: params ? JSON.stringify(params).substring(0, 200) : 'none'
+        query: text.substring(0, 200),
+        params: params ? JSON.stringify(params).substring(0, 200) : 'none',
+        duration: Date.now() - start
       });
-      
+
+      if (retryCount > 0 && 
+          (error.code === 'ECONNREFUSED' || 
+           error.code === '08006' || 
+           error.code === '08001' || 
+           error.code === '57014' || 
+           error.code === '57P01')) {
+        
+        console.log(`嘗試重新連接... 剩餘重試次數: ${retryCount - 1}`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return this.query(text, params, retryCount - 1);
+      }
+
       throw error;
     }
   }

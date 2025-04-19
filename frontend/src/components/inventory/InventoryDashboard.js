@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { fetchInventoryItems, fetchLowStockItems } from '../../utils/inventoryApi';
-import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert } from 'antd';
+import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert, message } from 'antd';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
@@ -28,7 +28,7 @@ const InventoryDashboard = () => {
   // 將 filterData 移到這裡，在 useEffect 之前
   const filterData = useCallback(() => {
     if (!Array.isArray(inventoryItems)) {
-      console.warn('inventoryItems is not an array');
+      console.error('inventoryItems is not an array:', inventoryItems);
       setFilteredData([]);
       return;
     }
@@ -36,7 +36,7 @@ const InventoryDashboard = () => {
     const searchContent = (searchText || '').toLowerCase().trim();
     
     if (!searchContent) {
-      setFilteredData(inventoryItems);
+      setFilteredData([...inventoryItems]);
       return;
     }
     
@@ -48,18 +48,20 @@ const InventoryDashboard = () => {
           item.product_id,
           item.product_name,
           item.category,
-          item.unit
-        ];
+          item.unit,
+          item.description
+        ].filter(Boolean);
         
         return searchFields.some(field => 
-          String(field || '').toLowerCase().includes(searchContent)
+          String(field).toLowerCase().includes(searchContent)
         );
       });
       
       setFilteredData(filtered);
     } catch (error) {
       console.error('Error filtering data:', error);
-      setFilteredData(inventoryItems);
+      message.error('搜索過程中發生錯誤');
+      setFilteredData([...inventoryItems]);
     }
   }, [inventoryItems, searchText]);
   
@@ -68,9 +70,7 @@ const InventoryDashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (inventoryItems) {
-      filterData();
-    }
+    filterData();
   }, [searchText, inventoryItems, filterData]);
 
   const loadInventoryItems = async () => {
@@ -78,32 +78,34 @@ const InventoryDashboard = () => {
       setLoading(true);
       setError(null);
       
-      const data = await fetchInventoryItems();
-      if (!Array.isArray(data)) {
-        throw new Error('返回的數據格式不正確');
+      const [itemsData, lowStockData] = await Promise.all([
+        fetchInventoryItems(),
+        fetchLowStockItems()
+      ]);
+
+      if (!Array.isArray(itemsData)) {
+        throw new Error('返回的庫存數據格式不正確');
       }
       
-      setInventoryItems(data);
-      setFilteredData(data);
+      setInventoryItems(itemsData);
+      setFilteredData(itemsData);
       
-      // 獲取低庫存項目
-      const lowStockData = await fetchLowStockItems();
       if (Array.isArray(lowStockData)) {
         setLowStockItems(lowStockData);
       }
       
       setSyncStatus({ 
         loading: false, 
-        message: `同步完成! 新增: ${data.length}, 更新: ${data.length}, 跳過: 0` 
+        message: `同步完成! 總項目: ${itemsData.length}` 
       });
       
-      // 5秒後清除消息
       setTimeout(() => {
         setSyncStatus({ loading: false, message: null });
       }, 5000);
     } catch (err) {
       console.error('載入庫存數據失敗:', err);
       setError(err.message || '載入庫存數據失敗，請稍後再試');
+      message.error('載入庫存數據失敗，請稍後再試');
     } finally {
       setLoading(false);
     }
@@ -288,6 +290,8 @@ const InventoryDashboard = () => {
             <Search
               placeholder="搜索商品名稱或類別"
               onSearch={value => setSearchText(value)}
+              onChange={e => setSearchText(e.target.value)}
+              allowClear
               style={{ width: 300 }}
             />
           </div>
@@ -296,7 +300,17 @@ const InventoryDashboard = () => {
             <LowStockAlert items={lowStockItems} />
           )}
 
-          <Table
+          {syncStatus.message && (
+            <Alert
+              message={syncStatus.message}
+              type="info"
+              showIcon
+              closable
+              onClose={() => setSyncStatus({ loading: false, message: null })}
+            />
+          )}
+
+          <Table 
             dataSource={filteredData}
             columns={columns}
             rowKey="id"
@@ -304,9 +318,16 @@ const InventoryDashboard = () => {
             pagination={{
               defaultPageSize: 10,
               showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 項`
+              showTotal: (total) => `共 ${total} 項`,
+              pageSizeOptions: ['10', '20', '50', '100']
             }}
             summary={summary}
+            scroll={{ x: true }}
+            size="middle"
+            bordered
+            onChange={(pagination, filters, sorter) => {
+              console.log('Table params:', { pagination, filters, sorter });
+            }}
           />
         </Space>
 
@@ -314,10 +335,7 @@ const InventoryDashboard = () => {
           <NewItemForm
             visible={showNewItemForm}
             onClose={() => setShowNewItemForm(false)}
-            onSuccess={() => {
-              setShowNewItemForm(false);
-              loadInventoryItems();
-            }}
+            onSuccess={handleItemCreated}
           />
         )}
 

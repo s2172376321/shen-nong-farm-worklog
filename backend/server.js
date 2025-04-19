@@ -115,13 +115,36 @@ const authRoutes = require('./routes/authRoutes');
 const workLogRoutes = require('./routes/workLogRoutes');
 const attachmentRoutes = require('./routes/attachmentRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
+const noticeRoutes = require('./routes/noticeRoutes');
+const statsRoutes = require('./routes/statsRoutes');
+const userRoutes = require('./routes/userRoutes');
+const dataRoutes = require('./routes/dataRoutes');
 
 // 路由註冊
 app.use('/api/auth', authRoutes);
 app.use('/api/work-logs', workLogRoutes);
 app.use('/api/inventory', inventoryRoutes);
-app.use('/api', attachmentRoutes);
-app.use('/api', routes);
+app.use('/api/notices', noticeRoutes);
+app.use('/api/stats', statsRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/data', dataRoutes);
+app.use('/api/attachments', attachmentRoutes);
+
+// 健康檢查端點
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 404 處理
+app.use((req, res) => {
+  console.log(`404 Not Found: ${req.method} ${req.url}`);
+  res.status(404).json({ 
+    message: '找不到請求的資源',
+    path: req.url,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // 错误处理中间件
 app.use((err, req, res, next) => {

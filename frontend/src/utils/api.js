@@ -30,7 +30,7 @@ const apiCache = {
 
 // 創建 axios 實例
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5001/api',
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5003/api',
   timeout: 30000,
   withCredentials: true,
   headers: {
@@ -59,8 +59,14 @@ api.interceptors.request.use(
     // 確保每個請求都帶上 credentials
     config.withCredentials = true;
 
+    // 移除可能導致 CORS 問題的標頭
+    delete config.headers['Cache-Control'];
+    delete config.headers['Pragma'];
+
     // 添加詳細的請求日誌
+    const fullUrl = `${config.baseURL}${config.url}`;
     console.log('API Request:', {
+      fullUrl,
       url: config.url,
       method: config.method,
       baseURL: config.baseURL,
@@ -81,7 +87,9 @@ api.interceptors.request.use(
 // 響應攔截器
 api.interceptors.response.use(
   (response) => {
+    const fullUrl = `${response.config.baseURL}${response.config.url}`;
     console.log('Response success:', {
+      fullUrl,
       url: response.config.url,
       status: response.status,
       data: response.data,
@@ -90,7 +98,9 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    const fullUrl = error.config ? `${error.config.baseURL}${error.config.url}` : 'unknown';
     console.error('Response error:', {
+      fullUrl,
       url: error.config?.url,
       status: error.response?.status,
       message: error.message,
@@ -98,46 +108,10 @@ api.interceptors.response.use(
       timestamp: new Date().toISOString()
     });
 
-    // 處理特定錯誤
-    if (error.response) {
-      switch (error.response.status) {
-        case 401:
-          // 未授權，清除 token 並重定向到登入頁
-          localStorage.removeItem('token');
-          window.location.href = '/login';
-          break;
-        case 403:
-          // 權限不足
-          console.error('Permission denied');
-          break;
-        case 404:
-          // 資源不存在
-          console.error('Resource not found');
-          break;
-        case 429:
-          // 請求過多
-          console.error('Too many requests');
-          break;
-        case 500:
-          // 伺服器錯誤
-          console.error('Server error');
-          break;
-        default:
-          console.error('Unknown error');
-      }
-    } else if (error.request) {
-      // 請求已發送但沒有收到響應
-      console.error('No response received:', {
-        url: error.config?.url,
-        method: error.config?.method,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      // 請求設置時發生錯誤
-      console.error('Request setup error:', {
-        message: error.message,
-        timestamp: new Date().toISOString()
-      });
+    if (error.response?.status === 401) {
+      // 未授權，清除 token 並重定向到登入頁
+      localStorage.removeItem('token');
+      window.location.href = '/login';
     }
 
     return Promise.reject(error);
@@ -1051,14 +1025,26 @@ export const getUnreadNoticeCount = async () => {
   }
 
   try {
-    const response = await api.get('/notices/unread-count');
+    console.log('正在獲取未讀公告數量...');
+    const response = await api.get('/notices/unread-count', {
+      timeout: 5000 // 設置超時時間
+    });
 
+    console.log('未讀公告數量獲取成功:', response.data);
     // 儲存到快取
     apiCache.set('unreadNoticeCount', response.data, 180000); // 快取3分鐘
 
     return response.data;
   } catch (error) {
     console.error('獲取未讀公告數量失敗:', error);
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
     return { unreadCount: 0 };
   }
 };
@@ -1351,30 +1337,43 @@ export const fetchLocationsByArea = async () => {
 
 // ----- 儀表板 API -----
 export const fetchDashboardStats = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('dashboardStats');
-  if (cachedData) {
-    console.log('使用快取的儀表板統計數據');
-    return cachedData;
-  }
-
   try {
-    // 直接發送請求，不使用節流
-    const response = await api.get('/stats/dashboard', {
-      timeout: 10000 // 增加超時時間
+    const response = await api.get('/api/stats/dashboard', {
+      validateStatus: function (status) {
+        return status < 500; // 接受任何小於 500 的狀態碼
+      }
     });
 
-    // 儲存到快取
-    apiCache.set('dashboardStats', response.data, 60000); // 快取1分鐘
+    // 如果是 404，返回默認值
+    if (response.status === 404) {
+      console.warn('Dashboard stats endpoint not found, returning default values');
+      return {
+        totalUsers: 0,
+        pendingWorkLogs: 0,
+        unreadNotices: 0
+      };
+    }
+
+    // 如果不是 200，拋出錯誤
+    if (response.status !== 200) {
+      throw new Error(`API responded with status ${response.status}`);
+    }
 
     return response.data;
   } catch (error) {
-    console.warn('儀表板統計請求失敗，返回默認值:', error.message);
-    return {
-      totalUsers: 0,
-      pendingWorkLogs: 0,
-      unreadNotices: 0
-    };
+    console.error('Error fetching dashboard stats:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      config: {
+        url: error.config?.url,
+        baseURL: error.config?.baseURL,
+        method: error.config?.method,
+        timeout: error.config?.timeout
+      },
+      timestamp: new Date().toISOString()
+    });
+    throw error;
   }
 };
 

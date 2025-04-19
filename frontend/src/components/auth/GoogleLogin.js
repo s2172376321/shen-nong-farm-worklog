@@ -28,7 +28,7 @@ export const GoogleLoginButton = () => {
 
       // 檢查必要的環境變數
       const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/google/callback`;
+      const redirectUri = process.env.REACT_APP_GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/google/callback`;
       
       console.log('環境變數檢查:', {
         hasClientId: !!clientId,
@@ -45,9 +45,9 @@ export const GoogleLoginButton = () => {
       const state = generateState();
       const nonce = generateNonce();
       
-      // 儲存 state 和 nonce 到 localStorage (改用 localStorage 而不是 sessionStorage)
-      localStorage.setItem('googleAuthState', state);
-      localStorage.setItem('googleAuthNonce', nonce);
+      // 使用 sessionStorage 而不是 localStorage
+      sessionStorage.setItem('googleAuthState', state);
+      sessionStorage.setItem('googleAuthNonce', nonce);
       
       const params = new URLSearchParams({
         client_id: clientId,
@@ -66,7 +66,8 @@ export const GoogleLoginButton = () => {
         responseType: 'code',
         accessType: 'offline',
         prompt: 'consent',
-        authUrlLength: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+        hasState: !!state,
+        hasNonce: !!nonce
       });
 
       // 重定向到 Google 登入頁面
