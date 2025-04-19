@@ -45,23 +45,38 @@ CREATE INDEX IF NOT EXISTS idx_transaction_date ON inventory_transactions(create
 -- 確保庫存量自動更新的觸發器函數
 CREATE OR REPLACE FUNCTION update_inventory_quantity()
 RETURNS TRIGGER AS $$
+DECLARE
+    current_qty DECIMAL(10, 2);
 BEGIN
+    -- Get current quantity
+    SELECT current_quantity INTO current_qty
+    FROM inventory_items
+    WHERE id = NEW.inventory_item_id;
+
     IF NEW.transaction_type = 'in' THEN
         -- 進貨，增加庫存
         UPDATE inventory_items 
-        SET current_quantity = current_quantity + NEW.quantity,
+        SET current_quantity = current_qty + NEW.quantity,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = NEW.inventory_item_id;
     ELSIF NEW.transaction_type = 'out' THEN
         -- 領用，減少庫存
+        IF current_qty < NEW.quantity THEN
+            RAISE EXCEPTION '庫存不足 (現有: %, 需要: %)', current_qty, NEW.quantity;
+        END IF;
+        
         UPDATE inventory_items 
-        SET current_quantity = current_quantity - NEW.quantity,
+        SET current_quantity = current_qty - NEW.quantity,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = NEW.inventory_item_id;
     ELSIF NEW.transaction_type = 'adjust' THEN
-        -- 直接調整為指定數量
+        -- 調整庫存量（增加或減少）
+        IF (current_qty + NEW.quantity) < 0 THEN
+            RAISE EXCEPTION '調整後庫存量不能為負數 (現有: %, 調整: %)', current_qty, NEW.quantity;
+        END IF;
+        
         UPDATE inventory_items 
-        SET current_quantity = NEW.quantity,
+        SET current_quantity = current_qty + NEW.quantity,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = NEW.inventory_item_id;
     END IF;

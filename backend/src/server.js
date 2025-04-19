@@ -1,26 +1,16 @@
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { testConnection } = require('./models');
-const authRoutes = require('./routes/auth');
-
-const app = express();
-
-// 中間件
-app.use(cors());
-app.use(express.json());
-
-// 路由
-app.use('/api/auth', authRoutes);
+const app = require('./app');
+const db = require('./config/database');
 
 // 測試資料庫連接
-testConnection();
-
-// 錯誤處理中間件
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: '伺服器內部錯誤' });
-});
+db.connect()
+  .then(client => {
+    console.log('資料庫連接成功。');
+    client.release();
+  })
+  .catch(err => {
+    console.error('無法連接到資料庫:', err);
+  });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

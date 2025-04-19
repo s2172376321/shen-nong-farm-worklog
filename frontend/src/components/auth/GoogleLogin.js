@@ -8,6 +8,18 @@ export const GoogleLoginButton = () => {
   const [error, setError] = useState(null);
   const [showError, setShowError] = useState(false);
 
+  const generateState = () => {
+    const array = new Uint32Array(8);
+    window.crypto.getRandomValues(array);
+    return Array.from(array, dec => ('0' + dec.toString(16)).substr(-2)).join('');
+  };
+
+  const generateNonce = () => {
+    const array = new Uint32Array(8);
+    window.crypto.getRandomValues(array);
+    return Array.from(array, dec => ('0' + dec.toString(16)).substr(-2)).join('');
+  };
+
   const handleGoogleLogin = async () => {
     try {
       setIsLoading(true);
@@ -16,9 +28,12 @@ export const GoogleLoginButton = () => {
 
       // 檢查必要的環境變數
       const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/google/callback`;
+      
       console.log('環境變數檢查:', {
         hasClientId: !!clientId,
         clientIdLength: clientId?.length,
+        redirectUri,
         nodeEnv: process.env.NODE_ENV,
         envFile: '.env 文件已載入'
       });
@@ -27,33 +42,36 @@ export const GoogleLoginButton = () => {
         throw new Error('Google Client ID 未設置，請檢查環境變數');
       }
 
-      // 構建 Google OAuth URL
-      const redirectUri = 'http://localhost:5000/api/auth/google/callback';
-      const scope = 'email profile';
-      const responseType = 'code';
-      const accessType = 'offline';
-      const prompt = 'consent';
-
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-        `client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=${encodeURIComponent(scope)}` +
-        `&response_type=${encodeURIComponent(responseType)}` +
-        `&access_type=${encodeURIComponent(accessType)}` +
-        `&prompt=${encodeURIComponent(prompt)}`;
+      const state = generateState();
+      const nonce = generateNonce();
+      
+      // 儲存 state 和 nonce 到 localStorage (改用 localStorage 而不是 sessionStorage)
+      localStorage.setItem('googleAuthState', state);
+      localStorage.setItem('googleAuthNonce', nonce);
+      
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        state: state,
+        nonce: nonce,
+        access_type: 'offline',
+        prompt: 'consent'
+      });
 
       console.log('Google OAuth 配置:', {
         redirectUri,
-        scope,
-        responseType,
-        accessType,
-        prompt,
-        authUrlLength: authUrl.length
+        scope: 'openid email profile',
+        responseType: 'code',
+        accessType: 'offline',
+        prompt: 'consent',
+        authUrlLength: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
       });
 
       // 重定向到 Google 登入頁面
       console.log('準備重定向到 Google 登入頁面');
-      window.location.href = authUrl;
+      window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
       
     } catch (err) {
       console.error('Google 登入錯誤:', {

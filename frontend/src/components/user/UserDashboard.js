@@ -11,6 +11,18 @@ const UserDashboard = () => {
   const navigate = useNavigate();
   const [unreadNotices, setUnreadNotices] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // 模擬用戶數據（當實際用戶數據不可用時）
+  const mockUser = {
+    username: 'guest_user',
+    role: 'user',
+    email: 'guest@example.com',
+    name: '訪客用戶'
+  };
+
+  // 使用實際用戶數據或模擬數據
+  const currentUser = user || mockUser;
 
   // 導航選項
   const navItems = [
@@ -23,139 +35,106 @@ const UserDashboard = () => {
   useEffect(() => {
     const loadUnreadCount = async () => {
       try {
+        setIsLoading(true);
+        setError(null);
+        console.log('正在載入未讀公告數量...');
         const response = await getUnreadNoticeCount();
         setUnreadNotices(response.unreadCount);
+        console.log('未讀公告數量載入成功:', response.unreadCount);
       } catch (err) {
         console.error('載入未讀公告數量失敗:', err);
+        setError('無法載入未讀公告數量');
+        setUnreadNotices(0);
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadUnreadCount();
-    
-    // 定期更新未讀數量 (每5分鐘)
-    const interval = setInterval(loadUnreadCount, 5 * 60 * 1000);
-    
-    // 清理函數
-    return () => clearInterval(interval);
-  }, []);
-
-  // 當NoticeBoard標記公告為已讀時更新未讀數量
-  const handleNoticeRead = () => {
-    // 重新獲取未讀數量
-    getUnreadNoticeCount()
-      .then(response => setUnreadNotices(response.unreadCount))
-      .catch(err => console.error('更新未讀公告數量失敗:', err));
-  };
+    if (currentUser && currentUser.username !== 'guest_user') {
+      loadUnreadCount();
+    } else {
+      setIsLoading(false);
+    }
+  }, [currentUser]);
 
   const handleLogout = () => {
-    logout();
-    navigate('/login');
+    try {
+      console.log('執行登出操作...');
+      if (logout) {
+        logout();
+        console.log('登出成功');
+      }
+      navigate('/login');
+    } catch (err) {
+      console.error('登出時發生錯誤:', err);
+      // 即使發生錯誤，也嘗試重定向到登入頁面
+      navigate('/login');
+    }
   };
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="flex h-screen">
-        {/* 側邊導航 */}
-        <div className="w-64 bg-gray-800 p-4">
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-blue-400">神農山莊</h2>
-            <p className="text-sm text-gray-400">工作日誌系統</p>
-          </div>
-          
-          {/* 用戶資訊 */}
-          <div className="mb-6 p-3 bg-gray-700 rounded-lg">
-            <div className="font-semibold">{user.username}</div>
-            <div className="text-sm text-gray-400">{user.email}</div>
-          </div>
-          
-          {/* 導航選單 */}
-          <div className="space-y-2">
-            {navItems.map(item => (
-              <Link
-                key={item.id}
-                to={item.path}
-                className="w-full text-left px-4 py-3 rounded-lg flex items-center text-gray-300 hover:bg-gray-700"
-              >
-                <span className="mr-3">{item.icon}</span>
-                {item.label}
-                {item.id === 'notices' && unreadNotices > 0 && (
-                  <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-1 rounded-full">
-                    {unreadNotices}
-                  </span>
-                )}
-              </Link>
-            ))}
-            
-            {/* 登出按鈕 */}
-            <button
-              onClick={handleLogout}
-              className="w-full text-left px-4 py-3 rounded-lg flex items-center text-red-400 hover:bg-gray-700"
-            >
-              <span className="mr-3">🚪</span>
-              登出
-            </button>
-          </div>
-        </div>
-        
-        {/* 主要內容區 */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          <h1 className="text-2xl font-bold mb-6">歡迎回來，{user.username}</h1>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <Card className="p-4">
-              <h3 className="text-lg font-semibold mb-2">總工作日誌</h3>
-              <p className="text-2xl text-blue-400">8</p>
-            </Card>
-            <Card className="p-4">
-              <h3 className="text-lg font-semibold mb-2">本月工作時數</h3>
-              <p className="text-2xl text-blue-400">24.5</p>
-            </Card>
-            <Card className="p-4">
-              <h3 className="text-lg font-semibold mb-2">未讀公告</h3>
-              {isLoading ? (
-                <div className="animate-pulse h-8 bg-gray-700 rounded"></div>
-              ) : (
-                <p className="text-2xl text-blue-400">{unreadNotices}</p>
-              )}
-              {unreadNotices > 0 && (
-                <p className="text-xs text-blue-300 mt-1">您有新的公告，請查看</p>
-              )}
-            </Card>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-2">
-              <Card className="p-4">
-                <h2 className="text-xl font-semibold mb-4">近期公告</h2>
-                <NoticeBoard 
-                  preview={true} 
-                  onNoticeRead={handleNoticeRead}
-                />
-                <div className="mt-4 text-right">
-                  <Link to="/notices" className="text-blue-400 hover:text-blue-300">
-                    查看全部公告 →
-                  </Link>
-                </div>
-              </Card>
-            </div>
-            <div>
-              <Card className="p-4">
-                <h2 className="text-xl font-semibold mb-4">快速操作</h2>
-                <div className="space-y-2">
-                  <Link to="/work-log" className="block w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-center">
-                    填寫工作日誌
-                  </Link>
-                  <Link to="/settings" className="block w-full py-2 px-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-center">
-                    帳號設定
-                  </Link>
-                </div>
-              </Card>
-            </div>
-          </div>
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-gray-600">載入中...</p>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">
+              歡迎回來，{currentUser.name || currentUser.username}
+            </h1>
+            <p className="text-gray-600">
+              {currentUser.email && `郵箱: ${currentUser.email}`}
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200"
+          >
+            登出
+          </button>
+        </div>
+
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+            <p>{error}</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {navItems.map((item) => (
+            <Link
+              key={item.id}
+              to={item.path}
+              className="block p-6 bg-gray-50 rounded-lg hover:bg-gray-100 transition duration-200"
+            >
+              <div className="flex items-center">
+                <span className="text-2xl mr-3">{item.icon}</span>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    {item.label}
+                  </h2>
+                  {item.id === 'notices' && unreadNotices > 0 && (
+                    <span className="inline-block bg-red-500 text-white text-xs px-2 py-1 rounded-full ml-2">
+                      {unreadNotices}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      <NoticeBoard limit={3} showViewAll={true} />
     </div>
   );
 };

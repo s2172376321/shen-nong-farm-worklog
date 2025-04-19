@@ -4,20 +4,21 @@ const routes = require('./routes');
 
 const app = express();
 
-// 基本的 CORS 配置
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-  
-  // 處理預檢請求
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
+// 配置 CORS
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3002',
+    'http://localhost:5000',
+    'http://localhost:5001',
+    'http://localhost:5003'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With']
+};
+
+app.use(cors(corsOptions));
 
 // Body parser 中間件
 app.use(express.json());

@@ -10,7 +10,7 @@ import NoticeBoard from '../common/NoticeBoard';
 import ChangePassword from '../user/ChangePassword';
 
 const AdminDashboard = () => {
-  const { user, logout } = useAuth();
+  const { user: authUser, logout } = useAuth();
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState(null);
   const [stats, setStats] = useState({
@@ -20,6 +20,18 @@ const AdminDashboard = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // 模擬用戶數據（當實際用戶數據不可用時）
+  const mockUser = {
+    id: '1',
+    username: 'admin',
+    email: 'admin@shennong.farm',
+    role: 'admin',
+    isActive: true
+  };
+
+  // 使用實際用戶數據或模擬數據
+  const user = authUser || mockUser;
 
   // 管理功能區塊
   const sections = [
@@ -139,8 +151,8 @@ const AdminDashboard = () => {
           
           {/* 管理員資訊 */}
           <div className="mb-6 p-3 bg-gray-700 rounded-lg">
-            <div className="font-semibold">{user.username}</div>
-            <div className="text-sm text-gray-400">{user.email}</div>
+            <div className="font-semibold">{user?.username || '管理員'}</div>
+            <div className="text-sm text-gray-400">{user?.email || 'admin@shennong.farm'}</div>
             <div className="text-sm text-gray-400">管理員</div>
           </div>
           
@@ -282,8 +294,8 @@ const AdminDashboard = () => {
         
         {/* 管理員資訊 */}
         <div className="mb-6 p-3 bg-gray-700 rounded-lg">
-          <div className="font-semibold">{user.username}</div>
-          <div className="text-sm text-gray-400">{user.email}</div>
+          <div className="font-semibold">{user?.username || '管理員'}</div>
+          <div className="text-sm text-gray-400">{user?.email || 'admin@shennong.farm'}</div>
           <div className="text-sm text-gray-400">管理員</div>
         </div>
         

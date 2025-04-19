@@ -277,34 +277,38 @@ const InventoryController = {
       notes
     } = req.body;
 
+    const client = await db.connect();
+
     try {
+      await client.query('BEGIN');
+
       // 驗證交易類型
       if (!['in', 'out', 'adjust'].includes(transaction_type)) {
-        return res.status(400).json({ message: '無效的交易類型' });
+        throw new Error('無效的交易類型');
       }
       
       // 檢查數量是否有效
       if (typeof quantity !== 'number' || quantity <= 0) {
-        return res.status(400).json({ message: '數量必須是大於0的數字' });
+        throw new Error('數量必須是大於0的數字');
       }
       
-      // 檢查項目是否存在
-      const itemQuery = `SELECT * FROM inventory_items WHERE id = $1`;
-      const itemResult = await db.query(itemQuery, [itemId]);
+      // 檢查項目是否存在並獲取當前庫存
+      const itemQuery = `SELECT * FROM inventory_items WHERE id = $1 FOR UPDATE`;
+      const itemResult = await client.query(itemQuery, [itemId]);
       
       if (itemResult.rows.length === 0) {
-        return res.status(404).json({ message: '找不到該庫存項目' });
+        throw new Error('找不到該庫存項目');
       }
       
       const item = itemResult.rows[0];
       
-      // 檢查出庫操作是否有足夠庫存
+      // 檢查庫存操作的有效性
       if (transaction_type === 'out' && item.current_quantity < quantity) {
-        return res.status(400).json({ 
-          message: '庫存不足',
-          current: item.current_quantity,
-          requested: quantity
-        });
+        throw new Error(`庫存不足 (現有: ${item.current_quantity}, 需要: ${quantity})`);
+      }
+      
+      if (transaction_type === 'adjust' && (item.current_quantity + quantity) < 0) {
+        throw new Error(`調整後庫存量不能為負數 (現有: ${item.current_quantity}, 調整: ${quantity})`);
       }
       
       // 新增交易記錄
@@ -325,19 +329,24 @@ const InventoryController = {
         notes || null
       ];
       
-      const result = await db.query(transactionQuery, values);
+      const result = await client.query(transactionQuery, values);
       
       // 獲取更新後的項目
       const updatedItemQuery = `SELECT * FROM inventory_items WHERE id = $1`;
-      const updatedResult = await db.query(updatedItemQuery, [itemId]);
+      const updatedResult = await client.query(updatedItemQuery, [itemId]);
+      
+      await client.query('COMMIT');
       
       res.json({
         transaction: result.rows[0],
         item: updatedResult.rows[0]
       });
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('調整庫存數量失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      res.status(400).json({ message: error.message || '伺服器錯誤，請稍後再試' });
+    } finally {
+      client.release();
     }
   },
 

@@ -12,16 +12,32 @@ export const fetchInventoryItems = async () => {
   
   try {
     const response = await api.get('/inventory/', {
-      timeout: 10000 // 10秒超時
+      timeout: 15000, // 增加超時時間到15秒
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300; // 只接受2xx的響應
+      }
     });
+    
+    if (!response.data) {
+      throw new Error('伺服器返回空數據');
+    }
     
     // 儲存到快取
     apiCache.set('inventoryItems', response.data, 60000); // 快取1分鐘
     
     return response.data;
   } catch (error) {
-    console.error('獲取庫存項目失敗:', error);
-    throw error;
+    console.error('獲取庫存項目失敗:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '獲取庫存項目失敗，請稍後再試');
   }
 };
 
@@ -80,9 +96,19 @@ export const fetchInventoryItemDetails = async (itemId) => {
 
 // 創建新庫存項目
 export const createInventoryItem = async (itemData) => {
+  if (!itemData || !itemData.product_name) {
+    throw new Error('請提供完整的庫存項目資料');
+  }
+
   try {
     const response = await api.post('/inventory', itemData, {
-      timeout: 10000
+      timeout: 15000,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300;
+      }
     });
     
     // 清除相關快取
@@ -91,8 +117,14 @@ export const createInventoryItem = async (itemData) => {
     
     return response.data;
   } catch (error) {
-    console.error('創建庫存項目失敗:', error);
-    throw error;
+    console.error('創建庫存項目失敗:', {
+      data: itemData,
+      error: error.message,
+      status: error.response?.status,
+      response: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '創建庫存項目失敗，請稍後再試');
   }
 };
 
@@ -136,9 +168,9 @@ export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
 
 // 獲取庫存交易歷史
 export const fetchInventoryTransactions = async (filters = {}) => {
-  // 檢查快取
   const cacheKey = `inventoryTransactions:${JSON.stringify(filters)}`;
   const cachedData = apiCache.get(cacheKey);
+  
   if (cachedData) {
     console.log('使用快取的庫存交易歷史');
     return cachedData;
@@ -147,24 +179,51 @@ export const fetchInventoryTransactions = async (filters = {}) => {
   try {
     const response = await api.get('/inventory/transactions', {
       params: filters,
-      timeout: 10000
+      timeout: 15000,
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300;
+      }
     });
     
+    if (!response.data) {
+      throw new Error('伺服器返回空數據');
+    }
+    
     // 儲存到快取
-    apiCache.set(cacheKey, response.data, 60000); // 快取1分鐘
+    apiCache.set(cacheKey, response.data, 60000);
     
     return response.data;
   } catch (error) {
-    console.error('獲取庫存交易歷史失敗:', error);
-    throw error;
+    console.error('獲取庫存交易歷史失敗:', {
+      filters,
+      error: error.message,
+      status: error.response?.status,
+      response: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '獲取庫存交易歷史失敗，請稍後再試');
   }
 };
 
 // 從工作日誌同步庫存消耗
 export const syncFromWorkLog = async (workLogId) => {
+  if (!workLogId) {
+    throw new Error('請提供工作日誌ID');
+  }
+
   try {
     const response = await api.post(`/inventory/sync-from-worklog/${workLogId}`, {}, {
-      timeout: 10000
+      timeout: 30000, // 增加超時時間到30秒，因為同步可能需要更長時間
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300;
+      }
     });
     
     // 清除相關快取
@@ -173,8 +232,14 @@ export const syncFromWorkLog = async (workLogId) => {
     
     return response.data;
   } catch (error) {
-    console.error(`從工作日誌 ${workLogId} 同步庫存消耗失敗:`, error);
-    throw error;
+    console.error(`從工作日誌同步庫存消耗失敗:`, {
+      workLogId,
+      error: error.message,
+      status: error.response?.status,
+      response: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '同步庫存消耗失敗，請稍後再試');
   }
 };
 
@@ -210,21 +275,66 @@ export const createInventoryCheckout = async (checkoutData) => {
 // 獲取庫存領用記錄列表
 export const fetchInventoryCheckouts = async (filters = {}) => {
   try {
-    const response = await api.get('/inventory/checkouts', { params: filters });
+    const response = await api.get('/inventory/checkouts', {
+      params: filters,
+      timeout: 15000,
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300;
+      }
+    });
+    
+    if (!response.data) {
+      throw new Error('伺服器返回空數據');
+    }
+    
     return response.data;
   } catch (error) {
-    console.error('獲取庫存領用記錄失敗:', error);
-    throw error;
+    console.error('獲取庫存領用記錄失敗:', {
+      filters,
+      error: error.message,
+      status: error.response?.status,
+      response: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '獲取庫存領用記錄失敗，請稍後再試');
   }
 };
 
 // 根據產品ID查詢庫存項目
 export const fetchInventoryItemByProductId = async (productId) => {
+  if (!productId) {
+    throw new Error('請提供產品ID');
+  }
+
   try {
-    const response = await api.get(`/inventory/product/${productId}`);
+    const response = await api.get(`/inventory/product/${productId}`, {
+      timeout: 15000,
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      validateStatus: function (status) {
+        return status >= 200 && status < 300;
+      }
+    });
+    
+    if (!response.data) {
+      throw new Error('找不到指定的庫存項目');
+    }
+    
     return response.data;
   } catch (error) {
-    console.error('獲取庫存項目失敗:', error);
-    throw error;
+    console.error('獲取庫存項目失敗:', {
+      productId,
+      error: error.message,
+      status: error.response?.status,
+      response: error.response?.data,
+      timestamp: new Date().toISOString()
+    });
+    throw new Error(error.response?.data?.message || '獲取庫存項目失敗，請稍後再試');
   }
 };

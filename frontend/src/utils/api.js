@@ -30,7 +30,7 @@ const apiCache = {
 
 // 創建 axios 實例
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5001/api',
   timeout: 30000,
   withCredentials: true,
   headers: {
@@ -56,6 +56,20 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
+    // 確保每個請求都帶上 credentials
+    config.withCredentials = true;
+
+    // 添加詳細的請求日誌
+    console.log('API Request:', {
+      url: config.url,
+      method: config.method,
+      baseURL: config.baseURL,
+      headers: config.headers,
+      params: config.params,
+      withCredentials: config.withCredentials,
+      timestamp: new Date().toISOString()
+    });
+
     return config;
   },
   (error) => {
@@ -70,6 +84,7 @@ api.interceptors.response.use(
     console.log('Response success:', {
       url: response.config.url,
       status: response.status,
+      data: response.data,
       timestamp: new Date().toISOString()
     });
     return response;
@@ -79,6 +94,7 @@ api.interceptors.response.use(
       url: error.config?.url,
       status: error.response?.status,
       message: error.message,
+      data: error.response?.data,
       timestamp: new Date().toISOString()
     });
 
@@ -109,6 +125,19 @@ api.interceptors.response.use(
         default:
           console.error('Unknown error');
       }
+    } else if (error.request) {
+      // 請求已發送但沒有收到響應
+      console.error('No response received:', {
+        url: error.config?.url,
+        method: error.config?.method,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      // 請求設置時發生錯誤
+      console.error('Request setup error:', {
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
     }
 
     return Promise.reject(error);

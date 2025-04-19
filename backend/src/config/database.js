@@ -1,32 +1,25 @@
-const { Sequelize } = require('sequelize');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
-  {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    dialect: 'postgres',
-    logging: process.env.NODE_ENV === 'development' ? console.log : false,
-    pool: {
-      max: 5,
-      min: 0,
-      acquire: 30000,
-      idle: 10000
-    }
-  }
-);
+const pool = new Pool({
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST || 'localhost',
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT || 5432,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
 
 // 測試資料庫連接
-sequelize
-  .authenticate()
-  .then(() => {
+pool.connect()
+  .then(client => {
     console.log('資料庫連接成功。');
+    client.release();
   })
   .catch(err => {
     console.error('無法連接到資料庫:', err);
   });
 
-module.exports = sequelize; 
+module.exports = pool; 
