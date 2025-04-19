@@ -21,11 +21,13 @@ const InventoryCheckoutForm = ({ visible, onClose, onSuccess, inventoryItem }) =
 
       // 構建領用記錄
       const checkoutData = {
-        inventory_id: inventoryItem.id,
-        product_id: inventoryItem.product_id,
+        items: [{
+          inventory_id: inventoryItem.id,
+          product_id: inventoryItem.product_id,
+          quantity: values.quantity
+        }],
         user_id: user.id,
         user_name: values.user_name,
-        quantity: values.quantity,
         purpose: values.purpose,
         checkout_date: new Date().toISOString()
       };

@@ -29,8 +29,11 @@ const apiCache = {
 };
 
 // 創建 axios 實例
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
+console.log('Initializing API with base URL:', BASE_URL);
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5003/api',
+  baseURL: BASE_URL,
   timeout: 30000,
   withCredentials: true,
   headers: {
@@ -42,6 +45,12 @@ const api = axios.create({
 // 請求攔截器
 api.interceptors.request.use(
   (config) => {
+    // 檢查並修正 baseURL
+    if (config.baseURL.endsWith('/api')) {
+      config.baseURL = config.baseURL.slice(0, -4);
+      console.log('Corrected baseURL:', config.baseURL);
+    }
+
     // 添加時間戳防止快取
     if (config.method === 'get') {
       config.params = {
@@ -105,6 +114,7 @@ api.interceptors.response.use(
       status: error.response?.status,
       message: error.message,
       data: error.response?.data,
+      baseURL: error.config?.baseURL,
       timestamp: new Date().toISOString()
     });
 
@@ -302,14 +312,14 @@ export const loginUser = async (username, password) => {
 
       // 發送請求前記錄
       console.log('發送登入請求:', {
-        url: '/auth/login',
+        url: '/api/auth/login',
         method: 'POST',
         body: { ...requestBody, password: '[已隱藏]' },
         timestamp: new Date().toISOString(),
         retryCount
       });
 
-      const response = await api.post('/auth/login', requestBody, config);
+      const response = await api.post('/api/auth/login', requestBody, config);
       
       // 檢查回應格式
       if (!response.data || !response.data.token) {
@@ -398,44 +408,169 @@ export const loginUser = async (username, password) => {
 
 export const googleLogin = async (credential) => {
   try {
-    console.log('調用 API: 發送Google憑證，長度:', credential?.length);
-    
-    const response = await api.post('/auth/google-login', { 
-      credential: credential
+    console.log('開始 Google 登入流程', {
+      hasCredential: !!credential,
+      credentialLength: credential?.length,
+      timestamp: new Date().toISOString()
     });
     
-    console.log('Google登入API成功');
+    if (!credential) {
+      throw new Error('未收到 Google 登入憑證');
+    }
+
+    const response = await api.post('/api/auth/google-login', { 
+      credential: credential
+    }, {
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
     
-    // 連接WebSocket
+    console.log('Google 登入 API 呼叫成功:', {
+      status: response.status,
+      hasToken: !!response.data?.token,
+      hasUser: !!response.data?.user,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!response.data || !response.data.token) {
+      throw new Error('伺服器回應格式錯誤：缺少必要的登入資訊');
+    }
+    
+    // 儲存認證資訊
+    localStorage.setItem('token', response.data.token);
+    localStorage.setItem('user', JSON.stringify(response.data.user));
+    
+    // 連接 WebSocket
     websocket.connect();
     
     return response.data;
   } catch (error) {
-    console.error('Google登入API失敗:', error);
-    
-    // 詳細日誌
+    console.error('Google 登入失敗:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      config: {
+        url: error.config?.url,
+        baseURL: error.config?.baseURL,
+        method: error.config?.method
+      },
+      timestamp: new Date().toISOString()
+    });
+
+    // 根據錯誤類型返回適當的錯誤訊息
+    let errorMessage = 'Google 登入失敗';
     if (error.response) {
-      console.error('伺服器回應:', {
-        status: error.response.status,
-        data: error.response.data
-      });
+      if (error.response.status === 400) {
+        errorMessage = error.response.data?.message || 'Google 登入驗證失敗';
+      } else if (error.response.status === 401) {
+        errorMessage = '未授權的登入請求';
+      } else if (error.response.status === 404) {
+        errorMessage = 'Google 登入服務暫時不可用';
+      } else if (error.response.status === 500) {
+        errorMessage = '伺服器處理登入請求時發生錯誤';
+      }
     } else if (error.request) {
-      console.error('未收到伺服器回應:', error.request);
-    } else {
-      console.error('請求設置錯誤:', error.message);
+      errorMessage = '無法連接到伺服器，請檢查網路連線';
+    } else if (!credential) {
+      errorMessage = '未收到 Google 登入憑證';
     }
-    
-    throw error;
+
+    const enhancedError = new Error(errorMessage);
+    enhancedError.originalError = error;
+    enhancedError.status = error.response?.status;
+    throw enhancedError;
+  }
+};
+
+// Google 回調處理
+export const handleGoogleCallback = async (code, state, nonce) => {
+  try {
+    console.log('處理 Google 回調:', {
+      hasCode: !!code,
+      hasState: !!state,
+      hasNonce: !!nonce,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!code) {
+      throw new Error('未收到 Google 授權碼');
+    }
+
+    const response = await api.post('/api/auth/google/callback', {
+      code,
+      state: state || '',
+      nonce: nonce || ''
+    }, {
+      timeout: 15000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log('Google 回調處理成功:', {
+      status: response.status,
+      hasToken: !!response.data?.token,
+      hasUser: !!response.data?.user,
+      timestamp: new Date().toISOString()
+    });
+
+    if (!response.data || !response.data.token) {
+      throw new Error('伺服器回應格式錯誤：缺少必要的登入資訊');
+    }
+
+    // 儲存認證資訊
+    localStorage.setItem('token', response.data.token);
+    localStorage.setItem('user', JSON.stringify(response.data.user));
+
+    // 連接 WebSocket
+    websocket.connect();
+
+    return response.data;
+  } catch (error) {
+    console.error('Google 回調處理失敗:', {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      config: {
+        url: error.config?.url,
+        baseURL: error.config?.baseURL,
+        method: error.config?.method
+      },
+      timestamp: new Date().toISOString()
+    });
+
+    // 根據錯誤類型返回適當的錯誤訊息
+    let errorMessage = 'Google 登入處理失敗';
+    if (error.response) {
+      if (error.response.status === 400) {
+        errorMessage = error.response.data?.message || 'Google 登入驗證失敗';
+      } else if (error.response.status === 401) {
+        errorMessage = '未授權的登入請求';
+      } else if (error.response.status === 404) {
+        errorMessage = 'Google 登入服務暫時不可用';
+      } else if (error.response.status === 500) {
+        errorMessage = '伺服器處理登入請求時發生錯誤';
+      }
+    } else if (error.request) {
+      errorMessage = '無法連接到伺服器，請檢查網路連線';
+    }
+
+    const enhancedError = new Error(errorMessage);
+    enhancedError.originalError = error;
+    enhancedError.status = error.response?.status;
+    throw enhancedError;
   }
 };
 
 export const registerUser = async (userData) => {
-  const response = await api.post('/auth/register', userData);
+  const response = await api.post('/api/auth/register', userData);
   return response.data;
 };
 
 export const changePassword = async (oldPassword, newPassword) => {
-  const response = await api.post('/auth/change-password', { 
+  const response = await api.post('/api/auth/change-password', { 
     oldPassword, 
     newPassword 
   });
@@ -493,7 +628,7 @@ export const createWorkLog = async (workLogData) => {
     console.log('最終發送到後端的數據:', JSON.stringify(payload, null, 2));
     
     // 增加超時時間處理大請求
-    const response = await api.post('/work-logs', payload, {
+    const response = await api.post('/api/work-logs', payload, {
       timeout: 10000 // 10秒超時
     });
     
@@ -581,7 +716,7 @@ export const searchWorkLogs = async (filters) => {
           limit: filters.limit || 20
         };
         
-        const response = await api.get('/work-logs/search', { 
+        const response = await api.get('/api/work-logs/search', { 
           params: searchParams,
           timeout: currentTimeout
         });
@@ -679,7 +814,7 @@ export const reviewWorkLog = async (workLogId, status) => {
       timestamp: new Date().toISOString()
     });
     
-    const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+    const response = await api.patch(`/api/work-logs/${workLogId}/review`, { status });
     
     console.log(`工作日誌審核成功:`, {
       workLogId,
@@ -721,7 +856,7 @@ export const batchReviewWorkLogs = async (workLogIds, status) => {
   try {
     console.log(`批量審核 ${workLogIds.length} 條工作日誌，狀態: ${status}`);
     
-    const response = await api.post('/work-logs/batch-review', {
+    const response = await api.post('/api/work-logs/batch-review', {
       workLogIds,
       status
     });
@@ -746,7 +881,7 @@ export const uploadCSV = async (csvFile) => {
     const formData = new FormData();
     formData.append('csvFile', csvFile);
     
-    const response = await api.post('/work-logs/upload-csv', formData, {
+    const response = await api.post('/api/work-logs/upload-csv', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -783,7 +918,7 @@ export const getTodayHour = async () => {
       console.log(`嘗試獲取今日工時 (${retryCount}/${maxRetries})`);
       
       // 使用增加的超時時間
-      const response = await api.get('/work-logs/today-hour', {
+      const response = await api.get('/api/work-logs/today-hour', {
         timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
       });
       
@@ -852,7 +987,7 @@ export const getUserDailyWorkLogs = async (userId, workDate) => {
   try {
     console.log(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌`);
     
-    const response = await api.get('/work-logs/user-daily', { 
+    const response = await api.get('/api/work-logs/user-daily', { 
       params: { userId, workDate },
       timeout: 8000
     });
@@ -893,7 +1028,7 @@ export const getAllWorkLogs = async () => {
   
   try {
     console.log('開始獲取所有工作日誌');
-    const response = await api.get('/work-logs/all');
+    const response = await api.get('/api/work-logs/all');
     
     // 儲存到快取 - 設置較長的快取時間，減少重複請求
     apiCache.set('allWorkLogs', response.data, 1800000); // 30分鐘快取
@@ -919,7 +1054,7 @@ export const fetchLocationCrops = async (positionCode) => {
     console.log(`嘗試獲取位置 ${positionCode} 的作物列表`);
     
     // 增加超時設置
-    const response = await api.get(`/work-logs/position/${positionCode}/crops`, {
+    const response = await api.get(`/api/work-logs/position/${positionCode}/crops`, {
       timeout: 10000
     });
     
@@ -968,7 +1103,7 @@ export const getWorkStats = async (startDate, endDate) => {
     if (endDate) params.endDate = endDate;
     
     // 直接發送請求，不使用節流
-    const response = await api.get('/work-logs/stats', { 
+    const response = await api.get('/api/work-logs/stats', { 
       params,
       timeout: 10000 // 增加超時時間
     });
@@ -996,7 +1131,7 @@ export const fetchNotices = async () => {
     return cachedData;
   }
 
-  const response = await api.get('/notices');
+  const response = await api.get('/api/notices');
 
   // 儲存到快取
   apiCache.set('notices', response.data, 300000); // 快取5分鐘
@@ -1006,7 +1141,7 @@ export const fetchNotices = async () => {
 
 // 標記公告為已讀
 export const markNoticeAsRead = async (noticeId) => {
-  const response = await api.post(`/notices/${noticeId}/read`);
+  const response = await api.post(`/api/notices/${noticeId}/read`);
 
   // 標記為已讀後清除公告相關快取
   apiCache.clear('notices');
@@ -1026,7 +1161,8 @@ export const getUnreadNoticeCount = async () => {
 
   try {
     console.log('正在獲取未讀公告數量...');
-    const response = await api.get('/notices/unread-count', {
+    // 修正 API 路徑
+    const response = await api.get('/api/admin/notices/unread', {
       timeout: 5000 // 設置超時時間
     });
 
@@ -1040,7 +1176,9 @@ export const getUnreadNoticeCount = async () => {
     if (error.response) {
       console.error('服務器響應:', {
         status: error.response.status,
-        data: error.response.data
+        data: error.response.data,
+        baseURL: error.config?.baseURL,
+        url: error.config?.url
       });
     } else if (error.request) {
       console.error('無服務器響應:', error.request);
@@ -1050,7 +1188,7 @@ export const getUnreadNoticeCount = async () => {
 };
 
 export const createNotice = async (noticeData) => {
-  const response = await api.post('/notices', noticeData);
+  const response = await api.post('/api/notices', noticeData);
 
   // 清除公告相關快取
   apiCache.clear('notices');
@@ -1060,7 +1198,7 @@ export const createNotice = async (noticeData) => {
 };
 
 export const updateNotice = async (noticeId, noticeData) => {
-  const response = await api.put(`/notices/${noticeId}`, noticeData);
+  const response = await api.put(`/api/notices/${noticeId}`, noticeData);
 
   // 清除公告相關快取
   apiCache.clear('notices');
@@ -1070,7 +1208,7 @@ export const updateNotice = async (noticeId, noticeData) => {
 };
 
 export const deleteNotice = async (noticeId) => {
-  const response = await api.delete(`/notices/${noticeId}`);
+  const response = await api.delete(`/api/notices/${noticeId}`);
 
   // 清除公告相關快取
   apiCache.clear('notices');
@@ -1087,7 +1225,7 @@ export const fetchUsers = async () => {
     return cachedData;
   }
 
-  const response = await api.get('/users');
+  const response = await api.get('/api/users');
 
   // 儲存到快取
   apiCache.set('users', response.data, 300000); // 快取5分鐘
@@ -1096,7 +1234,7 @@ export const fetchUsers = async () => {
 };
 
 export const createUser = async (userData) => {
-  const response = await api.post('/users', userData);
+  const response = await api.post('/api/users', userData);
 
   // 清除使用者快取
   apiCache.clear('users');
@@ -1105,7 +1243,7 @@ export const createUser = async (userData) => {
 };
 
 export const updateUser = async (userId, userData) => {
-  const response = await api.put(`/users/${userId}`, userData);
+  const response = await api.put(`/api/users/${userId}`, userData);
 
   // 清除使用者快取
   apiCache.clear('users');
@@ -1114,7 +1252,7 @@ export const updateUser = async (userId, userData) => {
 };
 
 export const deleteUser = async (userId) => {
-  const response = await api.delete(`/users/${userId}`);
+  const response = await api.delete(`/api/users/${userId}`);
 
   // 清除使用者快取
   apiCache.clear('users');
@@ -1127,7 +1265,7 @@ export const checkUsernameAvailability = async (username) => {
   try {
     const response = await throttle(
       `checkUsername:${username}`,
-      () => api.get(`/users/check-username/${username}`),
+      () => api.get(`/api/users/check-username/${username}`),
       2000 // 增加延遲
     );
     return response.data;
@@ -1144,11 +1282,11 @@ export const checkUsernameAvailability = async (username) => {
 export const bindGoogleAccount = async (googleId, email) => {
   try {
     console.log('正在發送 Google 帳號綁定請求:', {
-      endpoint: '/users/bind-google',
+      endpoint: '/api/users/bind-google',
       data: { googleId: '(已隱藏)', email: '(已隱藏)' }
     });
 
-    const response = await api.post('/users/bind-google', { 
+    const response = await api.post('/api/users/bind-google', { 
       googleId, 
       email 
     });
@@ -1178,7 +1316,7 @@ export const unbindGoogleAccount = async () => {
   try {
     console.log('正在發送 Google 帳號解除綁定請求');
 
-    const response = await api.post('/users/unbind-google');
+    const response = await api.post('/api/users/unbind-google');
 
     console.log('Google 帳號解除綁定成功:', response.data);
     return response.data;
@@ -1212,7 +1350,7 @@ export const fetchLocations = async () => {
 
   try {
     // 直接發送請求，不使用節流
-    const response = await api.get('/data/locations', {
+    const response = await api.get('/api/data/locations', {
       timeout: 10000 // 增加超時時間
     });
 
@@ -1236,7 +1374,7 @@ export const fetchWorkCategories = async () => {
 
   try {
     // 直接發送請求，不使用節流
-    const response = await api.get('/data/work-categories', {
+    const response = await api.get('/api/data/work-categories', {
       timeout: 10000 // 增加超時時間
     });
 
@@ -1260,7 +1398,7 @@ export const fetchProducts = async () => {
 
   try {
     // 直接發送請求，不使用節流
-    const response = await api.get('/data/products', {
+    const response = await api.get('/api/data/products', {
       timeout: 10000 // 增加超時時間
     });
 
@@ -1292,7 +1430,7 @@ export const fetchLocationsByArea = async () => {
       console.log(`嘗試獲取位置資料 (${retryCount}/${maxRetries})`);
       
       // 直接發送請求，避免節流
-      const response = await api.get('/data/locations-by-area', {
+      const response = await api.get('/api/data/locations-by-area', {
         timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
       });
       
@@ -1338,11 +1476,14 @@ export const fetchLocationsByArea = async () => {
 // ----- 儀表板 API -----
 export const fetchDashboardStats = async () => {
   try {
-    const response = await api.get('/api/stats/dashboard', {
+    console.log('Fetching dashboard stats...');
+    const response = await api.get('/api/admin/dashboard/stats', {
       validateStatus: function (status) {
         return status < 500; // 接受任何小於 500 的狀態碼
       }
     });
+
+    console.log('Dashboard stats response:', response.data);
 
     // 如果是 404，返回默認值
     if (response.status === 404) {
@@ -1410,7 +1551,7 @@ export const uploadWorkLogAttachment = async (workLogId, file) => {
     const formData = new FormData();
     formData.append('attachment', file);
 
-    const response = await api.post(`/work-logs/${workLogId}/attachments`, formData, {
+    const response = await api.post(`/api/work-logs/${workLogId}/attachments`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -1426,7 +1567,7 @@ export const uploadWorkLogAttachment = async (workLogId, file) => {
 // 獲取工單附件列表
 export const getWorkLogAttachments = async (workLogId) => {
   try {
-    const response = await api.get(`/work-logs/${workLogId}/attachments`);
+    const response = await api.get(`/api/work-logs/${workLogId}/attachments`);
     return response.data;
   } catch (error) {
     console.error('獲取附件列表失敗:', error);
@@ -1437,7 +1578,7 @@ export const getWorkLogAttachments = async (workLogId) => {
 // 下載工單附件
 export const downloadWorkLogAttachment = async (attachmentId) => {
   try {
-    const response = await api.get(`/attachments/${attachmentId}/download`, {
+    const response = await api.get(`/api/attachments/${attachmentId}/download`, {
       responseType: 'blob'
     });
 
@@ -1451,7 +1592,7 @@ export const downloadWorkLogAttachment = async (attachmentId) => {
 // 刪除工單附件
 export const deleteWorkLogAttachment = async (attachmentId) => {
   try {
-    const response = await api.delete(`/attachments/${attachmentId}`);
+    const response = await api.delete(`/api/attachments/${attachmentId}`);
     return response.data;
   } catch (error) {
     console.error('刪除附件失敗:', error);
