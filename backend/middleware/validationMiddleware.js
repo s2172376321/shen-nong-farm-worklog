@@ -11,9 +11,10 @@ const ValidationMiddleware = {
       return res.status(400).json({ message: '請填寫所有必要欄位' });
     }
 
-    // 驗證使用者名稱
-    if (username.length < 4 || username.length > 20) {
-      return res.status(400).json({ message: '使用者名稱長度必須在4-20字元之間' });
+    // 驗證使用者名稱（4-20位數字）
+    const usernameRegex = /^\d{4,20}$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({ message: '使用者名稱必須是4-20位數字' });
     }
 
     // 驗證電子郵件
@@ -40,6 +41,12 @@ const ValidationMiddleware = {
       return res.status(400).json({ message: '請填寫帳號和密碼' });
     }
 
+    // 驗證使用者名稱（4-20位數字）
+    const usernameRegex = /^\d{4,20}$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({ message: '使用者名稱必須是4-20位數字' });
+    }
+
     next();
   },
 
@@ -52,15 +59,10 @@ const ValidationMiddleware = {
       return res.status(400).json({ message: '請提供使用者帳號' });
     }
 
-    // 檢查長度 4-20 字元
-    if (username.length < 4 || username.length > 20) {
-      return res.status(400).json({ message: '使用者帳號長度必須在4-20字元之間' });
-    }
-
-    // 只允許英文、數字、底線
-    const usernameRegex = /^[a-zA-Z0-9_]+$/;
+    // 驗證使用者名稱（4-20位數字）
+    const usernameRegex = /^\d{4,20}$/;
     if (!usernameRegex.test(username)) {
-      return res.status(400).json({ message: '使用者帳號只能包含英文字母、數字和底線' });
+      return res.status(400).json({ message: '使用者名稱必須是4-20位數字' });
     }
 
     next();

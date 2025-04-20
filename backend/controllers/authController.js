@@ -142,15 +142,15 @@ const AuthController = {
   // Google 登入 - 更新為支援 credential
   googleLogin: async (req, res) => {
     try {
-      // 從請求中取得 credential
-      const { credential } = req.body;
+      // 從請求中取得 credential 和 nonce
+      const { credential, nonce } = req.body;
       
       if (!credential) {
         return res.status(400).json({ message: '缺少 Google 登入憑證' });
       }
 
       console.log('使用 credential 進行 Google 登入');
-      const userInfo = await googleAuthService.verifyToken(credential);
+      const userInfo = await googleAuthService.verifyToken(credential, nonce);
       
       console.log('Google 用戶資訊獲取成功:', {
         email: userInfo.email,
@@ -200,35 +200,34 @@ const AuthController = {
       }
 
       // 生成 JWT
-      const jwtToken = jwt.sign(
+      const token = jwt.sign(
         { 
           id: user.id, 
-          email: user.email, 
+          username: user.username, 
           role: user.role 
         },
         process.env.JWT_SECRET || 'fallback_secret',
         { expiresIn: '24h' }
       );
-      
-      console.log('登入成功，準備返回用戶資訊');
-      
+
       res.json({
-        token: jwtToken,
+        token,
         user: {
           id: user.id,
           username: user.username,
           email: user.email,
           name: user.name,
           role: user.role,
-          google_id: user.google_id ? true : false,
-          google_email: user.google_email
+          google_id: user.google_id,
+          google_email: user.google_email,
+          profile_image_url: user.profile_image_url
         }
       });
     } catch (error) {
       console.error('Google 登入失敗:', error);
-      res.status(500).json({ 
-        message: '登入失敗',
-        error: error.message
+      res.status(400).json({ 
+        success: false, 
+        message: error.message || 'Google 登入失敗'
       });
     }
   },  

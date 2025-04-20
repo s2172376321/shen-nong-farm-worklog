@@ -11,12 +11,14 @@ class GoogleAuthService {
   }
 
   // 驗證 Google ID Token
-  async verifyToken(token) {
+  async verifyToken(token, nonce) {
     try {
       console.log('開始驗證 Google ID Token');
       const ticket = await this.client.verifyIdToken({
         idToken: token,
-        audience: process.env.GOOGLE_CLIENT_ID
+        audience: process.env.GOOGLE_CLIENT_ID,
+        // 如果提供了 nonce，則驗證它
+        ...(nonce && { nonce })
       });
 
       const payload = ticket.getPayload();
@@ -24,6 +26,11 @@ class GoogleAuthService {
         email: payload['email'],
         name: payload['name']
       });
+      
+      // 驗證 nonce（如果提供）
+      if (nonce && payload['nonce'] !== nonce) {
+        throw new Error('無效的 nonce');
+      }
       
       return {
         googleId: payload['sub'],
@@ -56,7 +63,7 @@ class GoogleAuthService {
   }
 
   // 產生 Google 登入 URL
-  generateAuthUrl() {
+  generateAuthUrl(state, nonce) {
     const scopes = [
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile'
@@ -64,7 +71,9 @@ class GoogleAuthService {
 
     return this.client.generateAuthUrl({
       access_type: 'offline',
-      scope: scopes
+      scope: scopes,
+      state,
+      nonce
     });
   }
 }

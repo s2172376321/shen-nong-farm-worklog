@@ -29,7 +29,7 @@ const apiCache = {
 };
 
 // 創建 axios 實例
-const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5003';
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 console.log('Initializing API with base URL:', BASE_URL);
 
 const api = axios.create({
@@ -45,12 +45,6 @@ const api = axios.create({
 // 請求攔截器
 api.interceptors.request.use(
   (config) => {
-    // 檢查並修正 baseURL
-    if (config.baseURL.endsWith('/api')) {
-      config.baseURL = config.baseURL.slice(0, -4);
-      console.log('Corrected baseURL:', config.baseURL);
-    }
-
     // 添加時間戳防止快取
     if (config.method === 'get') {
       config.params = {
@@ -65,22 +59,24 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
+    // 根據請求類型設置正確的 Content-Type
+    if (config.data instanceof FormData) {
+      config.headers['Content-Type'] = 'multipart/form-data';
+    } else {
+      config.headers['Content-Type'] = 'application/json';
+    }
+
     // 確保每個請求都帶上 credentials
     config.withCredentials = true;
 
-    // 移除可能導致 CORS 問題的標頭
-    delete config.headers['Cache-Control'];
-    delete config.headers['Pragma'];
-
     // 添加詳細的請求日誌
-    const fullUrl = `${config.baseURL}${config.url}`;
     console.log('API Request:', {
-      fullUrl,
       url: config.url,
       method: config.method,
       baseURL: config.baseURL,
       headers: config.headers,
       params: config.params,
+      data: config.data,
       withCredentials: config.withCredentials,
       timestamp: new Date().toISOString()
     });
@@ -118,10 +114,10 @@ api.interceptors.response.use(
       timestamp: new Date().toISOString()
     });
 
+    // 如果是認證錯誤，清除認證信息並重新登入
     if (error.response?.status === 401) {
-      // 未授權，清除 token 並重定向到登入頁
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      console.log('認證失敗，重新登入...');
+      forceReauthenticate();
     }
 
     return Promise.reject(error);
@@ -149,7 +145,15 @@ export class WebSocketService {
 
     try {
       console.log('嘗試連接 WebSocket...');
-      const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:3002/ws';
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.warn('未找到認證令牌，無法建立 WebSocket 連接');
+        return;
+      }
+
+      const wsUrl = `${process.env.REACT_APP_WS_URL || 'ws://localhost:5003/ws'}?token=${token}`;
+      console.log('WebSocket URL:', wsUrl);
+      
       this.socket = new WebSocket(wsUrl);
 
       this.socket.onopen = this.onOpen.bind(this);
@@ -312,14 +316,14 @@ export const loginUser = async (username, password) => {
 
       // 發送請求前記錄
       console.log('發送登入請求:', {
-        url: '/api/auth/login',
+        url: '/auth/login',
         method: 'POST',
         body: { ...requestBody, password: '[已隱藏]' },
         timestamp: new Date().toISOString(),
         retryCount
       });
 
-      const response = await api.post('/api/auth/login', requestBody, config);
+      const response = await api.post('/auth/login', requestBody, config);
       
       // 檢查回應格式
       if (!response.data || !response.data.token) {
@@ -577,438 +581,72 @@ export const changePassword = async (oldPassword, newPassword) => {
   return response.data;
 };
 
+export const clearAllTokens = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('user');
+  
+  // 清除所有相關的快取
+  apiCache.clear();
+};
+
 export const logout = () => {
   // 登出時斷開 WebSocket 連接
   websocket.disconnect();
   
-  // 清除本地存儲的資訊
-  localStorage.removeItem('token');
-  localStorage.removeItem('user');
+  // 清除所有令牌和快取
+  clearAllTokens();
   
-  // 清除快取
-  apiCache.clear();
+  // 重定向到登入頁面
+  window.location.href = '/login';
 };
 
 // ----- 工作日誌 API -----
 export const createWorkLog = async (workLogData) => {
   try {
-    console.log('準備提交工作日誌數據:', workLogData);
-
-    // 檢查必填欄位
-    if (!workLogData.startTime && !workLogData.start_time) {
-      throw new Error('缺少開始時間');
-    }
-    if (!workLogData.endTime && !workLogData.end_time) {
-      throw new Error('缺少結束時間');
-    }
-    
-    // 確保至少有位置或位置名稱
-    if (!workLogData.location && !workLogData.position_name) {
-      throw new Error('缺少位置資訊');
-    }
-    
-    // 確保至少有作物或工作類別名稱
-    if (!workLogData.crop && !workLogData.work_category_name) {
-      throw new Error('缺少作物或工作類別資訊');
-    }
-
-    // 標準化欄位名稱，確保與後端一致
-    const payload = {
-      ...workLogData,
-      // 確保必要欄位總是有值
-      location: workLogData.location || workLogData.position_name || '',
-      crop: workLogData.crop || workLogData.work_category_name || '',
-      startTime: workLogData.startTime || workLogData.start_time || '',
-      endTime: workLogData.endTime || workLogData.end_time || '',
-      harvestQuantity: workLogData.harvestQuantity || workLogData.harvest_quantity || 0,
-      details: workLogData.details || ''
-    };
-    
-    // 顯示完整的發送數據，方便調試
-    console.log('最終發送到後端的數據:', JSON.stringify(payload, null, 2));
-    
-    // 增加超時時間處理大請求
-    const response = await api.post('/api/work-logs', payload, {
-      timeout: 10000 // 10秒超時
-    });
-    
-    console.log('工作日誌提交成功, 響應:', response.data);
-    
-    // 創建日誌後清除相關快取
-    apiCache.clear('workLogs');
-    apiCache.clear('userDailyWorkLogs');
-    apiCache.clear('workStats');
-    apiCache.clear('todayHour');
-    
+    const response = await api.post('/work-logs', workLogData);
     return response.data;
   } catch (error) {
-    console.error('提交工作日誌錯誤:', error);
-    
-    // 檢查錯誤類型並提供更好的錯誤訊息
-    let userMessage = '提交工作日誌失敗';
-    
-    if (error.response) {
-      // 服務器回應了錯誤
-      console.error('服務器錯誤數據:', error.response.data);
-      
-      userMessage = error.response.data?.message || userMessage;
-      
-      if (error.response.status === 400) {
-        userMessage = `提交數據格式有誤: ${error.response.data?.details || userMessage}`;
-      } else if (error.response.status === 401) {
-        userMessage = '您的登入已過期，請重新登入';
-      } else if (error.response.status === 500) {
-        userMessage = '伺服器內部錯誤，請稍後再試';
-      }
-    } else if (error.request) {
-      // 請求已發送但沒有回應
-      userMessage = '無法連接到伺服器，請檢查網路連接';
-    } else {
-      // 請求設置時出現問題
-      userMessage = error.message || userMessage;
-    }
-    
-    // 包裝錯誤信息
-    const enhancedError = {
-      ...error,
-      userMessage,
-      originalMessage: error.message
-    };
-    
-    throw enhancedError;
+    console.error('創建工作日誌失敗:', error);
+    throw error;
   }
 };
 
-// 工作日誌查詢 - 統一實現
 export const searchWorkLogs = async (filters) => {
-  // 生成快取鍵
-  const cacheKey = `workLogs:${JSON.stringify(filters)}`;
-  
-  // 詳細日誌
-  console.log('searchWorkLogs 調用，過濾條件:', JSON.stringify(filters));
-  
-  // 檢查快取
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log('使用快取的工作日誌數據');
-    return cachedData;
-  }
-  
   try {
-    console.log('開始發送工作日誌搜尋請求');
-    
-    // 實現漸進式超時策略
-    let timeoutAttempts = 0;
-    const maxTimeoutAttempts = 2;
-    const timeouts = [5000, 10000]; // 第一次嘗試 5 秒，第二次 10 秒
-    
-    let lastError = null;
-    
-    while (timeoutAttempts <= maxTimeoutAttempts) {
-      try {
-        const currentTimeout = timeouts[timeoutAttempts] || 15000;
-        console.log(`嘗試搜尋工作日誌 (嘗試 ${timeoutAttempts+1}/${maxTimeoutAttempts+1}，超時: ${currentTimeout}ms)`);
-        
-        // 添加分頁參數
-        const searchParams = {
-          ...filters,
-          page: filters.page || 1,
-          limit: filters.limit || 20
-        };
-        
-        const response = await api.get('/api/work-logs/search', { 
-          params: searchParams,
-          timeout: currentTimeout
-        });
-        
-        console.log('工作日誌搜尋結果:', response.status, response.data?.data?.length || 0);
-        
-        // 標準化日期和時間格式
-        if (response.data?.data && Array.isArray(response.data.data)) {
-          const normalizedData = {
-            data: response.data.data.map(log => ({
-              ...log,
-              start_time: log.start_time?.substring(0, 5) || log.start_time,
-              end_time: log.end_time?.substring(0, 5) || log.end_time,
-              created_at: log.created_at || new Date().toISOString()
-            })),
-            pagination: response.data.pagination
-          };
-          
-          // 儲存到快取
-          apiCache.set(cacheKey, normalizedData, 300000); // 快取5分鐘
-          
-          return normalizedData;
-        }
-        
-        console.warn('API返回了非數組數據:', response.data);
-        return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
-      } catch (error) {
-        lastError = error;
-        
-        // 如果是超時錯誤，並且還有重試次數，則嘗試增加超時時間重試
-        if ((error.code === 'ECONNABORTED' || error.message.includes('timeout')) && timeoutAttempts < maxTimeoutAttempts) {
-          console.warn(`請求超時 (${timeouts[timeoutAttempts]}ms)，將重試並增加超時時間...`);
-          timeoutAttempts++;
-        } else {
-          // 其他錯誤或已達最大重試次數，跳出循環
-          break;
-        }
-      }
-    }
-    
-    // 所有嘗試都失敗，記錄詳細錯誤並處理
-    console.error('搜尋工作日誌失敗 (所有嘗試):', {
-      message: lastError?.message,
-      status: lastError?.response?.status,
-      statusText: lastError?.response?.statusText,
-      url: lastError?.config?.url,
-      params: JSON.stringify(lastError?.config?.params)
-    });
-    
-    // 特殊錯誤處理
-    if (lastError?.response?.status === 404) {
-      console.log('沒有找到符合條件的工作日誌');
-      return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
-    }
-    
-    // 網絡離線處理
-    if (!navigator.onLine) {
-      console.warn('瀏覽器處於離線狀態');
-      return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
-    }
-    
-    // 身份驗證錯誤處理
-    if (lastError?.response?.status === 401) {
-      console.warn('身份驗證已過期，需要重新登入');
-      return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
-    }
-    
-    // 若依然失敗，返回空數組避免UI崩潰
-    return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
+    const response = await api.get('/work-logs/search', { params: filters });
+    return response.data;
   } catch (error) {
-    console.error('searchWorkLogs 處理發生意外錯誤:', error);
+    console.error('搜尋工作日誌失敗:', error);
     return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
   }
 };
 
-// 日期特定查詢的別名函數
-export const getWorkLogsByDate = async (workDate) => {
-  if (!workDate) {
-    console.warn('未提供工作日期，使用當天日期');
-    workDate = new Date().toISOString().split('T')[0];
-  }
-  
-  return searchWorkLogs({
-    startDate: workDate,
-    endDate: workDate
-  });
-};
-
-// 工作日誌審核
-export const reviewWorkLog = async (workLogId, status) => {
-  try {
-    console.log(`開始審核工作日誌:`, {
-      workLogId,
-      status,
-      timestamp: new Date().toISOString()
-    });
-    
-    const response = await api.patch(`/api/work-logs/${workLogId}/review`, { status });
-    
-    console.log(`工作日誌審核成功:`, {
-      workLogId,
-      status: response.data.status,
-      reviewedAt: response.data.reviewedAt,
-      timestamp: new Date().toISOString()
-    });
-    
-    // 審核後清除相關快取
-    apiCache.clear('workLogs');
-    apiCache.clear('userDailyWorkLogs');
-    apiCache.clear('workStats');
-    
-    return response.data;
-  } catch (error) {
-    console.error('審核工作日誌失敗:', {
-      workLogId,
-      status,
-      error: error.response?.data || error.message,
-      timestamp: new Date().toISOString()
-    });
-    
-    // 根據錯誤類型返回不同的錯誤訊息
-    if (error.response) {
-      // 伺服器返回的錯誤
-      throw new Error(error.response.data.message || '審核工作日誌失敗');
-    } else if (error.request) {
-      // 請求發送但沒有收到回應
-      throw new Error('無法連接到伺服器，請檢查網路連接');
-    } else {
-      // 其他錯誤
-      throw new Error('審核工作日誌時發生錯誤');
-    }
-  }
-};
-
-// 批量審核工作日誌
-export const batchReviewWorkLogs = async (workLogIds, status) => {
-  try {
-    console.log(`批量審核 ${workLogIds.length} 條工作日誌，狀態: ${status}`);
-    
-    const response = await api.post('/api/work-logs/batch-review', {
-      workLogIds,
-      status
-    });
-    
-    // 審核後清除相關快取
-    apiCache.clear('workLogs');
-    apiCache.clear('userDailyWorkLogs');
-    apiCache.clear('workStats');
-    
-    return response.data;
-  } catch (error) {
-    console.error('批量審核工作日誌失敗:', error);
-    throw error;
-  }
-};
-
-// CSV 上傳工作日誌
-export const uploadCSV = async (csvFile) => {
-  try {
-    console.log('開始上傳 CSV 檔案:', csvFile.name);
-    
-    const formData = new FormData();
-    formData.append('csvFile', csvFile);
-    
-    const response = await api.post('/api/work-logs/upload-csv', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    // 上傳後清除相關快取
-    apiCache.clear('workLogs');
-    apiCache.clear('userDailyWorkLogs');
-    apiCache.clear('workStats');
-    apiCache.clear('todayHour');
-    
-    console.log('CSV 上傳成功:', response.data);
-    return response.data;
-  } catch (error) {
-    console.error('CSV 上傳失敗:', error);
-    throw error;
-  }
-};
-
-// 獲取今日工時統計
 export const getTodayHour = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('todayHour');
-  if (cachedData) {
-    console.log('使用快取的今日工時數據');
-    return cachedData;
+  try {
+    const response = await api.get('/work-logs/today-hour');
+    return response.data;
+  } catch (error) {
+    console.error('獲取今日工時失敗:', error);
+    return {
+      total_hours: "0.00",
+      remaining_hours: "8.00",
+      is_complete: false
+    };
   }
-  
-  let retryCount = 0;
-  const maxRetries = 3;
-  
-  while (retryCount <= maxRetries) {
-    try {
-      console.log(`嘗試獲取今日工時 (${retryCount}/${maxRetries})`);
-      
-      // 使用增加的超時時間
-      const response = await api.get('/api/work-logs/today-hour', {
-        timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
-      });
-      
-      const data = response.data;
-      
-      // 檢查數據格式
-      if (!data || typeof data.total_hours === 'undefined') {
-        throw new Error('回應數據格式不正確');
-      }
-      
-      // 確保數據格式一致
-      const formattedData = {
-        total_hours: parseFloat(data.total_hours || 0).toFixed(2),
-        remaining_hours: parseFloat(data.remaining_hours || 8).toFixed(2),
-        is_complete: Boolean(data.is_complete)
-      };
-      
-      // 快取時間
-      apiCache.set('todayHour', formattedData, 180000); // 快取3分鐘
-      
-      console.log('成功獲取今日工時:', formattedData);
-      return formattedData;
-    } catch (error) {
-      retryCount++;
-      console.error(`獲取今日工時失敗 (${retryCount}/${maxRetries}):`, error.message);
-      
-      // 重試邏輯
-      if (retryCount <= maxRetries) {
-        const delay = 2000 * retryCount; // 隨著重試次數增加延遲
-        console.log(`等待 ${delay}ms 後重試...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        // 所有重試都失敗，返回默認值
-        console.warn('多次重試後仍無法獲取今日工時，返回默認值');
-        return {
-          total_hours: "0.00",
-          remaining_hours: "8.00",
-          is_complete: false
-        };
-      }
-    }
-  }
-  
-  // 防止異常情況，確保返回默認值
-  return {
-    total_hours: "0.00",
-    remaining_hours: "8.00",
-    is_complete: false
-  };
 };
 
-// 別名，保持向後兼容
 export const getTodayWorkHours = getTodayHour;
 
-// 用戶特定日期工作日誌
 export const getUserDailyWorkLogs = async (userId, workDate) => {
-  // 檢查快取
-  const cacheKey = `userDailyWorkLogs:${userId}:${workDate}`;
-  const cachedData = apiCache.get(cacheKey);
-  
-  if (cachedData) {
-    console.log(`使用快取的用戶 ${userId} ${workDate} 工作日誌數據`);
-    return cachedData;
-  }
-  
   try {
-    console.log(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌`);
-    
-    const response = await api.get('/api/work-logs/user-daily', { 
-      params: { userId, workDate },
-      timeout: 8000
+    const response = await api.get('/work-logs/user-daily', { 
+      params: { userId, workDate }
     });
-    
-    // 標準化時間格式
-    if (response.data.workLogs && Array.isArray(response.data.workLogs)) {
-      response.data.workLogs = response.data.workLogs.map(log => ({
-        ...log,
-        start_time: log.start_time?.substring(0, 5) || log.start_time,
-        end_time: log.end_time?.substring(0, 5) || log.end_time
-      }));
-    }
-    
-    // 存入快取
-    apiCache.set(cacheKey, response.data, 300000); // 快取5分鐘
-    
     return response.data;
   } catch (error) {
-    console.error(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌失敗:`, error);
-    
-    // 返回默認值，避免UI崩潰
+    console.error('獲取用戶日誌失敗:', error);
     return {
       workLogs: [],
       totalHours: 0,
@@ -1017,22 +655,12 @@ export const getUserDailyWorkLogs = async (userId, workDate) => {
   }
 };
 
-// 管理員獲取所有工作日誌
+// 為了向後兼容，添加別名
+export const getWorkLogsByDate = getUserDailyWorkLogs;
+
 export const getAllWorkLogs = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('allWorkLogs');
-  if (cachedData) {
-    console.log('使用快取的所有工作日誌數據');
-    return cachedData;
-  }
-  
   try {
-    console.log('開始獲取所有工作日誌');
-    const response = await api.get('/api/work-logs/all');
-    
-    // 儲存到快取 - 設置較長的快取時間，減少重複請求
-    apiCache.set('allWorkLogs', response.data, 1800000); // 30分鐘快取
-    
+    const response = await api.get('/work-logs/all');
     return response.data;
   } catch (error) {
     console.error('獲取所有工作日誌失敗:', error);
@@ -1040,80 +668,16 @@ export const getAllWorkLogs = async () => {
   }
 };
 
-// 獲取特定位置的作物列表
-export const fetchLocationCrops = async (positionCode) => {
-  // 檢查快取
-  const cacheKey = `locationCrops:${positionCode}`;
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log(`使用快取的位置 ${positionCode} 作物列表數據`);
-    return cachedData;
-  }
-  
-  try {
-    console.log(`嘗試獲取位置 ${positionCode} 的作物列表`);
-    
-    // 增加超時設置
-    const response = await api.get(`/api/work-logs/position/${positionCode}/crops`, {
-      timeout: 10000
-    });
-    
-    // 檢查返回數據格式
-    if (!Array.isArray(response.data)) {
-      console.warn(`位置 ${positionCode} 返回了非數組數據:`, response.data);
-      return [];
-    }
-    
-    // 存儲到快取
-    apiCache.set(cacheKey, response.data, 3600000); // 快取1小時
-    
-    return response.data;
-  } catch (error) {
-    console.error(`獲取位置 ${positionCode} 的作物列表失敗:`, error);
-    return [];
-  }
-};
-
-// 匯出工作日誌
-export const exportWorkLogs = async (filters, format = 'csv') => {
-  const queryParams = new URLSearchParams({
-    ...filters,
-    format
-  }).toString();
-  
-  // 使用 window.open 直接下載檔案
-  window.open(`${api.defaults.baseURL}/work-logs/export?${queryParams}`);
-};
-
-// 獲取工作統計資訊
 export const getWorkStats = async (startDate, endDate) => {
-  // 生成快取鍵
-  const cacheKey = `workStats:${startDate || 'all'}:${endDate || 'all'}`;
-  
-  // 檢查快取
-  const cachedData = apiCache.get(cacheKey);
-  if (cachedData) {
-    console.log('使用快取的工作統計數據');
-    return cachedData;
-  }
-  
   try {
     const params = {};
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
     
-    // 直接發送請求，不使用節流
-    const response = await api.get('/api/work-logs/stats', { 
-      params,
-      timeout: 10000 // 增加超時時間
-    });
-    
-    // 儲存到快取
-    apiCache.set(cacheKey, response.data, 120000); // 快取2分鐘
-    
+    const response = await api.get('/work-logs/stats', { params });
     return response.data;
   } catch (error) {
-    console.warn('工作統計請求失敗，返回默認值:', error.message);
+    console.error('獲取工作統計失敗:', error);
     return {
       totalWorkLogs: 0,
       totalHours: 0,
@@ -1123,141 +687,140 @@ export const getWorkStats = async (startDate, endDate) => {
   }
 };
 
-// ----- 公告 API -----
-export const fetchNotices = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('notices');
-  if (cachedData) {
-    return cachedData;
-  }
-
-  const response = await api.get('/api/notices');
-
-  // 儲存到快取
-  apiCache.set('notices', response.data, 300000); // 快取5分鐘
-
-  return response.data;
+export const exportWorkLogs = async (filters, format = 'csv') => {
+  const queryParams = new URLSearchParams({
+    ...filters,
+    format
+  }).toString();
+  
+  window.open(`${api.defaults.baseURL}/work-logs/export?${queryParams}`);
 };
 
-// 標記公告為已讀
-export const markNoticeAsRead = async (noticeId) => {
-  const response = await api.post(`/api/notices/${noticeId}/read`);
-
-  // 標記為已讀後清除公告相關快取
-  apiCache.clear('notices');
-  apiCache.clear('unreadNoticeCount');
-
-  return response.data;
-};
-
-// 獲取未讀公告數量
-export const getUnreadNoticeCount = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('unreadNoticeCount');
-  if (cachedData) {
-    console.log('使用快取的未讀公告數量');
-    return cachedData;
-  }
-
+// 獲取特定位置的作物列表
+export const fetchLocationCrops = async (positionCode) => {
   try {
-    console.log('正在獲取未讀公告數量...');
-    // 修正 API 路徑
-    const response = await api.get('/api/admin/notices/unread', {
-      timeout: 5000 // 設置超時時間
-    });
-
-    console.log('未讀公告數量獲取成功:', response.data);
-    // 儲存到快取
-    apiCache.set('unreadNoticeCount', response.data, 180000); // 快取3分鐘
-
+    const response = await api.get(`/work-logs/position/${positionCode}/crops`);
     return response.data;
   } catch (error) {
-    console.error('獲取未讀公告數量失敗:', error);
-    if (error.response) {
-      console.error('服務器響應:', {
-        status: error.response.status,
-        data: error.response.data,
-        baseURL: error.config?.baseURL,
-        url: error.config?.url
-      });
-    } else if (error.request) {
-      console.error('無服務器響應:', error.request);
-    }
-    return { unreadCount: 0 };
+    console.error('獲取位置作物列表失敗:', error);
+    return [];
+  }
+};
+
+// ----- 公告 API -----
+export const fetchNotices = async () => {
+  try {
+    const response = await api.get('/notices');
+    console.log('獲取公告列表成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('獲取公告失敗:', {
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url
+    });
+    throw error;
   }
 };
 
 export const createNotice = async (noticeData) => {
-  const response = await api.post('/api/notices', noticeData);
-
-  // 清除公告相關快取
-  apiCache.clear('notices');
-  apiCache.clear('unreadNoticeCount');
-
-  return response.data;
+  try {
+    const response = await api.post('/notices', noticeData);
+    console.log('創建公告成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('創建公告失敗:', {
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url
+    });
+    throw error;
+  }
 };
 
 export const updateNotice = async (noticeId, noticeData) => {
-  const response = await api.put(`/api/notices/${noticeId}`, noticeData);
-
-  // 清除公告相關快取
-  apiCache.clear('notices');
-  apiCache.clear('unreadNoticeCount');
-
-  return response.data;
+  try {
+    const response = await api.put(`/notices/${noticeId}`, noticeData);
+    console.log('更新公告成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('更新公告失敗:', {
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url
+    });
+    throw error;
+  }
 };
 
 export const deleteNotice = async (noticeId) => {
-  const response = await api.delete(`/api/notices/${noticeId}`);
-
-  // 清除公告相關快取
-  apiCache.clear('notices');
-  apiCache.clear('unreadNoticeCount');
-
-  return response.data;
+  try {
+    console.log('準備刪除公告:', { noticeId });
+    const response = await api.delete(`/notices/${noticeId}`);
+    console.log('刪除公告成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('刪除公告失敗:', {
+      noticeId,
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url,
+      fullUrl: `${api.defaults.baseURL}/notices/${noticeId}`
+    });
+    
+    // 如果是 404 錯誤，返回成功（因為公告已經不存在）
+    if (error.response?.status === 404) {
+      console.log('公告不存在，視為刪除成功');
+      return { success: true, message: '公告已刪除' };
+    }
+    
+    throw error;
+  }
 };
 
 // ----- 使用者 API -----
 export const fetchUsers = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('users');
-  if (cachedData) {
-    return cachedData;
+  try {
+    const response = await api.get('/users');
+    return response.data;
+  } catch (error) {
+    console.error('獲取使用者列表失敗:', error);
+    throw error;
   }
-
-  const response = await api.get('/api/users');
-
-  // 儲存到快取
-  apiCache.set('users', response.data, 300000); // 快取5分鐘
-
-  return response.data;
 };
 
 export const createUser = async (userData) => {
-  const response = await api.post('/api/users', userData);
-
-  // 清除使用者快取
-  apiCache.clear('users');
-
-  return response.data;
+  try {
+    const response = await api.post('/users', userData);
+    return response.data;
+  } catch (error) {
+    console.error('創建使用者失敗:', error);
+    throw error;
+  }
 };
 
 export const updateUser = async (userId, userData) => {
-  const response = await api.put(`/api/users/${userId}`, userData);
-
-  // 清除使用者快取
-  apiCache.clear('users');
-
-  return response.data;
+  try {
+    const response = await api.put(`/users/${userId}`, userData);
+    return response.data;
+  } catch (error) {
+    console.error('更新使用者失敗:', error);
+    throw error;
+  }
 };
 
 export const deleteUser = async (userId) => {
-  const response = await api.delete(`/api/users/${userId}`);
-
-  // 清除使用者快取
-  apiCache.clear('users');
-
-  return response.data;
+  try {
+    const response = await api.delete(`/users/${userId}`);
+    return response.data;
+  } catch (error) {
+    console.error('刪除使用者失敗:', error);
+    throw error;
+  }
 };
 
 export const checkUsernameAvailability = async (username) => {
@@ -1265,7 +828,7 @@ export const checkUsernameAvailability = async (username) => {
   try {
     const response = await throttle(
       `checkUsername:${username}`,
-      () => api.get(`/api/users/check-username/${username}`),
+      () => api.get(`/users/check-username/${username}`),
       2000 // 增加延遲
     );
     return response.data;
@@ -1282,11 +845,11 @@ export const checkUsernameAvailability = async (username) => {
 export const bindGoogleAccount = async (googleId, email) => {
   try {
     console.log('正在發送 Google 帳號綁定請求:', {
-      endpoint: '/api/users/bind-google',
+      endpoint: '/users/bind-google',
       data: { googleId: '(已隱藏)', email: '(已隱藏)' }
     });
 
-    const response = await api.post('/api/users/bind-google', { 
+    const response = await api.post('/users/bind-google', { 
       googleId, 
       email 
     });
@@ -1316,7 +879,7 @@ export const unbindGoogleAccount = async () => {
   try {
     console.log('正在發送 Google 帳號解除綁定請求');
 
-    const response = await api.post('/api/users/unbind-google');
+    const response = await api.post('/users/unbind-google');
 
     console.log('Google 帳號解除綁定成功:', response.data);
     return response.data;
@@ -1341,73 +904,31 @@ export const unbindGoogleAccount = async () => {
 
 // ----- 資料 API -----
 export const fetchLocations = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('locations');
-  if (cachedData) {
-    console.log('使用快取的位置數據');
-    return cachedData;
-  }
-
   try {
-    // 直接發送請求，不使用節流
-    const response = await api.get('/api/data/locations', {
-      timeout: 10000 // 增加超時時間
-    });
-
-    // 儲存到快取 (長時間快取)
-    apiCache.set('locations', response.data, 3600000); // 快取1小時
-
+    const response = await api.get('/data/locations');
     return response.data;
   } catch (error) {
-    console.warn('位置請求失敗，返回空陣列:', error.message);
+    console.error('獲取位置資料失敗:', error);
     return [];
   }
 };
 
 export const fetchWorkCategories = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('workCategories');
-  if (cachedData) {
-    console.log('使用快取的工作類別數據');
-    return cachedData;
-  }
-
   try {
-    // 直接發送請求，不使用節流
-    const response = await api.get('/api/data/work-categories', {
-      timeout: 10000 // 增加超時時間
-    });
-
-    // 儲存到快取 (長時間快取)
-    apiCache.set('workCategories', response.data, 3600000); // 快取1小時
-
+    const response = await api.get('/data/work-categories');
     return response.data;
   } catch (error) {
-    console.warn('工作類別請求失敗，返回空陣列:', error.message);
+    console.error('獲取工作類別失敗:', error);
     return [];
   }
 };
 
 export const fetchProducts = async () => {
-  // 檢查快取
-  const cachedData = apiCache.get('products');
-  if (cachedData) {
-    console.log('使用快取的產品數據');
-    return cachedData;
-  }
-
   try {
-    // 直接發送請求，不使用節流
-    const response = await api.get('/api/data/products', {
-      timeout: 10000 // 增加超時時間
-    });
-
-    // 儲存到快取 (長時間快取)
-    apiCache.set('products', response.data, 3600000); // 快取1小時
-
+    const response = await api.get('/data/products');
     return response.data;
   } catch (error) {
-    console.warn('產品請求失敗，返回空陣列:', error.message);
+    console.error('獲取產品資料失敗:', error);
     return [];
   }
 };
@@ -1476,45 +997,15 @@ export const fetchLocationsByArea = async () => {
 // ----- 儀表板 API -----
 export const fetchDashboardStats = async () => {
   try {
-    console.log('Fetching dashboard stats...');
-    const response = await api.get('/api/admin/dashboard/stats', {
-      validateStatus: function (status) {
-        return status < 500; // 接受任何小於 500 的狀態碼
-      }
-    });
-
-    console.log('Dashboard stats response:', response.data);
-
-    // 如果是 404，返回默認值
-    if (response.status === 404) {
-      console.warn('Dashboard stats endpoint not found, returning default values');
-      return {
-        totalUsers: 0,
-        pendingWorkLogs: 0,
-        unreadNotices: 0
-      };
-    }
-
-    // 如果不是 200，拋出錯誤
-    if (response.status !== 200) {
-      throw new Error(`API responded with status ${response.status}`);
-    }
-
+    const response = await api.get('/admin/dash');
     return response.data;
   } catch (error) {
-    console.error('Error fetching dashboard stats:', {
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data,
-      config: {
-        url: error.config?.url,
-        baseURL: error.config?.baseURL,
-        method: error.config?.method,
-        timeout: error.config?.timeout
-      },
-      timestamp: new Date().toISOString()
-    });
-    throw error;
+    console.error('獲取儀表板統計失敗:', error);
+    return {
+      totalUsers: 0,
+      pendingWorkLogs: 0,
+      unreadNotices: 0
+    };
   }
 };
 
@@ -1551,7 +1042,7 @@ export const uploadWorkLogAttachment = async (workLogId, file) => {
     const formData = new FormData();
     formData.append('attachment', file);
 
-    const response = await api.post(`/api/work-logs/${workLogId}/attachments`, formData, {
+    const response = await api.post(`/attachments/work-logs/${workLogId}/attachments`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -1567,7 +1058,7 @@ export const uploadWorkLogAttachment = async (workLogId, file) => {
 // 獲取工單附件列表
 export const getWorkLogAttachments = async (workLogId) => {
   try {
-    const response = await api.get(`/api/work-logs/${workLogId}/attachments`);
+    const response = await api.get(`/attachments/work-logs/${workLogId}/attachments`);
     return response.data;
   } catch (error) {
     console.error('獲取附件列表失敗:', error);
@@ -1578,10 +1069,9 @@ export const getWorkLogAttachments = async (workLogId) => {
 // 下載工單附件
 export const downloadWorkLogAttachment = async (attachmentId) => {
   try {
-    const response = await api.get(`/api/attachments/${attachmentId}/download`, {
+    const response = await api.get(`/attachments/${attachmentId}/download`, {
       responseType: 'blob'
     });
-
     return response.data;
   } catch (error) {
     console.error('下載附件失敗:', error);
@@ -1592,10 +1082,172 @@ export const downloadWorkLogAttachment = async (attachmentId) => {
 // 刪除工單附件
 export const deleteWorkLogAttachment = async (attachmentId) => {
   try {
-    const response = await api.delete(`/api/attachments/${attachmentId}`);
+    const response = await api.delete(`/attachments/${attachmentId}`);
     return response.data;
   } catch (error) {
     console.error('刪除附件失敗:', error);
+    throw error;
+  }
+};
+
+// ----- 公告相關 API -----
+export const getUnreadNoticeCount = async () => {
+  try {
+    const response = await api.get('/notices/unread');
+    console.log('獲取未讀公告數量成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('獲取未讀公告數量失敗:', {
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url
+    });
+    return { unreadCount: 0 };
+  }
+};
+
+export const markNoticeAsRead = async (noticeId) => {
+  try {
+    console.log('準備標記公告已讀:', { noticeId });
+    const response = await api.post(`/notices/${noticeId}/read`);
+    console.log('標記公告已讀成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('標記公告已讀失敗:', {
+      noticeId,
+      error,
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url
+    });
+    throw error;
+  }
+};
+
+// ----- 工作日誌審核 API -----
+export const reviewWorkLog = async (workLogId, status) => {
+  try {
+    const response = await api.patch(`/work-logs/${workLogId}/review`, { status });
+    return response.data;
+  } catch (error) {
+    console.error('審核工作日誌失敗:', error);
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
+    throw error;
+  }
+};
+
+export const batchReviewWorkLogs = async (workLogIds, status) => {
+  try {
+    const response = await api.post('/work-logs/batch-review', {
+      workLogIds,
+      status
+    });
+    return response.data;
+  } catch (error) {
+    console.error('批量審核工作日誌失敗:', error);
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
+    throw error;
+  }
+};
+
+// ----- CSV 上傳 API -----
+export const uploadCSV = async (csvFile) => {
+  try {
+    const formData = new FormData();
+    formData.append('csvFile', csvFile);
+    
+    const response = await api.post('/work-logs/upload-csv', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error('CSV 上傳失敗:', error);
+    throw error;
+  }
+};
+
+export const forceReauthenticate = async () => {
+  // 清除所有存儲的認證信息
+  clearAllTokens();
+  
+  // 重新載入頁面
+  window.location.href = '/login';
+};
+
+// 附件相關 API
+export const uploadAttachment = async (workLogId, file) => {
+  try {
+    const formData = new FormData();
+    formData.append('attachment', file);
+
+    const response = await api.post(`/attachments/work-logs/${workLogId}/attachments`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('上傳附件失敗:', error);
+    throw error;
+  }
+};
+
+export const getAttachments = async (workLogId) => {
+  try {
+    const response = await api.get(`/attachments/work-logs/${workLogId}/attachments`);
+    return response.data;
+  } catch (error) {
+    console.error('獲取附件列表失敗:', error);
+    throw error;
+  }
+};
+
+export const downloadAttachment = async (attachmentId) => {
+  try {
+    const response = await api.get(`/attachments/${attachmentId}/download`, {
+      responseType: 'blob'
+    });
+    return response;
+  } catch (error) {
+    console.error('下載附件失敗:', error);
+    throw error;
+  }
+};
+
+export const deleteAttachment = async (attachmentId) => {
+  try {
+    const response = await api.delete(`/attachments/${attachmentId}`);
+    return response.data;
+  } catch (error) {
+    console.error('刪除附件失敗:', error);
+    throw error;
+  }
+};
+
+export const updateInventoryItems = async (items) => {
+  try {
+    const response = await api.post('/api/inventory/batch-update', { items });
+    return response.data;
+  } catch (error) {
+    console.error('批量更新庫存項目時出錯:', error);
     throw error;
   }
 };

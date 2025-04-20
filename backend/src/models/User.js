@@ -26,6 +26,37 @@ class User {
     return result.rows[0];
   }
 
+  static async findOne(options) {
+    const { where } = options;
+    const conditions = [];
+    const values = [];
+    let counter = 1;
+
+    Object.entries(where).forEach(([key, value]) => {
+      conditions.push(`${this.toSnakeCase(key)} = $${counter}`);
+      values.push(value);
+      counter++;
+    });
+
+    const query = `
+      SELECT * FROM users 
+      WHERE ${conditions.join(' AND ')}
+      LIMIT 1
+    `;
+
+    const result = await db.query(query, values);
+    const user = result.rows[0];
+    
+    if (user) {
+      // 添加 comparePassword 方法到用戶對象
+      user.comparePassword = async (candidatePassword) => {
+        return await bcrypt.compare(candidatePassword, user.password_hash);
+      };
+    }
+    
+    return user;
+  }
+
   static async create(userData) {
     const {
       username,
@@ -79,10 +110,6 @@ class User {
 
     const result = await db.query(query, values);
     return result.rows[0];
-  }
-
-  static async comparePassword(storedHash, candidatePassword) {
-    return await bcrypt.compare(candidatePassword, storedHash);
   }
 
   // 輔助方法：將駝峰命名轉換為蛇形命名

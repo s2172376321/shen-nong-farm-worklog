@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { fetchInventoryItems } from '../../utils/inventoryApi';
-import { Table, Card, Button, Tag, Typography, Space, Input, message } from 'antd';
-import { SortAscendingOutlined, SortDescendingOutlined } from '@ant-design/icons';
+import { fetchInventoryItems, importInventoryCSV, exportInventoryCSV } from '../../utils/inventoryApi';
+import { Table, Card, Button, Tag, Typography, Space, Input, message, Upload } from 'antd';
+import { SortAscendingOutlined, SortDescendingOutlined, UploadOutlined, SearchOutlined, DownloadOutlined } from '@ant-design/icons';
 import QuantityAdjustModal from './QuantityAdjustModal';
+import api from '../../utils/api';
 
 const { Text } = Typography;
 const { Search } = Input;
@@ -18,17 +19,27 @@ const InventoryList = () => {
   const [searchText, setSearchText] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   // 加載庫存數據
   const loadInventoryItems = async () => {
     try {
       setIsLoading(true);
       setError(null);
-      const data = await fetchInventoryItems();
-      setInventoryItems(data);
+      const response = await api.get('/inventory');
+      console.log('獲取到的庫存數據:', response.data);
+      
+      if (Array.isArray(response.data)) {
+        setInventoryItems(response.data);
+      } else {
+        console.error('返回的數據不是數組:', response.data);
+        setError('數據格式錯誤');
+        setInventoryItems([]);
+      }
     } catch (err) {
       console.error('載入庫存數據失敗:', err);
       setError('載入庫存數據失敗，請稍後再試');
+      setInventoryItems([]);
     } finally {
       setIsLoading(false);
     }
@@ -51,26 +62,66 @@ const InventoryList = () => {
     await loadInventoryItems(); // 重新加載數據
   };
 
+  const handleImport = async (file) => {
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      await importInventoryCSV(formData);
+      message.success('成功導入 CSV 數據');
+      loadInventoryItems(); // 重新加載數據
+      return true;
+    } catch (error) {
+      console.error('CSV 導入失敗:', error);
+      message.error('CSV 導入失敗');
+      return false;
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const response = await exportInventoryCSV();
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `inventory_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (error) {
+      console.error('導出 CSV 失敗:', error);
+      message.error('導出 CSV 失敗');
+    }
+  };
+
   // 過濾數據
-  const filteredData = inventoryItems.filter(item => 
-    item.product_name.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.product_id.toLowerCase().includes(searchText.toLowerCase())
-  );
+  const filteredData = inventoryItems.filter(item => {
+    if (!item) return false;
+    
+    const searchLower = searchText.toLowerCase();
+    const nameMatch = (item.name || '').toLowerCase().includes(searchLower);
+    const codeMatch = (item.code || '').toLowerCase().includes(searchLower);
+    const categoryMatch = (item.category || '').toLowerCase().includes(searchLower);
+    
+    return nameMatch || codeMatch || categoryMatch;
+  });
 
   // 表格列定義
   const columns = [
     {
       title: '產品編號',
-      dataIndex: 'product_id',
-      key: 'product_id',
-      sorter: (a, b) => a.product_id.localeCompare(b.product_id),
+      dataIndex: 'code',
+      key: 'code',
+      render: (code) => code || '-',
     },
     {
       title: '商品名稱',
-      dataIndex: 'product_name',
-      key: 'product_name',
-      sorter: (a, b) => a.product_name.localeCompare(b.product_name),
+      dataIndex: 'name',
+      key: 'name',
+      render: (name) => name || '-',
     },
     {
       title: '類別',
@@ -79,25 +130,23 @@ const InventoryList = () => {
       render: (category) => (
         <Tag color="blue">{category || '其他'}</Tag>
       ),
-      sorter: (a, b) => (a.category || '').localeCompare(b.category || ''),
     },
     {
       title: '現有庫存',
-      dataIndex: 'current_quantity',
-      key: 'current_quantity',
+      dataIndex: 'quantity',
+      key: 'quantity',
       render: (quantity, record) => (
-        <Text type={quantity <= record.min_quantity ? 'danger' : 'success'}>
-          {parseFloat(quantity).toFixed(2)} {record.unit}
+        <Text type={quantity <= (record.minimumStock || 0) ? 'danger' : 'success'}>
+          {parseFloat(quantity || 0).toFixed(2)} {record.unit || '個'}
         </Text>
       ),
-      sorter: (a, b) => a.current_quantity - b.current_quantity,
     },
     {
       title: '最低庫存',
-      dataIndex: 'min_quantity',
-      key: 'min_quantity',
-      render: (quantity, record) => (
-        <Text>{parseFloat(quantity).toFixed(2)} {record.unit}</Text>
+      dataIndex: 'minimumStock',
+      key: 'minimumStock',
+      render: (minimumStock, record) => (
+        <Text>{parseFloat(minimumStock || 0).toFixed(2)} {record.unit || '個'}</Text>
       ),
     },
     {
@@ -147,6 +196,29 @@ const InventoryList = () => {
             onChange={(e) => handleSearch(e.target.value)}
             style={{ width: 250 }}
           />
+          {user.role === 'admin' && (
+            <>
+              <Upload
+                accept=".csv"
+                showUploadList={false}
+                beforeUpload={handleImport}
+                disabled={uploading}
+              >
+                <Button 
+                  icon={<UploadOutlined />} 
+                  loading={uploading}
+                >
+                  導入 CSV
+                </Button>
+              </Upload>
+              <Button 
+                icon={<DownloadOutlined />} 
+                onClick={handleExport}
+              >
+                導出 CSV
+              </Button>
+            </>
+          )}
           <Button type="primary" onClick={() => navigate('/inventory')}>
             返回庫存管理
           </Button>

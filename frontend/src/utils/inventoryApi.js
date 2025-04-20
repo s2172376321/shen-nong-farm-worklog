@@ -4,9 +4,22 @@ import api, { apiCache } from './api';
 // 獲取所有庫存項目
 export const fetchInventory = async () => {
   try {
-    const response = await api.get('/api/inventory', {
-      timeout: 10000
+    console.log('開始獲取庫存數據');
+    const response = await api.get('/inventory', {
+      timeout: 10000,
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
     });
+    
+    console.log('獲取到的庫存數據:', response.data);
+    
+    if (!Array.isArray(response.data)) {
+      console.error('返回的數據不是數組:', response.data);
+      return [];
+    }
+    
     return response.data;
   } catch (error) {
     console.error('獲取庫存失敗:', error);
@@ -20,12 +33,15 @@ export const fetchInventoryItems = fetchInventory;
 // 獲取低庫存警告
 export const fetchLowStockItems = async () => {
   try {
-    const response = await api.get('/api/inventory/low-stock', {
+    console.log('開始獲取低庫存警報');
+    const response = await api.get('/inventory/alerts/low-stock', {
       timeout: 8000
     });
+    
+    console.log('獲取低庫存警報成功:', response.data);
     return response.data;
   } catch (error) {
-    console.error('獲取低庫存項目失敗:', error);
+    console.error('獲取低庫存警報失敗:', error);
     throw error;
   }
 };
@@ -66,7 +82,7 @@ export const createInventoryItem = async (itemData) => {
   }
 
   try {
-    const response = await api.post('/api/inventory', itemData, {
+    const response = await api.post('/inventory', itemData, {
       timeout: 10000
     });
     return response.data;
@@ -98,18 +114,15 @@ export const updateInventoryItem = async (itemId, itemData) => {
 // 調整庫存數量
 export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
   try {
-    const response = await api.post(`/inventory/${itemId}/adjust`, adjustmentData, {
+    console.log(`調整庫存項目 ${itemId} 的數量:`, adjustmentData);
+    const response = await api.patch(`/inventory/${itemId}/quantity`, adjustmentData, {
       timeout: 10000
     });
     
-    // 清除相關快取
-    apiCache.clear('inventoryItems');
-    apiCache.clear('lowStockItems');
-    apiCache.clear(`inventoryItem:${itemId}`);
-    
+    console.log('庫存調整成功:', response.data);
     return response.data;
   } catch (error) {
-    console.error(`調整庫存項目 ${itemId} 數量失敗:`, error);
+    console.error('調整庫存失敗:', error);
     throw error;
   }
 };
@@ -117,7 +130,7 @@ export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
 // 獲取庫存交易記錄
 export const fetchInventoryTransactions = async (filters = {}) => {
   try {
-    const response = await api.get('/api/inventory/transactions', {
+    const response = await api.get('/inventory/transactions', {
       params: filters,
       timeout: 10000
     });
@@ -131,9 +144,12 @@ export const fetchInventoryTransactions = async (filters = {}) => {
 // 同步產品到庫存
 export const syncInventoryFromProducts = async () => {
   try {
-    const response = await api.post('/api/inventory/sync-from-products', {}, {
+    console.log('開始同步產品到庫存');
+    const response = await api.post('/inventory/sync-from-products', {}, {
       timeout: 15000
     });
+    
+    console.log('同步成功:', response.data);
     return response.data;
   } catch (error) {
     console.error('同步庫存失敗:', error);
@@ -144,7 +160,7 @@ export const syncInventoryFromProducts = async () => {
 // 庫存出庫
 export const checkoutInventory = async (checkoutData) => {
   try {
-    const response = await api.post('/api/inventory/checkout', checkoutData);
+    const response = await api.post('/inventory/checkout', checkoutData);
     return response.data;
   } catch (error) {
     console.error('庫存出庫失敗:', error);
@@ -161,7 +177,7 @@ export const createInventoryCheckout = async (checkoutData) => {
       throw new Error('無效的出庫數據格式');
     }
 
-    const response = await api.post('/api/inventory/checkout', checkoutData, {
+    const response = await api.post('/inventory/checkout', checkoutData, {
       timeout: 10000,
       headers: {
         'Content-Type': 'application/json'
@@ -203,7 +219,7 @@ export const createInventoryCheckout = async (checkoutData) => {
 // 獲取出庫記錄
 export const fetchCheckouts = async (filters = {}) => {
   try {
-    const response = await api.get('/api/inventory/checkouts', {
+    const response = await api.get('/inventory/checkouts', {
       params: filters,
       timeout: 10000
     });
@@ -246,5 +262,73 @@ export const fetchInventoryItemByProductId = async (productId) => {
       timestamp: new Date().toISOString()
     });
     throw new Error(error.response?.data?.message || '獲取庫存項目失敗，請稍後再試');
+  }
+};
+
+// 匯入 CSV 文件
+export const importInventoryCSV = async (file) => {
+  try {
+    console.log('開始上傳 CSV 文件:', file.name);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await api.post('/inventory/import-csv', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      },
+      timeout: 30000
+    });
+
+    console.log('CSV 上傳成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('上傳 CSV 失敗:', error);
+    throw error;
+  }
+};
+
+// 批量更新庫存項目
+export const batchUpdateInventory = async (items) => {
+  try {
+    console.log('開始批量更新庫存:', items);
+    
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('無效的批量更新數據');
+    }
+
+    const response = await api.post('/inventory/batch-update', { items }, {
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // 清除相關快取
+    apiCache.clear('inventoryItems');
+    apiCache.clear('lowStockItems');
+    
+    console.log('批量更新成功:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('批量更新失敗:', {
+      error: error.message,
+      data: error.response?.data,
+      status: error.response?.status
+    });
+
+    if (error.response) {
+      switch (error.response.status) {
+        case 400:
+          throw new Error(error.response.data?.message || '更新數據格式錯誤');
+        case 404:
+          throw new Error('找不到指定的庫存項目');
+        case 409:
+          throw new Error('庫存數量衝突');
+        default:
+          throw new Error('批量更新失敗，請稍後再試');
+      }
+    }
+
+    throw new Error('無法連接到伺服器，請檢查網路連接');
   }
 };

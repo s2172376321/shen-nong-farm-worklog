@@ -14,8 +14,9 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState(null);
   const [stats, setStats] = useState({
-    totalUsers: 0,
-    pendingWorkLogs: 0,
+    userCount: 0,
+    todayUsers: 0,
+    weeklyLogs: 0,
     unreadNotices: 0
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -110,8 +111,9 @@ const AdminDashboard = () => {
         }
         // 設置預設值
         setStats({
-          totalUsers: 0,
-          pendingWorkLogs: 0,
+          userCount: 0,
+          todayUsers: 0,
+          weeklyLogs: 0,
           unreadNotices: 0
         });
         setIsLoading(false);
@@ -218,13 +220,13 @@ const AdminDashboard = () => {
               <div className="bg-gray-800 p-4 rounded-lg">
                 <h3 className="text-lg font-semibold mb-2">總使用者數</h3>
                 <p className="text-2xl text-blue-400">
-                  {isLoading ? 'N/A' : stats.totalUsers}
+                  {isLoading ? 'N/A' : stats.userCount}
                 </p>
               </div>
               <div className="bg-gray-800 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-2">待審核工作日誌</h3>
+                <h3 className="text-lg font-semibold mb-2">本週工作日誌</h3>
                 <p className="text-2xl text-blue-400">
-                  {isLoading ? 'N/A' : stats.pendingWorkLogs}
+                  {isLoading ? 'N/A' : stats.weeklyLogs}
                 </p>
               </div>
               <div className="bg-gray-800 p-4 rounded-lg">

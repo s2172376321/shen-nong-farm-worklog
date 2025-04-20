@@ -3,6 +3,7 @@ const router = express.Router();
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const { User } = require('../models');
+const { authenticate } = require('../middleware/authMiddleware');
 
 // 創建 OAuth2 客戶端
 const client = new OAuth2Client({
@@ -21,6 +22,7 @@ router.post('/google/callback', async (req, res) => {
       hasCode: !!code,
       hasState: !!state,
       hasNonce: !!nonce,
+      headers: req.headers,
       timestamp: new Date().toISOString()
     });
 
@@ -33,22 +35,6 @@ router.post('/google/callback', async (req, res) => {
       });
     }
 
-    if (!state) {
-      console.error('未收到 state 參數');
-      return res.status(400).json({
-        success: false,
-        message: '未提供 state 參數'
-      });
-    }
-
-    if (!nonce) {
-      console.error('未收到 nonce 參數');
-      return res.status(400).json({
-        success: false,
-        message: '未提供 nonce 參數'
-      });
-    }
-
     // 使用授權碼獲取令牌
     console.log('交換授權碼獲取令牌...', {
       redirectUri: process.env.GOOGLE_REDIRECT_URI,
@@ -57,20 +43,48 @@ router.post('/google/callback', async (req, res) => {
       code: code ? '已提供' : '未提供'
     });
 
-    const { tokens } = await client.getToken({
-      code,
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: process.env.GOOGLE_REDIRECT_URI
-    });
+    let tokens;
+    try {
+      const tokenResponse = await client.getToken({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: process.env.GOOGLE_REDIRECT_URI
+      });
+      tokens = tokenResponse.tokens;
+      console.log('成功獲取令牌');
+    } catch (tokenError) {
+      console.error('獲取令牌失敗:', {
+        error: tokenError.message,
+        code: tokenError.code,
+        response: tokenError.response?.data
+      });
+      return res.status(400).json({
+        success: false,
+        message: '無法獲取 Google 令牌，請重新登入'
+      });
+    }
     
     // 驗證 ID Token
     console.log('驗證 ID Token...');
-    const ticket = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: process.env.GOOGLE_CLIENT_ID,
-      nonce: nonce // 驗證 nonce
-    });
+    let ticket;
+    try {
+      ticket = await client.verifyIdToken({
+        idToken: tokens.id_token,
+        audience: process.env.GOOGLE_CLIENT_ID,
+        nonce: nonce // 如果提供了 nonce 就驗證
+      });
+      console.log('ID Token 驗證成功');
+    } catch (verifyError) {
+      console.error('ID Token 驗證失敗:', {
+        error: verifyError.message,
+        code: verifyError.code
+      });
+      return res.status(400).json({
+        success: false,
+        message: '無法驗證 Google 身份，請重新登入'
+      });
+    }
 
     const payload = ticket.getPayload();
     const { email, sub: googleId, name, picture } = payload;
@@ -81,33 +95,46 @@ router.post('/google/callback', async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    // 查找用戶
-    let user = await User.findByGoogleId(googleId);
-    
-    if (!user) {
-      // 檢查是否有使用相同郵箱的用戶
-      user = await User.findByEmail(email);
+    // 查找或創建用戶
+    let user;
+    try {
+      // 先用 Google ID 查找
+      user = await User.findByGoogleId(googleId);
       
       if (!user) {
-        console.log('創建新用戶...');
-        // 創建新用戶
-        user = await User.create({
-          username: email.split('@')[0],
-          email,
-          googleId,
-          name: name || null,
-          profileImageUrl: picture || null,
-          role: 'user'
-        });
-      } else {
-        console.log('更新現有用戶的 Google 資訊...');
-        // 更新現有用戶的 Google ID
-        user = await User.update(user.id, {
-          googleId,
-          name: name || user.name,
-          profileImageUrl: picture || user.profile_image_url
-        });
+        // 再用 email 查找
+        user = await User.findByEmail(email);
+        
+        if (!user) {
+          console.log('創建新用戶...');
+          // 創建新用戶
+          user = await User.create({
+            username: email.split('@')[0],
+            email,
+            googleId,
+            name: name || null,
+            profileImageUrl: picture || null,
+            role: 'user'
+          });
+        } else {
+          console.log('更新現有用戶的 Google 資訊...');
+          // 更新現有用戶的 Google ID
+          user = await User.update(user.id, {
+            googleId,
+            name: name || user.name,
+            profileImageUrl: picture || user.profile_image_url
+          });
+        }
       }
+    } catch (dbError) {
+      console.error('數據庫操作失敗:', {
+        error: dbError.message,
+        stack: dbError.stack
+      });
+      return res.status(500).json({
+        success: false,
+        message: '用戶數據處理失敗，請稍後再試'
+      });
     }
 
     // 生成 JWT
@@ -122,7 +149,12 @@ router.post('/google/callback', async (req, res) => {
     );
 
     // 更新最後登入時間
-    await User.update(user.id, { lastLogin: new Date() });
+    try {
+      await User.update(user.id, { lastLogin: new Date() });
+    } catch (updateError) {
+      console.warn('更新最後登入時間失敗:', updateError);
+      // 不中斷流程，繼續返回用戶信息
+    }
 
     console.log('登入成功，返回用戶資訊');
     res.json({
@@ -180,7 +212,7 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    const user = await models.User.findOne({ where: { username } });
+    const user = await User.findOne({ where: { username } });
     if (!user) {
       return res.status(401).json({ error: '使用者不存在' });
     }
@@ -200,13 +232,67 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    user.lastLogin = new Date();
-    await user.save();
-
-    res.json({ token });
+    res.json({ token, user });
   } catch (error) {
     console.error('登入錯誤:', error);
-    res.status(500).json({ error: '伺服器錯誤' });
+    res.status(500).json({ error: '登入失敗，請稍後再試' });
+  }
+});
+
+// 獲取當前用戶資訊
+router.get('/me', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '用戶不存在'
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        profile_image_url: user.profile_image_url
+      }
+    });
+  } catch (error) {
+    console.error('獲取用戶資訊失敗:', error);
+    res.status(500).json({
+      success: false,
+      message: '獲取用戶資訊失敗'
+    });
+  }
+});
+
+// 登出
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    // 清理會話相關的 cookies
+    res.clearCookie('jwt', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict'
+    });
+
+    // 記錄登出操作
+    console.log(`用戶 ${req.user.username} (ID: ${req.user.id}) 已登出`);
+
+    res.json({
+      success: true,
+      message: '登出成功'
+    });
+  } catch (error) {
+    console.error('登出過程中發生錯誤:', error);
+    res.status(500).json({
+      success: false,
+      message: '登出過程中發生錯誤'
+    });
   }
 });
 

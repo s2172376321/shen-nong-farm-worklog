@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
 import { searchWorkLogs, reviewWorkLog, getWorkLogAttachments, uploadWorkLogAttachment, downloadWorkLogAttachment, deleteWorkLogAttachment } from '../../utils/api';
 import UserDailyWorkLogs from '../worklog/UserDailyWorkLogs';
+import { message } from 'antd';
 
 const WorkLogReview = () => {
   const [allWorkLogs, setAllWorkLogs] = useState([]); // 儲存所有工作日誌
@@ -13,7 +14,6 @@ const WorkLogReview = () => {
   const [expandedGroups, setExpandedGroups] = useState({});
   const [filter, setFilter] = useState({
     status: 'pending',
-    date: new Date().toISOString().split('T')[0], // 預設為今天日期
     userId: '' // 新增使用者ID篩選
   });
   const [selectedUserLog, setSelectedUserLog] = useState(null);
@@ -22,6 +22,7 @@ const WorkLogReview = () => {
   const timeouts = [5000, 10000]; // 第一次嘗試 5 秒，第二次 10 秒
   const [attachments, setAttachments] = useState({});
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   // 返回函數
   const handleGoBack = () => {
@@ -42,8 +43,6 @@ const WorkLogReview = () => {
       while (retryCount <= maxRetries) {
         try {
           const data = await searchWorkLogs({
-            startDate: filter.date,
-            endDate: filter.date,
             limit: 50
           });
           
@@ -92,7 +91,7 @@ const WorkLogReview = () => {
 
   useEffect(() => {
     loadAllWorkLogs();
-  }, [filter.date]); // 只在日期改變時重新加載
+  }, []); // 移除 filter.date 依賴
 
   // 應用篩選邏輯
   const applyFilters = (logs = allWorkLogs) => {
@@ -102,14 +101,6 @@ const WorkLogReview = () => {
       // 狀態篩選
       if (filter.status && log.status !== filter.status) {
         return false;
-      }
-      
-      // 日期篩選
-      if (filter.date) {
-        const logDate = new Date(log.created_at).toISOString().split('T')[0];
-        if (logDate !== filter.date) {
-          return false;
-        }
       }
       
       // 使用者ID篩選
@@ -186,21 +177,31 @@ const WorkLogReview = () => {
   // 審核工作日誌 - 修改為更新本地狀態而不是移除
   const handleReviewWorkLog = async (workLogId, status) => {
     try {
-      await reviewWorkLog(workLogId, status);
+      setLoading(true);
+      console.log('開始審核工作日誌:', { workLogId, status });
       
-      // 更新本地狀態 - 修改審核狀態而不是移除
-      const updatedAllLogs = allWorkLogs.map(log => 
-        log.id === workLogId ? { ...log, status } : log
+      const response = await reviewWorkLog(workLogId, status);
+      console.log('審核響應:', response);
+      
+      if (!response || !response.workLog) {
+        throw new Error('審核響應格式不正確');
+      }
+
+      // 更新本地狀態
+      setAllWorkLogs(prevLogs => 
+        prevLogs.map(log => 
+          log.id === workLogId 
+            ? { ...log, ...response.workLog }
+            : log
+        )
       );
-      
-      setAllWorkLogs(updatedAllLogs);
-      
-      // 重新應用篩選
-      applyFilters(updatedAllLogs);
-      
-      setError(null);
-    } catch (err) {
-      setError('審核工作日誌失敗');
+
+      message.success('工作日誌審核成功');
+    } catch (error) {
+      console.error('審核工作日誌失敗:', error);
+      message.error(error.message || '審核工作日誌失敗');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -261,7 +262,6 @@ const WorkLogReview = () => {
   const handleResetFilters = () => {
     setFilter({
       status: 'pending',
-      date: new Date().toISOString().split('T')[0],
       userId: ''
     });
   };
@@ -321,10 +321,10 @@ const WorkLogReview = () => {
 
   // 在組件中添加 useEffect
   useEffect(() => {
-    if (selectedUserLog?.log?.id) {
-      loadAttachments(selectedUserLog.log.id);
+    if (selectedUserLog?.userId) {
+      loadAttachments(selectedUserLog.userId);
     }
-  }, [selectedUserLog?.log?.id]);
+  }, [selectedUserLog?.userId]);
 
   if (isLoading) {
     return (
@@ -392,16 +392,6 @@ const WorkLogReview = () => {
               <option value="approved">已核准</option>
               <option value="rejected">已拒絕</option>
             </select>
-          </div>
-          <div>
-            <label className="block mb-2">日期</label>
-            <input
-              type="date"
-              name="date"
-              value={filter.date}
-              onChange={handleFilterChange}
-              className="w-full bg-gray-700 text-white p-2 rounded-lg"
-            />
           </div>
           <div>
             <label className="block mb-2">使用者</label>
@@ -605,12 +595,12 @@ const WorkLogReview = () => {
         <div className="mb-4">
           <input
             type="file"
-            id={`attachment-upload-${selectedUserLog?.log.id}`}
+            id={`attachment-upload-${selectedUserLog?.userId}`}
             className="hidden"
-            onChange={(e) => handleAttachmentUpload(selectedUserLog?.log.id, e.target.files[0])}
+            onChange={(e) => handleAttachmentUpload(selectedUserLog?.userId, e.target.files[0])}
           />
           <Button
-            onClick={() => document.getElementById(`attachment-upload-${selectedUserLog?.log.id}`).click()}
+            onClick={() => document.getElementById(`attachment-upload-${selectedUserLog?.userId}`).click()}
             disabled={uploadingAttachment}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
           >
@@ -620,7 +610,7 @@ const WorkLogReview = () => {
         
         {/* 附件列表 */}
         <div className="space-y-2">
-          {attachments[selectedUserLog?.log.id]?.map(attachment => (
+          {attachments[selectedUserLog?.userId]?.map(attachment => (
             <div key={attachment.id} className="flex items-center justify-between bg-gray-800 p-2 rounded">
               <span className="text-sm">{attachment.file_name}</span>
               <div className="flex space-x-2">
@@ -631,7 +621,7 @@ const WorkLogReview = () => {
                   下載
                 </Button>
                 <Button
-                  onClick={() => handleAttachmentDelete(selectedUserLog?.log.id, attachment.id)}
+                  onClick={() => handleAttachmentDelete(selectedUserLog?.userId, attachment.id)}
                   className="px-2 py-1 text-sm bg-red-600 hover:bg-red-700"
                 >
                   刪除

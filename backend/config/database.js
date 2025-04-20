@@ -3,6 +3,16 @@
 
 // backend/config/database.js
 const { Pool } = require('pg');
+require('dotenv').config();
+
+// 檢查必要的環境變量
+const requiredEnvVars = ['DB_USER', 'DB_HOST', 'DB_NAME', 'DB_PASSWORD', 'DB_PORT'];
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
+if (missingEnvVars.length > 0) {
+  console.error('缺少必要的環境變量:', missingEnvVars);
+  throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+}
 
 class Database {
   constructor() {
@@ -15,7 +25,7 @@ class Database {
       ssl: process.env.NODE_ENV === 'production'
     });
 
-    this.pool = new Pool({
+    const config = {
       user: process.env.DB_USER,
       host: process.env.DB_HOST,
       database: process.env.DB_NAME,
@@ -25,7 +35,9 @@ class Database {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    });
+    };
+
+    this.pool = new Pool(config);
 
     // 測試連接
     this.testConnection();

@@ -1,113 +1,161 @@
 // 位置：frontend/src/components/auth/GoogleCallback.js
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { CircularProgress, Typography, Box, Alert, Button } from '@mui/material';
-import { handleGoogleCallback } from '../../utils/api';
+import { useNavigate } from 'react-router-dom';
+import { CircularProgress, Typography, Box, Alert } from '@mui/material';
+import axios from 'axios';
 
 const GoogleCallback = () => {
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const location = useLocation();
   const navigate = useNavigate();
+  const [error, setError] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(true);
 
   useEffect(() => {
-    const processCallback = async () => {
+    const handleCallback = async () => {
       try {
-        const params = new URLSearchParams(location.search);
+        // 從 URL 獲取參數
+        const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
-        const returnedState = params.get('state');
+        const state = params.get('state');
         const error = params.get('error');
 
-        // 檢查是否有錯誤
-        if (error) {
-          throw new Error(`Google 登入錯誤: ${error}`);
-        }
-
-        // 詳細的 state 驗證日誌
-        const savedState = sessionStorage.getItem('googleAuthState');
-        console.log('State 驗證詳情:', {
-          savedState,
-          returnedState,
-          savedStateExists: !!savedState,
-          returnedStateExists: !!returnedState,
-          match: savedState === returnedState,
+        console.log('Google 回調參數:', {
+          hasCode: !!code,
+          codeLength: code?.length,
+          hasState: !!state,
+          stateLength: state?.length,
+          error,
           timestamp: new Date().toISOString()
         });
 
-        // 驗證 state 參數
-        if (!savedState || !returnedState) {
-          console.warn('State 參數缺失:', {
-            savedState: savedState ? '存在' : '不存在',
-            returnedState: returnedState ? '存在' : '不存在',
-            timestamp: new Date().toISOString()
-          });
-          console.log('繼續處理 Google 登入，即使缺少 state 參數');
+        // 檢查錯誤
+        if (error) {
+          throw new Error(`Google 授權錯誤: ${error}`);
         }
 
-        // 取得儲存的 nonce
-        const savedNonce = sessionStorage.getItem('googleAuthNonce');
-
-        // 清除已使用的 state 和 nonce
-        sessionStorage.removeItem('googleAuthState');
-        sessionStorage.removeItem('googleAuthNonce');
-
+        // 檢查必要參數
         if (!code) {
           throw new Error('未收到授權碼');
         }
 
-        // 使用新的 handleGoogleCallback 函數
-        const response = await handleGoogleCallback(code, returnedState, savedNonce);
+        // 從 sessionStorage 獲取並驗證 state
+        const storedState = sessionStorage.getItem('googleAuthState');
+        const storedNonce = sessionStorage.getItem('googleAuthNonce');
 
-        // 根據用戶角色重定向
-        if (response.user.role === 'admin') {
-          navigate('/admin/dashboard');
-        } else if (response.user.role === 'manager') {
-          navigate('/manager/dashboard');
-        } else {
-          navigate('/dashboard');
+        console.log('Session 存儲狀態:', {
+          hasStoredState: !!storedState,
+          storedStateLength: storedState?.length,
+          hasStoredNonce: !!storedNonce,
+          storedNonceLength: storedNonce?.length
+        });
+
+        if (state !== storedState) {
+          console.error('State 不匹配:', {
+            receivedState: state,
+            storedState: storedState
+          });
+          throw new Error('安全驗證失敗：state 不匹配');
         }
+
+        // 準備請求數據
+        const callbackData = {
+          code,
+          state,
+          nonce: storedNonce,
+          redirect_uri: `${window.location.origin}/auth/google/callback`
+        };
+
+        console.log('準備發送回調請求:', {
+          endpoint: `${process.env.REACT_APP_API_URL}/auth/google/callback`,
+          hasCallbackData: !!callbackData,
+          timestamp: new Date().toISOString()
+        });
+
+        // 發送請求到後端
+        const response = await axios.post(
+          `${process.env.REACT_APP_API_URL}/auth/google/callback`,
+          callbackData,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            withCredentials: true
+          }
+        );
+
+        console.log('回調請求成功:', {
+          status: response.status,
+          hasData: !!response.data,
+          timestamp: new Date().toISOString()
+        });
+
+        // 清理 session storage
+        sessionStorage.removeItem('googleAuthState');
+        sessionStorage.removeItem('googleAuthNonce');
+
+        // 處理成功響應
+        if (response.data.token) {
+          localStorage.setItem('token', response.data.token);
+          navigate('/dashboard');
+        } else {
+          throw new Error('未收到有效的認證令牌');
+        }
+
       } catch (err) {
         console.error('Google 回調處理錯誤:', {
           message: err.message,
-          status: err.status,
-          timestamp: new Date().toISOString()
+          stack: err.stack,
+          timestamp: new Date().toISOString(),
+          error: err
         });
-        setError(err.message || 'Google 登入處理失敗');
+
+        setError(err.message || '登入處理失敗，請稍後再試');
+        setTimeout(() => navigate('/login'), 5000);
       } finally {
-        setLoading(false);
+        setIsProcessing(false);
       }
     };
 
-    processCallback();
-  }, [location, navigate]);
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-      </Box>
-    );
-  }
+    handleCallback();
+  }, [navigate]);
 
   if (error) {
     return (
-      <Box display="flex" flexDirection="column" alignItems="center" gap={2} p={3}>
-        <Typography variant="h6" color="error">
-          登入失敗
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        p={3}
+      >
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+        <Typography variant="body2" color="textSecondary">
+          5 秒後將返回登入頁面...
         </Typography>
-        <Alert severity="error">{error}</Alert>
-        <Button 
-          variant="contained" 
-          onClick={() => navigate('/login')}
-          sx={{ mt: 2 }}
-        >
-          返回登入頁面
-        </Button>
       </Box>
     );
   }
 
-  return null;
+  return (
+    <Box
+      display="flex"
+      flexDirection="column"
+      alignItems="center"
+      justifyContent="center"
+      minHeight="100vh"
+      p={3}
+    >
+      <CircularProgress sx={{ mb: 2 }} />
+      <Typography variant="h6" gutterBottom>
+        處理 Google 登入中...
+      </Typography>
+      <Typography variant="body2" color="textSecondary">
+        請稍候，我們正在驗證您的身份
+      </Typography>
+    </Box>
+  );
 };
 
 export default GoogleCallback;

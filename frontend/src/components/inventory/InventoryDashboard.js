@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { fetchInventoryItems, fetchLowStockItems } from '../../utils/inventoryApi';
-import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert, message } from 'antd';
+import { fetchInventoryItems, fetchLowStockItems, fetchInventoryStats } from '../../utils/inventoryApi';
+import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert, message, Statistic, Row, Col } from 'antd';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
@@ -24,6 +24,11 @@ const InventoryDashboard = () => {
   const [searchText, setSearchText] = useState('');
   const [filteredData, setFilteredData] = useState([]);
   const [syncStatus, setSyncStatus] = useState({ loading: false, message: null });
+  const [stats, setStats] = useState({
+    totalItems: 0,
+    totalValue: 0,
+    lowStockCount: 0
+  });
 
   // 將 filterData 移到這裡，在 useEffect 之前
   const filterData = useCallback(() => {
@@ -231,6 +236,21 @@ const InventoryDashboard = () => {
     navigate(`/inventory/${itemId}`);
   };
 
+  // 加載統計數據
+  const loadStats = async () => {
+    try {
+      const response = await fetchInventoryStats();
+      setStats(response.data);
+    } catch (err) {
+      console.error('載入統計數據失敗:', err);
+      message.error('載入統計數據失敗');
+    }
+  };
+
+  useEffect(() => {
+    loadStats();
+  }, []);
+
   if (loading) {
     return (
       <div className="inventory-dashboard">
@@ -271,6 +291,39 @@ const InventoryDashboard = () => {
     <div className="inventory-dashboard">
       <Card title="庫存管理">
         <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {/* 統計數據卡片 */}
+          <Row gutter={16}>
+            <Col span={8}>
+              <Card>
+                <Statistic
+                  title="總庫存項目"
+                  value={stats.totalItems}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card>
+                <Statistic
+                  title="庫存總值"
+                  value={stats.totalValue}
+                  precision={2}
+                  prefix="¥"
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card>
+                <Statistic
+                  title="低庫存商品"
+                  value={stats.lowStockCount}
+                  valueStyle={{ color: stats.lowStockCount > 0 ? '#cf1322' : '#3f8600' }}
+                />
+              </Card>
+            </Col>
+          </Row>
+
           <div className="flex justify-between items-center">
             <Space>
               <Button type="primary" onClick={() => navigate('/inventory/list')}>
@@ -283,6 +336,9 @@ const InventoryDashboard = () => {
                   </Button>
                   <Button onClick={() => setShowScanner(true)}>
                     掃描 QR Code
+                  </Button>
+                  <Button onClick={() => navigate('/inventory/batch-update')}>
+                    批量更新
                   </Button>
                 </>
               )}

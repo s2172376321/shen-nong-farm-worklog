@@ -26,16 +26,21 @@ export const GoogleLoginButton = () => {
       setError(null);
       setShowError(false);
 
+      // 清除之前的授權狀態
+      sessionStorage.removeItem('googleAuthState');
+      sessionStorage.removeItem('googleAuthNonce');
+
       // 檢查必要的環境變數
       const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-      const redirectUri = process.env.REACT_APP_GOOGLE_REDIRECT_URI || `${window.location.origin}/auth/google/callback`;
+      // 使用完整的回調 URL
+      const redirectUri = `${window.location.origin}/auth/google/callback`;
       
       console.log('環境變數檢查:', {
         hasClientId: !!clientId,
         clientIdLength: clientId?.length,
         redirectUri,
         nodeEnv: process.env.NODE_ENV,
-        envFile: '.env 文件已載入'
+        origin: window.location.origin
       });
 
       if (!clientId) {
@@ -45,10 +50,11 @@ export const GoogleLoginButton = () => {
       const state = generateState();
       const nonce = generateNonce();
       
-      // 使用 sessionStorage 而不是 localStorage
+      // 使用 sessionStorage 存儲 state 和 nonce
       sessionStorage.setItem('googleAuthState', state);
       sessionStorage.setItem('googleAuthNonce', nonce);
       
+      // 構建授權 URL
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
@@ -67,7 +73,9 @@ export const GoogleLoginButton = () => {
         accessType: 'offline',
         prompt: 'consent',
         hasState: !!state,
-        hasNonce: !!nonce
+        hasNonce: !!nonce,
+        stateLength: state.length,
+        nonceLength: nonce.length
       });
 
       // 重定向到 Google 登入頁面
@@ -129,7 +137,8 @@ export const GoogleLoginButton = () => {
       {process.env.NODE_ENV === 'development' && (
         <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
           環境: {process.env.NODE_ENV}<br />
-          Client ID: {process.env.REACT_APP_GOOGLE_CLIENT_ID ? '已設置' : '未設置'}
+          Client ID: {process.env.REACT_APP_GOOGLE_CLIENT_ID ? '已設置' : '未設置'}<br />
+          重定向 URI: {`${window.location.origin}/auth/google/callback`}
         </div>
       )}
     </>
