@@ -16,6 +16,16 @@ if (missingEnvVars.length > 0) {
 
 class Database {
   constructor() {
+    this._pool = null;
+    this._isClosing = false;
+    this.init();
+  }
+
+  init() {
+    if (this._pool) {
+      return;
+    }
+
     // 輸出環境變數值（不包含密碼）
     console.log('Database Configuration:', {
       user: process.env.DB_USER,
@@ -37,13 +47,13 @@ class Database {
       ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
     };
 
-    this.pool = new Pool(config);
+    this._pool = new Pool(config);
 
     // 測試連接
     this.testConnection();
 
     // 連線池事件監聽
-    this.pool.on('error', (err) => {
+    this._pool.on('error', (err) => {
       console.error('資料庫連線池錯誤:', {
         message: err.message,
         code: err.code,
@@ -51,15 +61,15 @@ class Database {
       });
     });
 
-    this.pool.on('connect', () => {
+    this._pool.on('connect', () => {
       console.log('新的資料庫連線已建立');
     });
 
-    this.pool.on('acquire', () => {
+    this._pool.on('acquire', () => {
       console.log('資料庫連線已從池中獲取');
     });
 
-    this.pool.on('remove', () => {
+    this._pool.on('remove', () => {
       console.log('資料庫連線已從池中移除');
     });
   }
@@ -67,7 +77,7 @@ class Database {
   // 測試資料庫連接
   async testConnection() {
     try {
-      const client = await this.pool.connect();
+      const client = await this._pool.connect();
       console.log('資料庫連接測試成功');
       
       // 測試查詢
@@ -81,12 +91,20 @@ class Database {
         code: error.code,
         stack: error.stack
       });
-      // 不要立即結束程序，讓應用程序有機會重試
     }
   }
 
   // 執行查詢的方法
   async query(text, params, retryCount = 3) {
+    if (this._isClosing) {
+      throw new Error('Database is shutting down');
+    }
+
+    // 如果連接池不存在，重新初始化
+    if (!this._pool) {
+      this.init();
+    }
+
     const start = Date.now();
     
     try {
@@ -95,7 +113,7 @@ class Database {
         params: params ? JSON.stringify(params).substring(0, 200) : 'none'
       });
 
-      const result = await this.pool.query(text, params);
+      const result = await this._pool.query(text, params);
       
       const duration = Date.now() - start;
       console.log(`查詢完成: ${duration}ms, 影響的行數: ${result.rowCount}`);
@@ -128,7 +146,11 @@ class Database {
 
   // 使用事務
   async transaction(callback) {
-    const client = await this.pool.connect();
+    if (this._isClosing) {
+      throw new Error('Database is shutting down');
+    }
+
+    const client = await this._pool.connect();
     
     try {
       await client.query('BEGIN');
@@ -146,24 +168,34 @@ class Database {
     }
   }
 
-  // 取得客戶端連線
-  async getClient() {
-    return this.pool.connect();
-  }
-
   // 取得連線池統計
   getPoolStats() {
+    if (!this._pool) {
+      return { totalCount: 0, idleCount: 0, waitingCount: 0 };
+    }
     return {
-      totalCount: this.pool.totalCount,
-      idleCount: this.pool.idleCount,
-      waitingCount: this.pool.waitingCount
+      totalCount: this._pool.totalCount,
+      idleCount: this._pool.idleCount,
+      waitingCount: this._pool.waitingCount
     };
   }
 
   // 關閉連線池
   async close() {
+    if (this._isClosing || !this._pool) {
+      return;
+    }
+
+    this._isClosing = true;
+    console.log('正在等待現有查詢完成...');
+
+    // 等待一段時間讓現有查詢完成
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
     console.log('關閉資料庫連線池...');
-    await this.pool.end();
+    await this._pool.end();
+    this._pool = null;
+    this._isClosing = false;
     console.log('資料庫連線池已關閉');
   }
 }
@@ -171,16 +203,29 @@ class Database {
 const db = new Database();
 
 // 應用程序關閉時關閉數據庫連接
-process.on('SIGINT', async () => {
-  console.log('應用程序關閉中...');
-  await db.close();
-  process.exit(0);
-});
+let isShuttingDown = false;
 
-process.on('SIGTERM', async () => {
-  console.log('應用程序被終止...');
-  await db.close();
-  process.exit(0);
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`收到 ${signal} 信號，開始優雅關閉...`);
+  
+  try {
+    await db.close();
+    console.log('應用程序正常關閉');
+    process.exit(0);
+  } catch (error) {
+    console.error('關閉過程中發生錯誤:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('uncaughtException', (error) => {
+  console.error('未捕獲的異常:', error);
+  gracefulShutdown('uncaughtException');
 });
 
 module.exports = db;

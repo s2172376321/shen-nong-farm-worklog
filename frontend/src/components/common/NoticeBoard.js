@@ -2,10 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { fetchNotices, markNoticeAsRead } from '../../utils/api';
 import { Card, Button } from '../ui';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
-const NoticeBoard = ({ preview = false, onNoticeRead }) => {
+const NoticeBoard = ({ preview = false, limit = 3, showViewAll = false, onNoticeRead }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [notices, setNotices] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -33,8 +34,6 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
   // 處理閱讀公告
   const handleReadNotice = async (noticeId) => {
     try {
-      console.log('標記公告已讀:', noticeId);
-      
       // 先在介面上標記為已讀
       setNotices(prevNotices => 
         prevNotices.map(notice => 
@@ -56,39 +55,35 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
     }
   };
 
-  // 單獨處理未讀標識的點擊事件
-  const handleUnreadBadgeClick = (e, noticeId) => {
-    e.stopPropagation(); // 阻止事件冒泡，避免觸發卡片的點擊事件
-    handleReadNotice(noticeId);
-  };
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-6">
-        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-400"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="text-white flex items-center justify-center p-4">
+      <div className={`flex items-center justify-center p-4 ${preview ? 'text-gray-300' : 'text-gray-300'}`}>
         <p>{error}</p>
       </div>
     );
   }
 
-  // 如果是預覽模式，只顯示前3條
-  const displayNotices = preview ? notices.slice(0, 3) : notices;
+  // 如果是預覽模式，只顯示指定數量
+  const displayNotices = preview ? notices.slice(0, limit) : notices;
+
+  const isNoticesPage = location.pathname === '/notices';
 
   return (
-    <div className={preview ? "" : "min-h-screen bg-gray-900 text-white p-6"}>
-      {!preview && (
+    <div className={`${preview ? "" : "min-h-screen bg-gray-900 text-gray-100"} px-4 py-6 sm:px-6`}>
+      {(!preview && isNoticesPage) && (
         <div className="mb-6 flex items-center">
           <Button 
             onClick={handleGoBack}
             variant="secondary"
-            className="flex items-center text-sm mr-4"
+            className="flex items-center text-sm mr-4 text-gray-300 hover:text-gray-100"
           >
             <svg 
               xmlns="http://www.w3.org/2000/svg" 
@@ -104,33 +99,41 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
             </svg>
             返回
           </Button>
-          <h1 className="text-2xl font-bold">公告欄</h1>
+          <h1 className="text-2xl font-bold text-gray-100">公告欄</h1>
         </div>
       )}
       
       {displayNotices.length === 0 ? (
-        <p className="text-gray-400">目前沒有公告</p>
+        <p className={`text-center ${preview ? 'text-gray-400' : 'text-gray-400'}`}>
+          目前沒有公告
+        </p>
       ) : (
         <div className="space-y-4">
           {displayNotices.map(notice => (
             <Card 
               key={notice.id} 
-              className={`p-4 cursor-pointer transition-all duration-200 
-                ${notice.is_read ? 'bg-gray-800' : 'bg-gray-700 border-l-4 border-blue-500'}
+              className={`p-4 cursor-pointer transition-all duration-200 rounded-lg shadow-lg
+                ${notice.is_read 
+                  ? 'bg-gray-800 hover:bg-gray-700' 
+                  : 'bg-gray-700 hover:bg-gray-600 border-l-4 border-blue-400'}
+                sm:p-6
               `}
               onClick={() => handleReadNotice(notice.id)}
             >
-              <div className="flex justify-between items-start">
-                <h2 className="text-xl font-semibold mb-2">
+              <div className="flex justify-between items-start flex-wrap gap-2 sm:flex-nowrap">
+                <h2 className="text-lg sm:text-xl font-semibold mb-2 text-gray-100 flex-grow">
                   {!notice.is_read && (
-                    <span className="inline-block w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                    <span className="inline-block w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
                   )}
                   {notice.title}
                 </h2>
                 {!notice.is_read && (
                   <span 
-                    className="text-xs bg-blue-600 text-white px-2 py-1 rounded cursor-pointer hover:bg-blue-700"
-                    onClick={(e) => handleUnreadBadgeClick(e, notice.id)}
+                    className="text-xs bg-blue-500 text-white px-2 py-1 rounded cursor-pointer hover:bg-blue-600 whitespace-nowrap"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleReadNotice(notice.id);
+                    }}
                     title="點擊標記為已讀"
                   >
                     未讀
@@ -138,7 +141,7 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
                 )}
               </div>
               
-              <p className="text-gray-300">
+              <p className="text-gray-300 text-sm sm:text-base">
                 {preview 
                   ? notice.content.length > 100 
                     ? `${notice.content.substring(0, 100)}...` 
@@ -146,11 +149,23 @@ const NoticeBoard = ({ preview = false, onNoticeRead }) => {
                   : notice.content
                 }
               </p>
-              <div className="text-sm text-gray-500 mt-2">
+              <div className="text-xs sm:text-sm text-gray-400 mt-2">
                 {new Date(notice.created_at).toLocaleDateString()}
               </div>
             </Card>
           ))}
+        </div>
+      )}
+      
+      {preview && showViewAll && notices.length > limit && (
+        <div className="mt-4 text-center">
+          <Button
+            variant="link"
+            onClick={() => navigate('/notices')}
+            className="text-blue-400 hover:text-blue-300 text-sm sm:text-base"
+          >
+            查看全部公告
+          </Button>
         </div>
       )}
     </div>

@@ -16,7 +16,29 @@ const PORT = process.env.PORT || 5004; // 修改為5004端口
 // 创建HTTP服务器（不再让express隐式创建）
 const server = http.createServer(app);
 
-// CORS 配置更宽松
+// 速率限制
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分钟
+  max: 100, // 每个IP每15分钟最多100次请求
+  message: { message: '請求過於頻繁，請稍後再試' },
+  skip: (req) => req.method === 'OPTIONS' // 跳過 OPTIONS 請求
+});
+
+const standardLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1分钟
+  max: 300, // 每个IP每分钟最多300次请求
+  message: { message: '請求過於頻繁，請稍後再試' },
+  skip: (req) => req.method === 'OPTIONS' // 跳過 OPTIONS 請求
+});
+
+const workLogLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1分钟
+  max: 600, // 每个IP每分钟最多600次请求
+  message: { message: '請求過於頻繁，請稍後再試' },
+  skip: (req) => req.method === 'OPTIONS' // 跳過 OPTIONS 請求
+});
+
+// 改進 CORS 配置
 const corsOptions = {
   origin: [
     'http://localhost:3000', 
@@ -33,18 +55,17 @@ const corsOptions = {
     'Accept',
     'Origin',
     'Cache-Control',
-    'Pragma'  // 添加 Pragma 請求頭
+    'Pragma'
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   credentials: true,
-  maxAge: 86400 // 預取請求的快取時間（24小時）
+  maxAge: 86400, // 預檢請求的快取時間（24小時）
+  preflightContinue: false, // 不繼續處理預檢請求
+  optionsSuccessStatus: 204 // 預檢請求的成功狀態碼
 };
 
 // 應用 CORS 到所有請求
 app.use(cors(corsOptions));
-
-// 回應 OPTIONS 請求
-app.options('*', cors(corsOptions));
 
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
@@ -63,13 +84,6 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
 }));
-
-// 速率限制
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分钟
-  max: 100 // 每个IP每15分钟最多100次请求
-});
-app.use(limiter);
 
 // 解析中间件
 app.use(express.json());
@@ -126,7 +140,7 @@ const dataRoutes = require('./routes/dataRoutes');
 app.use('/api', routes);
 
 // 健康檢查端點
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 

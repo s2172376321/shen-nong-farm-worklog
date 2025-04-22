@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { fetchDashboardStats, getUnreadNoticeCount } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 import UserManagement from './UserManagement';
-import WorkLogReview from './WorkLogReview';
 import NoticeManagement from './NoticeManagement';
 import NoticeBoard from '../common/NoticeBoard';
 import ChangePassword from '../user/ChangePassword';
@@ -50,12 +49,6 @@ const AdminDashboard = () => {
       icon: '👤'
     },
     {
-      title: '工作日誌審核',
-      component: WorkLogReview,
-      description: '審核和管理員工工作日誌',
-      icon: '📋'
-    },
-    {
       title: '公告管理',
       component: NoticeManagement,
       description: '發布和管理系統公告',
@@ -98,30 +91,14 @@ const AdminDashboard = () => {
         setStats(statsData);
         setError(null);  // 清除任何之前的錯誤
         setIsLoading(false);
-      } catch (err) {
-        console.error('載入統計資訊失敗:', err);
-        // 根據錯誤類型設置不同的錯誤訊息
-        if (err.response) {
-          if (err.response.status === 404) {
-            setError('找不到統計資料，請確認 API 路徑是否正確');
-          } else if (err.response.status === 401) {
-            setError('您的登入已過期，請重新登入');
-            logout();  // 登出用戶
-            navigate('/login');  // 導向登入頁面
-          } else {
-            setError(`載入統計資訊失敗: ${err.response.data?.message || '未知錯誤'}`);
-          }
-        } else if (err.request) {
-          setError('無法連接到伺服器，請檢查網路連線');
-        } else {
-          setError(`載入統計資訊失敗: ${err.message}`);
-        }
-        // 設置預設值
+      } catch (error) {
+        console.error('Error loading dashboard stats:', error);
+        // 顯示錯誤信息
         setStats({
-          userCount: 0,
-          todayUsers: 0,
-          weeklyLogs: 0,
-          unreadNotices: 0
+          userCount: 'N/A',
+          todayUsers: 'N/A',
+          weeklyLogs: 'N/A',
+          unreadNotices: 'N/A'
         });
         setIsLoading(false);
       }
@@ -228,12 +205,6 @@ const AdminDashboard = () => {
                 <h3 className="text-lg font-semibold mb-2">總使用者數</h3>
                 <p className="text-2xl text-blue-400">
                   {isLoading ? 'N/A' : stats.userCount}
-                </p>
-              </div>
-              <div className="bg-gray-800 p-4 rounded-lg">
-                <h3 className="text-lg font-semibold mb-2">本週工作日誌</h3>
-                <p className="text-2xl text-blue-400">
-                  {isLoading ? 'N/A' : stats.weeklyLogs}
                 </p>
               </div>
               <div className="bg-gray-800 p-4 rounded-lg">

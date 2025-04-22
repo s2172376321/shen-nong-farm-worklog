@@ -1,26 +1,25 @@
 const { Pool } = require('pg');
-require('dotenv').config();
 
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 5432,
+  user: 'postgres',
+  host: 'localhost',
+  database: 'shen_nong_worklog',
+  password: '1qazXSW@',
+  port: 5432,
 });
 
 async function testConnection() {
   try {
     const client = await pool.connect();
-    console.log('数据库连接成功！');
+    console.log('數據庫連接成功！');
     
-    // 测试查询
+    // 測試查詢
     const result = await client.query('SELECT NOW()');
-    console.log('数据库时间:', result.rows[0].now);
+    console.log('數據庫時間:', result.rows[0].now);
     
     client.release();
   } catch (error) {
-    console.error('数据库连接失败:', error);
+    console.error('數據庫連接失敗:', error);
   } finally {
     await pool.end();
   }

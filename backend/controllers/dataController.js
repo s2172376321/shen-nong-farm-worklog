@@ -6,6 +6,11 @@ const { promisify } = require('util');
 // 將 fs.readFile 轉為 Promise 版本
 const readFileAsync = promisify(fs.readFile);
 
+// 定義數據文件路徑
+const DATA_DIR = path.join(process.cwd(), 'data');
+const LOCATION_FILE = path.join(DATA_DIR, '位置區域.csv');
+const WORK_CATEGORIES_FILE = path.join(DATA_DIR, '工作類別.csv');
+
 /**
  * 解析 CSV 字符串為對象數組
  * @param {string} csvContent CSV 內容
@@ -44,10 +49,15 @@ const parseCSV = (csvContent) => {
     // 創建對象
     const entry = {};
     for (let j = 0; j < headers.length; j++) {
-      entry[headers[j]] = rowValues[j] || '';
+      if (headers[j] && rowValues[j]) { // 只添加有效的鍵值對
+        entry[headers[j]] = rowValues[j];
+      }
     }
     
-    results.push(entry);
+    // 只添加非空對象
+    if (Object.keys(entry).length > 0) {
+      results.push(entry);
+    }
   }
   
   return results;
@@ -57,23 +67,23 @@ const DataController = {
   // 獲取所有位置資料
   async getLocations(req, res) {
     try {
-      const csvPath = path.join(__dirname, '../../data/位置區域.csv');
-      console.log('嘗試讀取CSV文件:', csvPath);
+      console.log('嘗試讀取位置區域CSV文件:', LOCATION_FILE);
       
       // 檢查文件是否存在
-      if (!fs.existsSync(csvPath)) {
+      if (!fs.existsSync(LOCATION_FILE)) {
         console.error('位置區域.csv 文件不存在');
         return res.status(404).json({ 
           message: '位置數據檔案未找到',
-          filePath: csvPath
+          filePath: LOCATION_FILE
         });
       }
       
       // 讀取CSV文件
-      const fileContent = await readFileAsync(csvPath, 'utf8');
+      const fileContent = await readFileAsync(LOCATION_FILE, 'utf8');
       
       // 解析CSV
-      const results = parseCSV(fileContent);
+      const results = parseCSV(fileContent)
+        .filter(row => row.區域名稱 && row.位置代號 && row.位置名稱); // 過濾掉空行
       
       console.log(`成功讀取 ${results.length} 條位置記錄`);
       return res.json(results);
@@ -95,37 +105,37 @@ const DataController = {
   // 獲取按區域分組的位置資料
   async getLocationsByArea(req, res) {
     try {
-      const csvPath = path.join(__dirname, '../../data/位置區域.csv');
-      console.log('嘗試讀取CSV文件:', csvPath);
+      console.log('嘗試讀取位置區域CSV文件:', LOCATION_FILE);
       
       // 檢查文件是否存在
-      if (!fs.existsSync(csvPath)) {
+      if (!fs.existsSync(LOCATION_FILE)) {
         console.error('位置區域.csv 文件不存在');
         return res.status(404).json({ 
           message: '位置數據檔案未找到',
-          filePath: csvPath
+          filePath: LOCATION_FILE
         });
       }
       
       // 讀取CSV文件
-      const fileContent = await readFileAsync(csvPath, 'utf8');
+      const fileContent = await readFileAsync(LOCATION_FILE, 'utf8');
       
       // 解析CSV
-      const results = parseCSV(fileContent);
+      const results = parseCSV(fileContent)
+        .filter(row => row.區域名稱 && row.位置代號 && row.位置名稱); // 過濾掉空行
       
       // 組織數據按區域分組
       const areaMap = {};
       
       results.forEach(row => {
-        const areaName = row['區域名稱'] || '未分類區域';
+        const areaName = row.區域名稱 || '未分類區域';
         
         if (!areaMap[areaName]) {
           areaMap[areaName] = [];
         }
         
         areaMap[areaName].push({
-          locationCode: row['位置代號'],
-          locationName: row['位置名稱']
+          locationCode: row.位置代號,
+          locationName: row.位置名稱
         });
       });
       
@@ -155,66 +165,60 @@ const DataController = {
   // 獲取工作類別資料
   async getWorkCategories(req, res) {
     try {
-      const csvPath = path.join(__dirname, '../../data/工作類別.csv');
-      console.log('嘗試讀取工作類別CSV文件:', csvPath);
+      console.log('工作目錄:', process.cwd());
+      console.log('嘗試讀取工作類別CSV文件:', WORK_CATEGORIES_FILE);
+      console.log('文件是否存在:', fs.existsSync(WORK_CATEGORIES_FILE));
       
       // 檢查文件是否存在
-      if (!fs.existsSync(csvPath)) {
+      if (!fs.existsSync(WORK_CATEGORIES_FILE)) {
         console.error('工作類別.csv 文件不存在');
         return res.status(404).json({ 
           message: '工作類別檔案未找到',
-          filePath: csvPath
+          filePath: WORK_CATEGORIES_FILE,
+          currentDir: process.cwd(),
+          searchedPath: path.resolve(WORK_CATEGORIES_FILE)
         });
       }
       
       // 讀取CSV文件
-      const fileContent = await readFileAsync(csvPath, 'utf8');
+      console.log('開始讀取文件...');
+      const fileContent = await readFileAsync(WORK_CATEGORIES_FILE, 'utf8');
+      console.log('文件讀取成功，內容長度:', fileContent.length);
       
       // 解析CSV
-      const rawResults = parseCSV(fileContent);
+      const results = parseCSV(fileContent)
+        .filter(row => row.工作內容代號 && row.工作內容名稱); // 過濾掉空行
       
-      // 處理成本類別欄位
-      const results = rawResults.map(item => {
-        // 獲取成本類別列的值
-        const costCategoryKey = Object.keys(item).find(key => 
-          key.includes('成本類別') || key.includes('成本類型')
-        );
-        
-        let costCategory = 0; // 默認值
-        
-        if (costCategoryKey && item[costCategoryKey]) {
-          // 解析成本類別值
-          const value = item[costCategoryKey].trim();
-          if (value.startsWith('1') || value.includes('收成入庫')) {
-            costCategory = 1;
-          } else if (value.startsWith('2') || value.includes('領用材料扣庫存')) {
-            costCategory = 2;
-          } else if (value.startsWith('3') || value.includes('領用材料計入成本不扣庫存')) {
-            costCategory = 3;
-          }
-        }
-        
-        // 創建標準化的對象
-        return {
-          工作內容代號: item['工作內容代號'],
-          工作內容名稱: item['工作內容名稱'],
-          成本類別: costCategory
-        };
+      console.log('解析結果:', {
+        totalRows: results.length,
+        firstRow: results[0],
+        lastRow: results[results.length - 1]
       });
       
-      console.log(`成功讀取 ${results.length} 條工作類別記錄`);
-      return res.json(results);
+      // 標準化成本類別
+      const standardizedResults = results.map(item => ({
+        工作內容代號: item.工作內容代號,
+        工作內容名稱: item.工作內容名稱,
+        成本類別: parseInt(item.成本類別) || 0
+      }));
+      
+      console.log(`成功讀取 ${standardizedResults.length} 條工作類別記錄`);
+      return res.json(standardizedResults);
     } catch (error) {
       console.error('獲取工作類別資料失敗:', {
         message: error.message,
         stack: error.stack,
         fileName: 'dataController.js',
-        method: 'getWorkCategories'
+        method: 'getWorkCategories',
+        currentDir: process.cwd(),
+        searchedPath: path.resolve(WORK_CATEGORIES_FILE)
       });
       return res.status(500).json({ 
         message: '獲取工作類別資料失敗', 
         error: error.message,
-        details: '請聯繫系統管理員'
+        details: '請聯繫系統管理員',
+        currentDir: process.cwd(),
+        searchedPath: path.resolve(WORK_CATEGORIES_FILE)
       });
     }
   },

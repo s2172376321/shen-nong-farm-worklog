@@ -13,17 +13,6 @@ const UserDashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // 模擬用戶數據（當實際用戶數據不可用時）
-  const mockUser = {
-    username: 'guest_user',
-    role: 'user',
-    email: 'guest@example.com',
-    name: '訪客用戶'
-  };
-
-  // 使用實際用戶數據或模擬數據
-  const currentUser = user || mockUser;
-
   // 導航選項
   const navItems = [
     { id: 'notices', label: '公告事項', icon: '📢', path: '/notices' },
@@ -37,10 +26,8 @@ const UserDashboard = () => {
       try {
         setIsLoading(true);
         setError(null);
-        console.log('正在載入未讀公告數量...');
         const response = await getUnreadNoticeCount();
         setUnreadNotices(response.unreadCount);
-        console.log('未讀公告數量載入成功:', response.unreadCount);
       } catch (err) {
         console.error('載入未讀公告數量失敗:', err);
         setError('無法載入未讀公告數量');
@@ -50,91 +37,89 @@ const UserDashboard = () => {
       }
     };
     
-    if (currentUser && currentUser.username !== 'guest_user') {
+    if (user) {
       loadUnreadCount();
-    } else {
-      setIsLoading(false);
     }
-  }, [currentUser]);
+  }, [user]);
 
   const handleLogout = () => {
     try {
-      console.log('執行登出操作...');
-      if (logout) {
-        logout();
-        console.log('登出成功');
-      }
+      logout();
       navigate('/login');
     } catch (err) {
       console.error('登出時發生錯誤:', err);
-      // 即使發生錯誤，也嘗試重定向到登入頁面
       navigate('/login');
     }
   };
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
+      <div className="flex justify-center items-center min-h-screen bg-gray-900">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
-          <p className="text-gray-600">載入中...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400 mb-4"></div>
+          <p className="text-gray-400">載入中...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="bg-white rounded-lg shadow-lg p-6 mb-8">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">
-              歡迎回來，{currentUser.name || currentUser.username}
-            </h1>
-            <p className="text-gray-600">
-              {currentUser.email && `郵箱: ${currentUser.email}`}
-            </p>
+    <div className="min-h-screen bg-gray-900 text-gray-100">
+      <div className="container mx-auto px-4 py-8">
+        <div className="bg-gray-800 rounded-lg shadow-lg p-6 mb-6">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-100">
+                歡迎回來，{user?.name || user?.username}
+              </h1>
+              <p className="text-gray-400">
+                {user?.email && `郵箱: ${user.email}`}
+              </p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200"
+            >
+              登出
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition duration-200"
-          >
-            登出
-          </button>
+
+          {error && (
+            <div className="bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded mb-4">
+              <p>{error}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {navItems.map((item) => (
+              <Link
+                key={item.id}
+                to={item.path}
+                className="block p-6 bg-gray-700 rounded-lg shadow hover:bg-gray-600 transition duration-200"
+              >
+                <div className="flex items-center">
+                  <span className="text-2xl mr-3">{item.icon}</span>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-100">
+                      {item.label}
+                    </h2>
+                    {item.id === 'notices' && unreadNotices > 0 && (
+                      <span className="inline-block bg-blue-500 text-white text-xs px-2 py-1 rounded-full ml-2">
+                        {unreadNotices}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
 
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-            <p>{error}</p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {navItems.map((item) => (
-            <Link
-              key={item.id}
-              to={item.path}
-              className="block p-6 bg-gray-50 rounded-lg hover:bg-gray-100 transition duration-200"
-            >
-              <div className="flex items-center">
-                <span className="text-2xl mr-3">{item.icon}</span>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-800">
-                    {item.label}
-                  </h2>
-                  {item.id === 'notices' && unreadNotices > 0 && (
-                    <span className="inline-block bg-red-500 text-white text-xs px-2 py-1 rounded-full ml-2">
-                      {unreadNotices}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </Link>
-          ))}
+        <div className="bg-gray-800 rounded-lg shadow-lg p-6">
+          <h2 className="text-xl font-bold text-gray-100 mb-4">最新公告</h2>
+          <NoticeBoard preview={true} limit={3} showViewAll={true} />
         </div>
       </div>
-
-      <NoticeBoard limit={3} showViewAll={true} />
     </div>
   );
 };

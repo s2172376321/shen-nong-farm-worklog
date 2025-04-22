@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const { authenticateToken } = require('../middleware/auth');
+const authMiddleware = require('../middleware/authMiddleware');
+const WorkLogController = require('../controllers/WorkLogController');
 
 // 獲取所有工作記錄
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
       'SELECT * FROM work_logs ORDER BY created_at DESC'
@@ -17,7 +18,7 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 // 創建工作記錄
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
   const { title, content, work_hours } = req.body;
   const userId = req.user.id;
 
@@ -34,7 +35,7 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 // 更新工作記錄
-router.put('/:id', authenticateToken, async (req, res) => {
+router.put('/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { title, content, work_hours } = req.body;
   const userId = req.user.id;
@@ -62,7 +63,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
 });
 
 // 刪除工作記錄
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authMiddleware, async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
 
@@ -86,7 +87,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // 搜索工作記錄
-router.get('/search', authenticateToken, async (req, res) => {
+router.get('/search', authMiddleware, async (req, res) => {
   const { limit = 50, offset = 0 } = req.query;
   
   try {
@@ -100,5 +101,56 @@ router.get('/search', authenticateToken, async (req, res) => {
     res.status(500).json({ message: '搜索工作記錄失敗' });
   }
 });
+
+// 獲取今日工時
+router.get('/today-hours', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    const result = await db.query(
+      `SELECT 
+        COALESCE(SUM(work_hours), 0) as total_hours,
+        CASE 
+          WHEN COALESCE(SUM(work_hours), 0) >= 8 THEN true
+          ELSE false
+        END as is_complete,
+        8 - COALESCE(SUM(work_hours), 0) as remaining_hours
+      FROM work_logs 
+      WHERE user_id = $1 
+      AND DATE(created_at) = $2`,
+      [userId, today]
+    );
+
+    res.json({
+      total_hours: result.rows[0].total_hours || "0.00",
+      remaining_hours: result.rows[0].remaining_hours || "8.00",
+      is_complete: result.rows[0].is_complete || false
+    });
+  } catch (error) {
+    console.error('獲取今日工時失敗:', error);
+    res.status(500).json({ message: '獲取今日工時失敗' });
+  }
+});
+
+// 獲取特定使用者特定日期的工作日誌
+router.get('/user/:userId/date/:workDate', 
+  authMiddleware,
+  (req, res) => {
+    // 將路由參數轉換為查詢參數
+    req.query = {
+      userId: req.params.userId,
+      workDate: req.params.workDate
+    };
+    
+    if (typeof WorkLogController.getUserDailyWorkLogs === 'function') {
+      return WorkLogController.getUserDailyWorkLogs(req, res);
+    } else {
+      return res.status(500).json({ 
+        message: '服務器配置錯誤：getUserDailyWorkLogs 控制器未定義' 
+      });
+    }
+  }
+);
 
 module.exports = router; 

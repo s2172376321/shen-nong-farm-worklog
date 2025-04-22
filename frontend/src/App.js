@@ -7,7 +7,6 @@ import { ApiStatusProvider } from './context/ApiStatusProvider';
 // 導入頁面組件
 import LoginPage from './components/auth/LoginPage';
 import UserDashboard from './components/user/UserDashboard';
-import WorkLogDashboard from './components/worklog/WorkLogDashboard';
 import AdminDashboard from './components/admin/AdminDashboard';
 import NoticeBoard from './components/common/NoticeBoard';
 import UserSettings from './components/user/UserSettings';
@@ -47,10 +46,14 @@ function AppContent() {
         <Route path="/" element={<HomeRoute />} />
         
         {/* 使用者儀表板路由 */}
-        <Route path="/dashboard" element={<UserDashboard />} />
-        
-        {/* 工作日誌路由 */}
-        <Route path="/work-log" element={<WorkLogDashboard />} />
+        <Route 
+          path="/dashboard" 
+          element={
+            <PrivateRoute>
+              <UserDashboard />
+            </PrivateRoute>
+          } 
+        />
         
         {/* 使用者設定路由 */}
         <Route path="/settings" element={<UserSettings />} />

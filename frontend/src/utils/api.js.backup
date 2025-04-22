@@ -635,7 +635,7 @@ export const createWorkLog = async (workLogData) => {
 };
 
 export const searchWorkLogs = async (params) => {
-  const response = await api.get('/work-logs/search', { params });
+  const response = await api.get('/work-logs', { params });
   return response.data;
 };
 
@@ -644,12 +644,31 @@ export const getTodayHour = async () => {
   return response.data;
 };
 
+export const getTodayWorkHours = getTodayHour;
+
 export const getUserDailyWorkLogs = async (userId, workDate) => {
-  const response = await api.get(`/work-logs/user/${userId}/daily`, {
-    params: { workDate }
-  });
-  return response.data;
+  const maxRetries = 3;
+  const retryDelay = 1000; // 1秒
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await api.get(`/work-logs/user/${userId}/date/${workDate}`);
+      return response.data;
+    } catch (error) {
+      if (error.response?.status === 429 && attempt < maxRetries) {
+        // 如果是速率限制錯誤且還有重試機會
+        const delay = error.response.headers['retry-after'] * 1000 || retryDelay;
+        console.log(`請求被限制，${delay/1000}秒後重試 (${attempt}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
 };
+
+// 為了向後兼容，添加別名，但確保傳遞正確的參數
+export const getWorkLogsByDate = getUserDailyWorkLogs;
 
 export const getAllWorkLogs = async () => {
   const response = await api.get('/work-logs');
@@ -764,10 +783,7 @@ export const fetchDashboardStats = async () => {
       _t: Date.now()
     }
   });
-  return {
-    userCount: response.data.userCount || 0,
-    unreadNotices: response.data.unreadNotices || 0
-  };
+  return response.data;
 };
 
 // 節流 Map 和函數
@@ -813,7 +829,7 @@ export const getWorkLogAttachments = async (workLogId) => {
 
 // 下載工單附件
 export const downloadWorkLogAttachment = async (attachmentId) => {
-  const response = await api.get(`/work-logs/attachments/${attachmentId}/download`, {
+  const response = await api.get(`/attachments/${attachmentId}/download`, {
     responseType: 'blob'
   });
   return response.data;
@@ -821,7 +837,7 @@ export const downloadWorkLogAttachment = async (attachmentId) => {
 
 // 刪除工單附件
 export const deleteWorkLogAttachment = async (attachmentId) => {
-  const response = await api.delete(`/work-logs/attachments/${attachmentId}`);
+  const response = await api.delete(`/attachments/${attachmentId}`);
   return response.data;
 };
 
@@ -843,10 +859,7 @@ export const reviewWorkLog = async (workLogId, status) => {
 };
 
 export const batchReviewWorkLogs = async (workLogIds, status) => {
-  const response = await api.post('/work-logs/batch-review', {
-    workLogIds,
-    status
-  });
+  const response = await api.post('/work-logs/batch-review', { workLogIds, status });
   return response.data;
 };
 
@@ -868,27 +881,52 @@ export const forceReauthenticate = async () => {
 
 // 附件相關 API
 export const uploadAttachment = async (workLogId, file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  const response = await api.post(`/work-logs/${workLogId}/attachments`, formData);
-  return response.data;
+  try {
+    const formData = new FormData();
+    formData.append('attachment', file);
+
+    const response = await api.post(`/attachments/work-logs/${workLogId}/attachments`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('上傳附件失敗:', error);
+    throw error;
+  }
 };
 
 export const getAttachments = async (workLogId) => {
-  const response = await api.get(`/work-logs/${workLogId}/attachments`);
-  return response.data;
+  try {
+    const response = await api.get(`/attachments/work-logs/${workLogId}/attachments`);
+    return response.data;
+  } catch (error) {
+    console.error('獲取附件列表失敗:', error);
+    throw error;
+  }
 };
 
 export const downloadAttachment = async (attachmentId) => {
-  const response = await api.get(`/work-logs/attachments/${attachmentId}/download`, {
-    responseType: 'blob'
-  });
-  return response.data;
+  try {
+    const response = await api.get(`/attachments/${attachmentId}/download`, {
+      responseType: 'blob'
+    });
+    return response;
+  } catch (error) {
+    console.error('下載附件失敗:', error);
+    throw error;
+  }
 };
 
 export const deleteAttachment = async (attachmentId) => {
-  const response = await api.delete(`/work-logs/attachments/${attachmentId}`);
-  return response.data;
+  try {
+    const response = await api.delete(`/attachments/${attachmentId}`);
+    return response.data;
+  } catch (error) {
+    console.error('刪除附件失敗:', error);
+    throw error;
+  }
 };
 
 export const updateInventoryItems = async (items) => {
