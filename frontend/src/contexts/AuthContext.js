@@ -50,4 +50,33 @@ const login = async (username, password) => {
   } finally {
     setLoading(false);
   }
+};
+
+const isAdmin = () => {
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  return user.role === 'admin';
+};
+
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // ... existing code ...
+
+  return (
+    <AuthContext.Provider value={{
+      user,
+      token,
+      loading,
+      error,
+      login,
+      logout,
+      isAdmin,
+      // ... existing code ...
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }; 

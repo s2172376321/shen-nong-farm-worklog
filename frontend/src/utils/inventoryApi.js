@@ -6,21 +6,17 @@ export const fetchInventory = async () => {
   try {
     console.log('開始獲取庫存數據');
     const response = await api.get('/inventory', {
-      timeout: 10000,
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
+      timeout: 10000
     });
     
     console.log('獲取到的庫存數據:', response.data);
     
-    if (!Array.isArray(response.data)) {
-      console.error('返回的數據不是數組:', response.data);
-      return [];
+    if (response.data && response.data.success && Array.isArray(response.data.data)) {
+      return response.data.data;
     }
     
-    return response.data;
+    console.error('返回的數據格式不正確:', response.data);
+    throw new Error('返回的數據格式不正確');
   } catch (error) {
     console.error('獲取庫存失敗:', error);
     throw error;
@@ -34,7 +30,7 @@ export const fetchInventoryItems = fetchInventory;
 export const fetchLowStockItems = async () => {
   try {
     console.log('開始獲取低庫存警報');
-    const response = await api.get('/inventory/alerts/low-stock', {
+    const response = await api.get('/inventory/low-stock', {
       timeout: 8000
     });
     
@@ -115,11 +111,16 @@ export const updateInventoryItem = async (itemId, itemData) => {
 export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
   try {
     console.log(`調整庫存項目 ${itemId} 的數量:`, adjustmentData);
-    const response = await api.patch(`/inventory/${itemId}/quantity`, adjustmentData, {
+    const response = await api.post(`/inventory/${itemId}/adjust`, adjustmentData, {
       timeout: 10000
     });
     
     console.log('庫存調整成功:', response.data);
+    
+    // 清除相關快取
+    apiCache.clear('inventoryItems');
+    apiCache.clear('lowStockItems');
+    
     return response.data;
   } catch (error) {
     console.error('調整庫存失敗:', error);
@@ -266,23 +267,48 @@ export const fetchInventoryItemByProductId = async (productId) => {
 };
 
 // 匯入 CSV 文件
-export const importInventoryCSV = async (file) => {
+export const importInventoryCSV = async (formData) => {
   try {
-    console.log('開始上傳 CSV 文件:', file.name);
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await api.post('/inventory/import-csv', formData, {
+    console.log('開始上傳 CSV 文件');
+    const response = await api.post('/inventory/import', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       },
-      timeout: 30000
+      timeout: 30000 // 增加超時時間到 30 秒
     });
+    
+    console.log('CSV 導入響應:', response.data);
+    
+    // 檢查響應格式並標準化數據
+    if (response.data) {
+      if (response.data.success) {
+        console.log('CSV 導入成功:', response.data.message);
+        
+        // 標準化數據格式
+        const normalizedData = (response.data.data || []).map(item => ({
+          id: item.id || item.product_id || item['商品編號'],
+          product_id: item.product_id || item['商品編號'] || '',
+          product_name: item.product_name || item['商品名稱'] || '',
+          unit: item.unit || item['單位'] || '',
+          current_quantity: parseFloat(item.current_quantity || item['庫存數量'] || item['數量'] || 0),
+          category: item.category || item['類別'] || '其他',
+          min_quantity: parseFloat(item.min_quantity || item['最低庫存'] || 0)
+        })).filter(item => item.product_id || item.product_name);
 
-    console.log('CSV 上傳成功:', response.data);
-    return response.data;
+        return {
+          success: true,
+          message: response.data.message || '成功導入 CSV 數據',
+          data: normalizedData
+        };
+      } else {
+        console.error('CSV 導入失敗:', response.data.error);
+        throw new Error(response.data.error || '導入失敗');
+      }
+    } else {
+      throw new Error('伺服器返回的數據格式不正確');
+    }
   } catch (error) {
-    console.error('上傳 CSV 失敗:', error);
+    console.error('CSV 導入失敗:', error);
     throw error;
   }
 };
@@ -330,5 +356,77 @@ export const batchUpdateInventory = async (items) => {
     }
 
     throw new Error('無法連接到伺服器，請檢查網路連接');
+  }
+};
+
+// 獲取庫存統計數據
+export const fetchInventoryStats = async () => {
+  try {
+    console.log('開始獲取庫存統計數據');
+    
+    const response = await api.get('/inventory/statistics', {
+      timeout: 10000,
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    });
+    
+    console.log('獲取到的庫存統計數據:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('獲取庫存統計數據失敗:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
+    throw error;
+  }
+};
+
+// 導出庫存數據為 CSV
+export const exportInventoryCSV = async () => {
+  try {
+    console.log('開始導出庫存數據');
+    const response = await api.get('/inventory/export', {
+      responseType: 'blob',
+      timeout: 15000
+    });
+    
+    // 創建下載鏈接
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `inventory-export-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    
+    console.log('庫存數據導出成功');
+    return true;
+  } catch (error) {
+    console.error('導出庫存數據失敗:', error);
+    throw error;
+  }
+};
+
+// 刪除庫存項目
+export const deleteInventoryItem = async (itemId) => {
+  try {
+    console.log('開始刪除庫存項目:', itemId);
+    const response = await api.delete(`/inventory/${itemId}`, {
+      timeout: 5000
+    });
+    
+    console.log('刪除庫存項目成功:', response.data);
+    
+    // 清除相關快取
+    apiCache.clear('inventoryItems');
+    apiCache.clear('lowStockItems');
+    
+    return response.data;
+  } catch (error) {
+    console.error('刪除庫存項目失敗:', error);
+    throw new Error(error.response?.data?.message || '刪除庫存項目失敗，請稍後再試');
   }
 };

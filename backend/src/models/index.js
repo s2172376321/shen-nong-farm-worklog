@@ -1,9 +1,30 @@
+const db = require('../config/database');
 const User = require('./User');
+const WorkLog = require('./WorkLog');
 
-// 在這裡定義模型之間的關聯
-// 目前只有 User 模型，之後新增其他模型時再加入關聯
-const models = {
-  User
-};
+// 定義模型之間的關聯
+User.hasMany(WorkLog, { 
+  foreignKey: 'user_id',
+  as: 'workLogs'
+});
+WorkLog.belongsTo(User, { 
+  foreignKey: 'user_id',
+  as: 'user'
+});
 
-module.exports = models; 
+// 同步模型到數據庫
+db.sync({ 
+  force: true, // 刪除現有表並重新創建
+  logging: console.log
+})
+  .then(() => {
+    console.log('Database & tables created!');
+  })
+  .catch(err => {
+    console.error('Error syncing database:', err);
+  });
+
+module.exports = {
+  User,
+  WorkLog
+}; 

@@ -1,16 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const authRoutes = require('./auth');
-const adminRoutes = require('./admin');
-const noticesRoutes = require('./notices');
+const authRoutes = require('./authRoutes');
 const workLogRoutes = require('./workLogRoutes');
-const inventoryRoutes = require('./inventoryRoutes');
+const adminRoutes = require('./admin');
+const noticeRoutes = require('./noticeRoutes');
+const attachmentRoutes = require('./attachmentRoutes');
 
-// 註冊認證路由
+// 認證相關路由
 router.use('/auth', authRoutes);
-router.use('/admin', adminRoutes);
-router.use('/notices', noticesRoutes);
+
+// 工作日誌相關路由
 router.use('/work-logs', workLogRoutes);
-router.use('/inventory', inventoryRoutes);
+
+// 管理員相關路由
+router.use('/admin', adminRoutes);
+
+// 公告相關路由
+router.use('/notices', noticeRoutes);
+
+// 附件相關路由
+router.use('/attachments', attachmentRoutes);
 
 module.exports = router; 

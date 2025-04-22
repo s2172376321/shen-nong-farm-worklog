@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { fetchInventoryItems, fetchLowStockItems, fetchInventoryStats } from '../../utils/inventoryApi';
-import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert, message, Statistic, Row, Col } from 'antd';
+import { fetchInventoryItems, fetchLowStockItems, fetchInventoryStats, deleteInventoryItem } from '../../utils/inventoryApi';
+import { Button, Card, Table, Input, Tag, Typography, Space, Popover, Spin, Alert, message, Statistic, Row, Col, Modal } from 'antd';
+import { DeleteOutlined, ExclamationCircleOutlined, HomeOutlined } from '@ant-design/icons';
 import NewItemForm from './NewItemForm';
 import ScanItemModal from './ScanItemModal';
 import LowStockAlert from './LowStockAlert';
@@ -15,68 +16,44 @@ const { Text } = Typography;
 const InventoryDashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searchText, setSearchText] = useState('');
   const [inventoryItems, setInventoryItems] = useState([]);
   const [lowStockItems, setLowStockItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [showNewItemForm, setShowNewItemForm] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [searchText, setSearchText] = useState('');
-  const [filteredData, setFilteredData] = useState([]);
+  const [stats, setStats] = useState(null);
   const [syncStatus, setSyncStatus] = useState({ loading: false, message: null });
-  const [stats, setStats] = useState({
-    totalItems: 0,
-    totalValue: 0,
-    lowStockCount: 0
-  });
 
-  // 將 filterData 移到這裡，在 useEffect 之前
-  const filterData = useCallback(() => {
+  // 過濾數據
+  const getFilteredData = () => {
     if (!Array.isArray(inventoryItems)) {
       console.error('inventoryItems is not an array:', inventoryItems);
-      setFilteredData([]);
-      return;
+      return [];
     }
     
-    const searchContent = (searchText || '').toLowerCase().trim();
-    
-    if (!searchContent) {
-      setFilteredData([...inventoryItems]);
-      return;
-    }
-    
-    try {
-      const filtered = inventoryItems.filter(item => {
-        if (!item) return false;
-        
-        const searchFields = [
-          item.product_id,
-          item.product_name,
-          item.category,
-          item.unit,
-          item.description
-        ].filter(Boolean);
-        
-        return searchFields.some(field => 
-          String(field).toLowerCase().includes(searchContent)
-        );
-      });
+    const searchLower = searchText.toLowerCase();
+    return inventoryItems.filter(item => {
+      if (!item) return false;
       
-      setFilteredData(filtered);
-    } catch (error) {
-      console.error('Error filtering data:', error);
-      message.error('搜索過程中發生錯誤');
-      setFilteredData([...inventoryItems]);
-    }
-  }, [inventoryItems, searchText]);
+      const nameMatch = (item.product_name || '').toLowerCase().includes(searchLower);
+      const codeMatch = (item.product_id || '').toLowerCase().includes(searchLower);
+      
+      return nameMatch || codeMatch;
+    });
+  };
+
+  // 使用過濾後的數據
+  const displayData = getFilteredData();
   
   useEffect(() => {
     loadInventoryItems();
   }, []);
 
   useEffect(() => {
-    filterData();
-  }, [searchText, inventoryItems, filterData]);
+    // 當 searchText 或 inventoryItems 改變時，displayData 會自動更新
+  }, [searchText, inventoryItems]);
 
   const loadInventoryItems = async () => {
     try {
@@ -92,16 +69,29 @@ const InventoryDashboard = () => {
         throw new Error('返回的庫存數據格式不正確');
       }
       
-      setInventoryItems(itemsData);
-      setFilteredData(itemsData);
+      // 處理數據格式
+      const processedItems = itemsData.map(item => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        current_quantity: parseFloat(item.current_quantity),
+        unit: item.unit,
+        location: item.location,
+        category: item.category,
+        minimum_stock: parseFloat(item.minimum_stock),
+        description: item.description
+      })).filter(item => item.product_id || item.product_name);
       
-      if (Array.isArray(lowStockData)) {
-        setLowStockItems(lowStockData);
+      setInventoryItems(processedItems);
+      
+      // 處理低庫存數據
+      if (lowStockData && lowStockData.data && Array.isArray(lowStockData.data)) {
+        setLowStockItems(lowStockData.data);
       }
       
       setSyncStatus({ 
         loading: false, 
-        message: `同步完成! 總項目: ${itemsData.length}` 
+        message: `同步完成! 總項目: ${processedItems.length}` 
       });
       
       setTimeout(() => {
@@ -122,6 +112,26 @@ const InventoryDashboard = () => {
     return 'green';
   };
   
+  // 處理刪除確認
+  const handleDelete = async (record) => {
+    Modal.confirm({
+      title: '確認刪除',
+      icon: <ExclamationCircleOutlined />,
+      content: `確定要刪除 ${record.product_name} (${record.product_id}) 嗎？此操作無法撤銷。`,
+      okText: '確認',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteInventoryItem(record.id);
+          message.success('刪除成功');
+          loadInventoryItems(); // 重新加載數據
+        } catch (error) {
+          message.error(error.message || '刪除失敗');
+        }
+      }
+    });
+  };
+
   const columns = [
     {
       title: 'QR碼',
@@ -130,19 +140,21 @@ const InventoryDashboard = () => {
       render: (_, record) => (
         <Popover 
           content={
-            <div className="p-2">
+            <div style={{ padding: '8px' }}>
               <QRCodeSVG 
                 value={record.product_id}
                 size={128}
                 level="H"
                 includeMargin={true}
+                style={{ display: 'block' }}
               />
             </div>
           }
           title={`${record.product_name} (${record.product_id})`}
           trigger="click"
+          placement="right"
         >
-          <Button type="text" size="small">
+          <Button type="link" size="small">
             查看QR碼
           </Button>
         </Popover>
@@ -161,23 +173,6 @@ const InventoryDashboard = () => {
       width: 200,
     },
     {
-      title: '類別',
-      dataIndex: 'category',
-      key: 'category',
-      width: 100,
-      render: (category) => (
-        <Tag color={
-          category === '雞肉' ? 'gold' :
-          category === '豬肉' ? 'pink' :
-          category === '鴨肉' ? 'blue' :
-          category === '雞蛋' ? 'green' :
-          'default'
-        }>
-          {category}
-        </Tag>
-      ),
-    },
-    {
       title: '單位',
       dataIndex: 'unit',
       key: 'unit',
@@ -194,13 +189,30 @@ const InventoryDashboard = () => {
         </Text>
       ),
       sorter: (a, b) => a.current_quantity - b.current_quantity,
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 120,
+      render: (_, record) => (
+        <Space>
+          {user?.role === 'admin' && (
+            <Button
+              type="text"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDelete(record)}
+            >
+              刪除
+            </Button>
+          )}
+        </Space>
+      ),
     }
   ];
   
   const summary = (pageData) => {
     const totalItems = pageData.length;
-    const categories = [...new Set(pageData.map(item => item.category))];
-    const categoryCount = categories.length;
 
     return (
       <>
@@ -208,15 +220,6 @@ const InventoryDashboard = () => {
           <Table.Summary.Cell colSpan={5}>
             <Space direction="vertical">
               <Text>總商品數: {totalItems}</Text>
-              <Text>商品類別數: {categoryCount}</Text>
-              {categories.map(category => {
-                const count = pageData.filter(item => item.category === category).length;
-                return (
-                  <Text key={category}>
-                    {category}: {count} 項
-                  </Text>
-                );
-              })}
             </Space>
           </Table.Summary.Cell>
         </Table.Summary.Row>
@@ -240,7 +243,15 @@ const InventoryDashboard = () => {
   const loadStats = async () => {
     try {
       const response = await fetchInventoryStats();
-      setStats(response.data);
+      console.log('獲取到的統計數據:', response);
+      if (response.success && response.data) {
+        setStats({
+          total_items: response.data.length || 0,
+          low_stock_count: (response.data.filter(item => 
+            parseFloat(item.quantity) <= parseFloat(item.minimum_stock)
+          )).length || 0
+        });
+      }
     } catch (err) {
       console.error('載入統計數據失敗:', err);
       message.error('載入統計數據失敗');
@@ -249,7 +260,7 @@ const InventoryDashboard = () => {
 
   useEffect(() => {
     loadStats();
-  }, []);
+  }, [inventoryItems]); // 當庫存項目更新時重新計算統計
 
   if (loading) {
     return (
@@ -289,36 +300,38 @@ const InventoryDashboard = () => {
 
   return (
     <div className="inventory-dashboard">
-      <Card title="庫存管理">
+      <Card 
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>庫存管理</span>
+            <Button 
+              type="primary" 
+              onClick={() => navigate('/')}
+              icon={<HomeOutlined />}
+            >
+              返回主頁
+            </Button>
+          </div>
+        }
+      >
         <Space direction="vertical" style={{ width: '100%' }} size="large">
           {/* 統計數據卡片 */}
-          <Row gutter={16}>
-            <Col span={8}>
+          <Row gutter={[16, 16]}>
+            <Col span={12}>
               <Card>
                 <Statistic
                   title="總庫存項目"
-                  value={stats.totalItems}
+                  value={inventoryItems?.length || 0}
                   valueStyle={{ color: '#3f8600' }}
                 />
               </Card>
             </Col>
-            <Col span={8}>
-              <Card>
-                <Statistic
-                  title="庫存總值"
-                  value={stats.totalValue}
-                  precision={2}
-                  prefix="¥"
-                  valueStyle={{ color: '#cf1322' }}
-                />
-              </Card>
-            </Col>
-            <Col span={8}>
+            <Col span={12}>
               <Card>
                 <Statistic
                   title="低庫存商品"
-                  value={stats.lowStockCount}
-                  valueStyle={{ color: stats.lowStockCount > 0 ? '#cf1322' : '#3f8600' }}
+                  value={lowStockItems?.length || 0}
+                  valueStyle={{ color: (lowStockItems?.length || 0) > 0 ? '#cf1322' : '#3f8600' }}
                 />
               </Card>
             </Col>
@@ -329,7 +342,7 @@ const InventoryDashboard = () => {
               <Button type="primary" onClick={() => navigate('/inventory/list')}>
                 查看完整庫存清單
               </Button>
-              {user.role === 'admin' && (
+              {user?.role === 'admin' && (
                 <>
                   <Button onClick={() => setShowNewItemForm(true)}>
                     新增庫存項目
@@ -344,7 +357,7 @@ const InventoryDashboard = () => {
               )}
             </Space>
             <Search
-              placeholder="搜索商品名稱或類別"
+              placeholder="搜索商品名稱或編號"
               onSearch={value => setSearchText(value)}
               onChange={e => setSearchText(e.target.value)}
               allowClear
@@ -367,7 +380,7 @@ const InventoryDashboard = () => {
           )}
 
           <Table 
-            dataSource={filteredData}
+            dataSource={displayData}
             columns={columns}
             rowKey="id"
             loading={loading}

@@ -2,15 +2,20 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
 const { authenticate } = require('../middleware/authMiddleware');
-const adminMiddleware = require('../middleware/adminMiddleware');
+const { adminOnly } = require('../middleware/adminMiddleware');
 
 // 使用身份驗證和管理員權限中間件
 router.use(authenticate);
-router.use(adminMiddleware);
+router.use(adminOnly);
 
 // 獲取儀表板數據
 router.get('/dash', async (req, res) => {
   try {
+    console.log('收到儀表板數據請求:', {
+      userId: req.user.id,
+      userRole: req.user.role
+    });
+
     // 獲取用戶總數
     const userCountQuery = await db.query('SELECT COUNT(*) FROM users');
     const userCount = parseInt(userCountQuery.rows[0].count);
@@ -43,8 +48,15 @@ router.get('/dash', async (req, res) => {
       unreadNotices
     });
   } catch (error) {
-    console.error('獲取儀表板數據失敗:', error);
-    res.status(500).json({ error: '獲取數據失敗' });
+    console.error('獲取儀表板數據失敗:', {
+      error: error.message,
+      stack: error.stack,
+      user: req.user ? { id: req.user.id, role: req.user.role } : '未認證用戶'
+    });
+    res.status(500).json({ 
+      error: '獲取數據失敗',
+      message: process.env.NODE_ENV === 'development' ? error.message : '請稍後再試'
+    });
   }
 });
 

@@ -8,7 +8,8 @@ const AuthContext = createContext({
   login: () => {},
   loginWithGoogle: () => {},
   logout: () => {},
-  updateUser: () => {}
+  updateUser: () => {},
+  isAdmin: () => false
 });
 
 export const AuthProvider = ({ children }) => {
@@ -25,6 +26,11 @@ export const AuthProvider = ({ children }) => {
     };
     console.log(`[Auth] ${message}`, data);
     setAuthLogs(prev => [...prev, logEntry]);
+  };
+
+  // 檢查是否為管理員
+  const isAdmin = () => {
+    return user?.role === 'admin';
   };
 
   // 根據角色重定向
@@ -206,6 +212,7 @@ export const AuthProvider = ({ children }) => {
       loginWithGoogle,
       logout,
       updateUser,
+      isAdmin,
       authLogs // 添加日誌到 context
     }}>
       {children}

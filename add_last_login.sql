@@ -1,0 +1,3 @@
+-- 添加 last_login 欄位
+ALTER TABLE users 
+ADD COLUMN last_login TIMESTAMP WITH TIME ZONE DEFAULT NULL; 

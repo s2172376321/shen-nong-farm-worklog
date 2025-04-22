@@ -21,7 +21,7 @@ const RegisterPage = () => {
     const checkUsername = async () => {
       if (formData.username.length >= 4) {
         try {
-          const response = await fetch(`/api/users/check-username/${formData.username}`);
+          const response = await fetch(`/users/check-username/${formData.username}`);
           const data = await response.json();
           setUsernameAvailable(data.available);
         } catch (error) {

@@ -1,70 +1,38 @@
 const db = require('../config/database');
-
-// 使用內存存儲工作日誌
-const workLogs = new Map();
-
-// 生成測試數據
-const generateTestWorkLogs = () => {
-  const testWorkLog = {
-    id: 'aa032',
-    userId: '1',
-    username: '1224',
-    location: '小空地01',
-    crop: '(3)-種植',
-    details: '無',
-    harvestQuantity: 30.00,
-    productCode: '280700002 - A菜',
-    startTime: '07:30',
-    endTime: '09:00',
-    status: 'pending',
-    createdAt: new Date('2025/3/25'),
-    reviewedBy: null,
-    reviewedAt: null
-  };
-  workLogs.set(testWorkLog.id, testWorkLog);
-  console.log('初始化測試數據完成:', testWorkLog);
-};
-
-// 初始化測試數據
-generateTestWorkLogs();
+const { WorkLog } = require('../models');
 
 const WorkLogController = {
   // 創建工作日誌
   async createWorkLog(req, res) {
     try {
       console.log('開始創建工作日誌...');
-      const { location, crop, startTime, endTime, harvestQuantity = 0, details = '' } = req.body;
-      const userId = req.user.id;
-      const username = req.user.username;
+      const { location_code, position_name, work_category_name, start_time, end_time, harvest_quantity = 0, details = '' } = req.body;
+      const user_id = req.user.id;
 
       console.log('工作日誌數據:', {
-        location,
-        crop,
-        startTime,
-        endTime,
-        harvestQuantity,
+        location_code,
+        position_name,
+        work_category_name,
+        start_time,
+        end_time,
+        harvest_quantity,
         details,
-        userId,
-        username
+        user_id
       });
 
-      const workLog = {
+      const workLog = await WorkLog.create({
         id: Date.now().toString(),
-        userId,
-        username,
-        location,
-        crop,
-        startTime,
-        endTime,
-        harvestQuantity,
+        user_id,
+        location_code,
+        position_name,
+        work_category_name,
+        start_time,
+        end_time,
+        harvest_quantity,
         details,
-        status: 'pending',
-        createdAt: new Date(),
-        reviewedBy: null,
-        reviewedAt: null
-      };
+        status: 'pending'
+      });
 
-      workLogs.set(workLog.id, workLog);
       console.log('工作日誌創建成功:', workLog);
       res.status(201).json(workLog);
     } catch (error) {
@@ -88,7 +56,9 @@ const WorkLogController = {
   async getAllWorkLogs(req, res) {
     try {
       console.log('開始獲取所有工作日誌...');
-      const logs = Array.from(workLogs.values());
+      const logs = await WorkLog.findAll({
+        order: [['created_at', 'DESC']]
+      });
       console.log(`成功獲取 ${logs.length} 條工作日誌`);
       res.json(logs);
     } catch (error) {
@@ -102,10 +72,16 @@ const WorkLogController = {
     try {
       const { userId, workDate } = req.params;
       const date = new Date(workDate);
-      const logs = Array.from(workLogs.values()).filter(log => 
-        log.userId === userId && 
-        log.createdAt.toDateString() === date.toDateString()
-      );
+      const logs = await WorkLog.findAll({
+        where: {
+          user_id: userId,
+          created_at: {
+            [db.Sequelize.Op.gte]: date,
+            [db.Sequelize.Op.lt]: new Date(date.getTime() + 24 * 60 * 60 * 1000)
+          }
+        },
+        order: [['created_at', 'ASC']]
+      });
       res.json(logs);
     } catch (error) {
       console.error('獲取用戶日誌失敗:', error);
@@ -115,71 +91,170 @@ const WorkLogController = {
 
   // 批量審核工作日誌
   async batchReviewWorkLogs(req, res) {
-    try {
-      const { workLogIds, status } = req.body;
-      const adminId = req.user.id;
-      const reviewedAt = new Date();
+    const { workLogIds, status } = req.body;
+    const reviewerId = req.user.id;
 
-      console.log('開始批量審核工作日誌:', {
+    try {
+      // 驗證輸入
+      if (!workLogIds || !Array.isArray(workLogIds) || workLogIds.length === 0) {
+        return res.status(400).json({ 
+          message: '請提供有效的工作日誌ID列表'
+        });
+      }
+
+      if (!['pending', 'approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ 
+          message: '請提供有效的審核狀態'
+        });
+      }
+
+      // 更新工作日誌
+      const updateQuery = `
+        UPDATE work_logs 
+        SET status = $1, 
+            reviewer_id = $2,
+            reviewed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ANY($3::uuid[])
+        RETURNING id, status, reviewed_at, reviewer_id,
+                start_time, end_time, location_code, position_name,
+                work_category_name, details, harvest_quantity,
+                product_name, product_quantity, user_id
+      `;
+
+      const values = [status, reviewerId, workLogIds];
+      const result = await db.query(updateQuery, values);
+      
+      console.log(`批量審核完成，更新了 ${result.rows.length} 條記錄`);
+      
+      res.json({ 
+        message: `成功批量審核 ${result.rows.length} 條工作日誌`,
+        workLogs: result.rows
+      });
+    } catch (error) {
+      console.error('批量審核工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack,
         workLogIds,
         status,
-        adminId,
-        reviewedAt
+        reviewerId
       });
-
-      const updatedLogs = workLogIds.map(id => {
-        const log = workLogs.get(id);
-        if (log) {
-          console.log(`正在審核工作日誌 ${id}...`);
-          const updatedLog = {
-            ...log,
-            status,
-            reviewedBy: adminId,
-            reviewedAt
-          };
-          workLogs.set(id, updatedLog);
-          console.log(`工作日誌 ${id} 審核完成:`, updatedLog);
-          return updatedLog;
-        }
-        console.log(`找不到工作日誌 ${id}`);
-        return null;
-      }).filter(Boolean);
-
-      console.log(`批量審核完成，共處理 ${updatedLogs.length} 條記錄`);
-      res.json(updatedLogs);
-    } catch (error) {
-      console.error('批量審核失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: error.message
+      });
     }
   },
 
   // 搜索工作日誌
   async searchWorkLogs(req, res) {
     try {
-      const { location, crop, startDate, endDate, status } = req.query;
-      let logs = Array.from(workLogs.values());
+      const { location, crop, startDate, endDate, status, page = 1, limit = 20 } = req.query;
+      const userId = req.user.id;
+      
+      console.log('收到搜索請求:', {
+        location, crop, startDate, endDate, status, page, limit,
+        userId, userRole: req.user?.role
+      });
 
+      // 建立基本查詢
+      let queryText = `
+        SELECT wl.id, wl.user_id, wl.location_code, wl.work_category_name, 
+               wl.start_time, wl.end_time, wl.details, 
+               wl.status, wl.created_at, u.username
+        FROM work_logs wl
+        JOIN users u ON wl.user_id = u.id
+        WHERE 1=1
+      `;
+      
+      const values = [];
+      let paramIndex = 1;
+
+      // 如果不是管理員，只能查看自己的工作日誌
+      if (!req.user.role || req.user.role !== 'admin') {
+        queryText += ` AND wl.user_id = $${paramIndex}`;
+        values.push(userId);
+        paramIndex++;
+      }
+
+      // 添加位置過濾
       if (location) {
-        logs = logs.filter(log => log.location.includes(location));
-      }
-      if (crop) {
-        logs = logs.filter(log => log.crop.includes(crop));
-      }
-      if (startDate && endDate) {
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        logs = logs.filter(log => 
-          log.createdAt >= start && log.createdAt <= end
-        );
-      }
-      if (status) {
-        logs = logs.filter(log => log.status === status);
+        queryText += ` AND wl.location_code ILIKE $${paramIndex}`;
+        values.push(`%${location}%`);
+        paramIndex++;
       }
 
-      res.json(logs);
+      // 添加作物過濾
+      if (crop) {
+        queryText += ` AND wl.work_category_name ILIKE $${paramIndex}`;
+        values.push(`%${crop}%`);
+        paramIndex++;
+      }
+
+      // 添加狀態過濾
+      if (status) {
+        queryText += ` AND wl.status = $${paramIndex}`;
+        values.push(status);
+        paramIndex++;
+      }
+
+      // 添加日期過濾
+      if (startDate && endDate) {
+        queryText += ` AND DATE(wl.created_at) BETWEEN $${paramIndex} AND $${paramIndex + 1}`;
+        values.push(startDate, endDate);
+        paramIndex += 2;
+      } else if (startDate) {
+        queryText += ` AND DATE(wl.created_at) = $${paramIndex}`;
+        values.push(startDate);
+        paramIndex++;
+      }
+
+      // 添加排序
+      queryText += ' ORDER BY wl.created_at DESC';
+      
+      // 添加分頁
+      const offset = (page - 1) * limit;
+      queryText += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      values.push(limit, offset);
+
+      console.log('執行 SQL:', queryText);
+      console.log('參數:', values);
+
+      // 執行查詢
+      const result = await db.query(queryText, values);
+      
+      // 獲取總記錄數
+      const countQuery = queryText.replace(/SELECT.*?FROM/, 'SELECT COUNT(*) FROM').split('ORDER BY')[0];
+      const countResult = await db.query(countQuery, values.slice(0, -2));
+      const totalCount = parseInt(countResult.rows[0].count);
+      
+      // 標準化時間格式
+      const formattedResults = result.rows.map(log => ({
+        ...log,
+        start_time: log.start_time ? log.start_time.substring(0, 5) : log.start_time,
+        end_time: log.end_time ? log.end_time.substring(0, 5) : log.end_time
+      }));
+      
+      res.json({
+        data: formattedResults,
+        pagination: {
+          total: totalCount,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(totalCount / limit)
+        }
+      });
     } catch (error) {
-      console.error('搜索工作日誌失敗:', error);
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+      console.error('搜索工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack
+      });
+      
+      res.status(500).json({ 
+        message: '搜索工作日誌失敗，請稍後再試',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   },
 
@@ -189,39 +264,86 @@ const WorkLogController = {
     const { status } = req.body;
     
     try {
-      console.log(`審核工作日誌 - ID: ${workLogId}, 狀態: ${status}`);
-      
-      // 檢查工作日誌是否存在
-      const workLog = workLogs.get(workLogId);
-      if (!workLog) {
-        console.log(`工作日誌不存在 - ID: ${workLogId}`);
-        return res.status(404).json({ error: '工作日誌不存在' });
-      }
-      
-      // 更新工作日誌狀態
-      const updatedWorkLog = {
-        ...workLog,
+      console.log('工作日誌審核請求:', {
+        workLogId,
         status,
-        reviewedAt: new Date().toISOString(),
-        reviewedBy: req.user.id
-      };
-      
-      // 保存更新後的工作日誌
-      workLogs.set(workLogId, updatedWorkLog);
-      
-      console.log(`工作日誌審核成功 - ID: ${workLogId}, 新狀態: ${status}`);
-      
-      // 返回更新後的工作日誌，使用前端期望的格式
-      return res.json({
-        workLog: {
-          ...updatedWorkLog,
-          id: workLogId  // 確保 ID 也包含在響應中
-        }
+        reviewerId: req.user.id,
+        timestamp: new Date().toISOString()
+      });
+
+      // 驗證狀態
+      if (!['pending', 'approved', 'rejected'].includes(status)) {
+        return res.status(400).json({
+          message: '無效的審核狀態',
+          status
+        });
+      }
+  
+      // 檢查工作日誌是否存在
+      const workLog = await WorkLog.findOne({
+        where: { id: workLogId },
+        attributes: ['id', 'status', 'user_id', 'start_time', 'end_time', 
+                   'location_code', 'position_name', 'work_category_name',
+                   'details', 'harvest_quantity', 'product_name', 'product_quantity']
       });
       
+      if (!workLog) {
+        return res.status(404).json({ 
+          message: '工作日誌不存在',
+          workLogId
+        });
+      }
+      
+      console.log(`找到工作日誌，當前狀態: ${workLog.status}`);
+  
+      // 更新工作日誌狀態
+      const [updatedCount, updatedWorkLogs] = await WorkLog.update(
+        {
+          status: status,
+          reviewer_id: req.user.id,
+          reviewed_at: new Date(),
+          updated_at: new Date()
+        },
+        {
+          where: { id: workLogId },
+          returning: true,
+          attributes: ['id', 'status', 'reviewed_at', 'reviewer_id',
+                      'start_time', 'end_time', 'location_code', 'position_name',
+                      'work_category_name', 'details', 'harvest_quantity',
+                      'product_name', 'product_quantity', 'user_id']
+        }
+      );
+      
+      if (updatedCount === 0) {
+        throw new Error('更新工作日誌失敗');
+      }
+
+      const updatedWorkLog = updatedWorkLogs[0];
+      
+      console.log('工作日誌審核成功:', {
+        workLogId: updatedWorkLog.id,
+        newStatus: updatedWorkLog.status,
+        reviewedAt: updatedWorkLog.reviewed_at,
+        reviewerId: updatedWorkLog.reviewer_id
+      });
+      
+      res.json({ 
+        message: '工作日誌審核成功',
+        workLog: updatedWorkLog
+      });
     } catch (error) {
-      console.error('審核工作日誌時發生錯誤:', error);
-      return res.status(500).json({ error: '審核工作日誌失敗' });
+      console.error('審核工作日誌失敗:', {
+        error: error.message,
+        stack: error.stack,
+        workLogId,
+        status,
+        reviewerId: req.user.id
+      });
+      
+      res.status(500).json({ 
+        message: '伺服器錯誤，請稍後再試',
+        error: error.message
+      });
     }
   },
 
@@ -230,13 +352,16 @@ const WorkLogController = {
     try {
       const { date, status } = req.query;
       const queryDate = new Date(date);
-      let logs = Array.from(workLogs.values()).filter(log => 
-        log.createdAt.toDateString() === queryDate.toDateString()
-      );
-
-      if (status) {
-        logs = logs.filter(log => log.status === status);
-      }
+      const logs = await WorkLog.findAll({
+        where: {
+          created_at: {
+            [db.Sequelize.Op.gte]: queryDate,
+            [db.Sequelize.Op.lt]: new Date(queryDate.getTime() + 24 * 60 * 60 * 1000)
+          },
+          status: status
+        },
+        order: [['created_at', 'ASC']]
+      });
 
       res.json(logs);
     } catch (error) {
@@ -249,12 +374,13 @@ const WorkLogController = {
   async getLocationCrops(req, res) {
     try {
       const { positionCode } = req.params;
-      const crops = Array.from(workLogs.values())
-        .filter(log => log.location === positionCode)
-        .map(log => log.crop)
-        .filter((crop, index, self) => self.indexOf(crop) === index)
-        .sort();
-      res.json(crops);
+      const crops = await WorkLog.findAll({
+        attributes: ['work_category_name'],
+        where: { location_code: positionCode },
+        group: ['work_category_name'],
+        order: [['work_category_name', 'ASC']]
+      });
+      res.json(crops.map(crop => crop.work_category_name));
     } catch (error) {
       console.error('獲取位置作物列表失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
@@ -265,16 +391,19 @@ const WorkLogController = {
   async getTodayHour(req, res) {
     try {
       const today = new Date();
-      const logs = Array.from(workLogs.values()).filter(log => 
-        log.createdAt.toDateString() === today.toDateString()
-      );
+      const logs = await WorkLog.findAll({
+        where: {
+          created_at: {
+            [db.Sequelize.Op.gte]: today,
+            [db.Sequelize.Op.lt]: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+          }
+        },
+        attributes: [
+          [db.Sequelize.fn('SUM', db.Sequelize.col('harvest_quantity')), 'totalHours']
+        ]
+      });
 
-      const totalHours = logs.reduce((total, log) => {
-        const start = new Date(`1970-01-01T${log.startTime}`);
-        const end = new Date(`1970-01-01T${log.endTime}`);
-        const hours = (end - start) / (1000 * 60 * 60);
-        return total + hours;
-      }, 0);
+      const totalHours = logs.length > 0 ? logs[0].dataValues.totalHours : 0;
 
       res.json({ totalHours });
     } catch (error) {

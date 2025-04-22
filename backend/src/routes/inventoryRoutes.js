@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const InventoryController = require('../controllers/inventoryController');
-const { authenticate } = require('../middleware/auth');
+const { authenticateToken } = require('../middleware/auth');
 const { adminOnly } = require('../middleware/admin');
 
 // 配置 multer，添加文件大小限制
@@ -40,54 +40,71 @@ const handleErrors = (err, req, res, next) => {
 };
 
 // 同步產品到庫存
-router.post('/sync-from-products', authenticate, adminOnly, async (req, res, next) => {
-  try {
-    await InventoryController.syncFromProducts(req, res);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// 匯入 CSV 數據
-router.post('/import-csv', authenticate, adminOnly, upload.single('file'), (req, res, next) => {
-  InventoryController.importCSV(req, res).catch(next);
-});
-
-// 獲取庫存警報（需要放在具體 ID 路由之前）
-router.get('/alerts/low-stock', authenticate, async (req, res, next) => {
-  try {
-    await InventoryController.getInventoryAlerts(req, res);
-  } catch (error) {
-    next(error);
-  }
+router.post('/sync-from-products', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.syncFromProducts(req, res).catch(next);
 });
 
 // 獲取所有庫存項目
-router.get('/', authenticate, InventoryController.getAllItems);
+router.get('/', authenticateToken, (req, res, next) => {
+  InventoryController.getAllItems(req, res).catch(next);
+});
+
+// 獲取所有庫存項目（別名）
+router.get('/list', authenticateToken, (req, res, next) => {
+  InventoryController.getAllItems(req, res).catch(next);
+});
+
+// 獲取低庫存警報
+router.get('/low-stock', authenticateToken, (req, res, next) => {
+  InventoryController.getLowStockAlerts(req, res).catch(next);
+});
+
+// 獲取統計數據
+router.get('/statistics', authenticateToken, (req, res, next) => {
+  InventoryController.getInventoryStats(req, res).catch(next);
+});
+
+// 獲取庫存警報
+router.get('/alerts', authenticateToken, (req, res, next) => {
+  InventoryController.getInventoryAlerts(req, res).catch(next);
+});
 
 // 創建庫存項目
-router.post('/', authenticate, adminOnly, InventoryController.createItem);
+router.post('/', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.createItem(req, res).catch(next);
+});
 
-// 獲取單個庫存項目
-router.get('/:id', authenticate, InventoryController.getItemById);
-
-// 更新庫存項目
-router.put('/:id', authenticate, adminOnly, InventoryController.updateItem);
-
-// 刪除庫存項目
-router.delete('/:id', authenticate, adminOnly, InventoryController.deleteItem);
-
-// 調整庫存數量
-router.patch('/:id/quantity', authenticate, InventoryController.adjustQuantity);
+// 匯入 CSV 數據
+router.post('/import', authenticateToken, adminOnly, upload.single('file'), (req, res, next) => {
+  InventoryController.importCSV(req, res).catch(next);
+});
 
 // 批量更新庫存項目
-router.post('/batch-update', authenticate, adminOnly, InventoryController.batchUpdate);
+router.put('/batch', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.batchUpdate(req, res).catch(next);
+});
 
-// 報告和統計
-router.get('/reports/low-stock', authenticate, InventoryController.getLowStockAlerts);
-router.get('/reports/statistics', authenticate, InventoryController.getStatistics);
+// 獲取單個庫存項目
+router.get('/:id', authenticateToken, (req, res, next) => {
+  InventoryController.getItemById(req, res).catch(next);
+});
 
-// 註冊錯誤處理中間件
+// 更新庫存項目
+router.put('/:id', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.updateItem(req, res).catch(next);
+});
+
+// 刪除庫存項目
+router.delete('/:id', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.deleteItem(req, res).catch(next);
+});
+
+// 調整庫存數量
+router.post('/:id/adjust', authenticateToken, adminOnly, (req, res, next) => {
+  InventoryController.adjustQuantity(req, res).catch(next);
+});
+
+// 使用錯誤處理中間件
 router.use(handleErrors);
 
 module.exports = router; 

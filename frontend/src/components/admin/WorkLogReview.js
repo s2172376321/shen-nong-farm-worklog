@@ -1,7 +1,7 @@
 // 位置：frontend/src/components/admin/WorkLogReview.js
 import React, { useState, useEffect } from 'react';
 import { Button } from '../ui';
-import { searchWorkLogs, reviewWorkLog, getWorkLogAttachments, uploadWorkLogAttachment, downloadWorkLogAttachment, deleteWorkLogAttachment } from '../../utils/api';
+import { searchWorkLogs, reviewWorkLog, batchReviewWorkLogs, getWorkLogAttachments, uploadWorkLogAttachment, downloadWorkLogAttachment, deleteWorkLogAttachment } from '../../utils/api';
 import UserDailyWorkLogs from '../worklog/UserDailyWorkLogs';
 import { message } from 'antd';
 
@@ -174,7 +174,7 @@ const WorkLogReview = () => {
     return timeString.substring(0, 5);
   };
 
-  // 審核工作日誌 - 修改為更新本地狀態而不是移除
+  // 審核工作日誌
   const handleReviewWorkLog = async (workLogId, status) => {
     try {
       setLoading(true);
@@ -196,10 +196,13 @@ const WorkLogReview = () => {
         )
       );
 
-      message.success('工作日誌審核成功');
+      // 重新應用篩選
+      applyFilters();
+
+      message.success(response.message || '工作日誌審核成功');
     } catch (error) {
       console.error('審核工作日誌失敗:', error);
-      message.error(error.message || '審核工作日誌失敗');
+      message.error(error.response?.data?.message || error.message || '審核工作日誌失敗');
     } finally {
       setLoading(false);
     }
@@ -208,32 +211,43 @@ const WorkLogReview = () => {
   // 批量審核同一組的所有工作日誌
   const handleBatchReview = async (groupKey, status) => {
     try {
+      setLoading(true);
       const group = groupedWorkLogs[groupKey];
-      
-      // 依次審核該組中的所有工作日誌
-      for (const log of group.logs) {
-        await reviewWorkLog(log.id, status);
+      if (!group || !group.logs || group.logs.length === 0) {
+        throw new Error('沒有找到要審核的工作日誌');
       }
+
+      const workLogIds = group.logs.map(log => log.id);
+      console.log('開始批量審核工作日誌:', { groupKey, status, workLogIds });
       
-      // 更新本地狀態 - 修改審核狀態
-      const updatedAllLogs = allWorkLogs.map(log => {
-        const logDate = new Date(log.created_at).toLocaleDateString();
-        const logGroupKey = `${log.user_id}_${logDate}`;
-        
-        if (logGroupKey === groupKey) {
-          return { ...log, status };
-        }
-        return log;
+      const response = await batchReviewWorkLogs(workLogIds, status);
+      console.log('批量審核響應:', response);
+
+      if (!response || !response.workLogs) {
+        throw new Error('批量審核響應格式不正確');
+      }
+
+      // 更新本地狀態
+      setAllWorkLogs(prevLogs => {
+        const updatedLogs = [...prevLogs];
+        response.workLogs.forEach(updatedLog => {
+          const index = updatedLogs.findIndex(log => log.id === updatedLog.id);
+          if (index !== -1) {
+            updatedLogs[index] = { ...updatedLogs[index], ...updatedLog };
+          }
+        });
+        return updatedLogs;
       });
-      
-      setAllWorkLogs(updatedAllLogs);
-      
+
       // 重新應用篩選
-      applyFilters(updatedAllLogs);
-      
-      setError(null);
-    } catch (err) {
-      setError('批量審核工作日誌失敗');
+      applyFilters();
+
+      message.success(response.message || '批量審核成功');
+    } catch (error) {
+      console.error('批量審核失敗:', error);
+      message.error(error.response?.data?.message || error.message || '批量審核失敗');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -451,10 +465,19 @@ const WorkLogReview = () => {
                         e.stopPropagation();
                         const userId = groupedWorkLogs[groupKey].userId;
                         const dateStr = groupedWorkLogs[groupKey].date;
-                        const dateParts = dateStr.split('/');
-                        // 確保日期格式為 YYYY-MM-DD
-                        const formattedDate = new Date(parseInt('20' + dateParts[2]), parseInt(dateParts[0]) - 1, parseInt(dateParts[1])).toISOString().split('T')[0];
-                        handleViewUserLogs(userId, formattedDate);
+                        try {
+                          // 將日期字符串轉換為 Date 對象
+                          const date = new Date(dateStr);
+                          if (isNaN(date.getTime())) {
+                            throw new Error('無效的日期格式');
+                          }
+                          // 使用 YYYY-MM-DD 格式
+                          const formattedDate = date.toISOString().split('T')[0];
+                          handleViewUserLogs(userId, formattedDate);
+                        } catch (error) {
+                          console.error('日期處理錯誤:', error);
+                          message.error('日期格式無效，請檢查數據');
+                        }
                       }}
                       className="px-2 py-1 text-sm bg-blue-600 hover:bg-blue-700 mr-2"
                     >

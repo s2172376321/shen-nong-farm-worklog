@@ -13,21 +13,37 @@ router.get('/', InventoryController.getAllItems);
 // 獲取低庫存項目
 router.get('/low-stock', InventoryController.getLowStockItems);
 
+// 獲取庫存統計
+router.get('/statistics', InventoryController.getInventoryStats);
+
 // 獲取庫存交易歷史
 router.get('/transactions', InventoryController.getTransactionHistory);
 
 // 透過產品ID獲取庫存項目
 router.get('/product/:productId', InventoryController.getItemByProductId);
 
+// 從工作日誌同步庫存消耗
+router.post('/sync-from-worklog/:workLogId', 
+  authMiddleware.adminOnly, 
+  InventoryController.syncFromWorkLog
+);
+
+// 批量更新产品從產品列表
+router.post('/sync-from-products', 
+  authMiddleware.adminOnly, 
+  InventoryController.syncFromProductList
+);
+
+// 導出庫存數據為 CSV
+router.get('/export',
+  authMiddleware.adminOnly,
+  InventoryController.exportToCSV
+);
+
+// 以下是帶有動態參數的路由，放在最後
+
 // 獲取單一庫存項目詳情
 router.get('/:itemId', InventoryController.getItemDetails);
-
-// 管理員權限路由
-// 創建新庫存項目
-router.post('/', 
-  authMiddleware.adminOnly, 
-  InventoryController.createItem
-);
 
 // 更新庫存項目
 router.put('/:itemId',
@@ -46,16 +62,11 @@ router.post('/:itemId/adjust',
   InventoryController.adjustQuantity
 );
 
-// 從工作日誌同步庫存消耗
-router.post('/sync-from-worklog/:workLogId', 
+// 管理員權限路由
+// 創建新庫存項目
+router.post('/', 
   authMiddleware.adminOnly, 
-  InventoryController.syncFromWorkLog
-);
-
-// 批量更新产品從產品列表
-router.post('/sync-from-products', 
-  authMiddleware.adminOnly, 
-  InventoryController.syncFromProductList
+  InventoryController.createItem
 );
 
 module.exports = router;

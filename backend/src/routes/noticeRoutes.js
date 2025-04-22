@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
+const { adminOnly } = require('../middleware/admin');
 
 // 使用內存存儲通知信息
 const notices = new Map();
@@ -126,6 +127,67 @@ router.post('/:id/read', authenticateToken, (req, res) => {
   } catch (error) {
     console.error('標記通知為已讀失敗:', error);
     res.status(500).json({ error: '標記通知為已讀失敗' });
+  }
+});
+
+// 獲取未讀公告數量
+router.get('/unread', authenticateToken, async (req, res) => {
+  try {
+    // 這裡先返回模擬數據
+    res.json({
+      unreadCount: 0,
+      notices: []
+    });
+  } catch (error) {
+    console.error('獲取未讀公告數量失敗:', error);
+    res.status(500).json({
+      success: false,
+      message: '獲取未讀公告數量失敗',
+      error: error.message
+    });
+  }
+});
+
+// 獲取所有公告
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    // 這裡先返回模擬數據
+    res.json({
+      notices: [],
+      total: 0
+    });
+  } catch (error) {
+    console.error('獲取公告列表失敗:', error);
+    res.status(500).json({
+      success: false,
+      message: '獲取公告列表失敗',
+      error: error.message
+    });
+  }
+});
+
+// 創建公告
+router.post('/', authenticateToken, adminOnly, async (req, res) => {
+  try {
+    const { title, content } = req.body;
+    // 這裡先返回模擬數據
+    res.status(201).json({
+      success: true,
+      notice: {
+        id: Date.now(),
+        title,
+        content,
+        createdAt: new Date(),
+        createdBy: req.user.id
+      }
+    });
+  } catch (error) {
+    console.error('創建公告失敗:', error);
+    res.status(500).json({
+      success: false,
+      message: '創建公告失敗',
+      error: error.message
+    });
   }
 });
 

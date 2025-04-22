@@ -10,7 +10,7 @@ import NoticeBoard from '../common/NoticeBoard';
 import ChangePassword from '../user/ChangePassword';
 
 const AdminDashboard = () => {
-  const { user: authUser, logout } = useAuth();
+  const { user: authUser, logout, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState(null);
   const [stats, setStats] = useState({
@@ -21,6 +21,13 @@ const AdminDashboard = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // 檢查用戶權限
+  useEffect(() => {
+    if (!isAdmin()) {
+      navigate('/');
+    }
+  }, [isAdmin, navigate]);
 
   // 模擬用戶數據（當實際用戶數據不可用時）
   const mockUser = {

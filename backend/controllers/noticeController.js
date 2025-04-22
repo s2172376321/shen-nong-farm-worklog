@@ -59,8 +59,8 @@ async createNotice(req, res) {
         SELECT n.*, u.username as author_name,
           CASE WHEN nr.id IS NULL THEN false ELSE true END as is_read
         FROM notices n
-        JOIN users u ON n.author_id = u.id
-        LEFT JOIN notice_reads nr ON n.id = nr.notice_id AND nr.user_id = $1
+        JOIN users u ON n.author_id::uuid = u.id::uuid
+        LEFT JOIN notice_reads nr ON n.id::uuid = nr.notice_id::uuid AND nr.user_id::uuid = $1::uuid
         WHERE (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
         ORDER BY n.created_at DESC
       `;
@@ -175,7 +175,7 @@ async createNotice(req, res) {
     }
   },
 
-  // 取得未讀公告數量
+  // 獲取未讀公告數量
   async getUnreadCount(req, res) {
     const userId = req.user.id;
     
@@ -183,7 +183,7 @@ async createNotice(req, res) {
       const query = `
         SELECT COUNT(*) as unread_count
         FROM notices n
-        LEFT JOIN notice_reads nr ON n.id = nr.notice_id AND nr.user_id = $1
+        LEFT JOIN notice_reads nr ON n.id::uuid = nr.notice_id::uuid AND nr.user_id::uuid = $1::uuid
         WHERE nr.id IS NULL
         AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
       `;
@@ -195,6 +195,30 @@ async createNotice(req, res) {
       });
     } catch (error) {
       console.error('取得未讀公告數量失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+    }
+  },
+
+  // 獲取未讀公告
+  async getUnreadNotices(req, res) {
+    const userId = req.user.id;
+    
+    try {
+      const query = `
+        SELECT n.*, u.username as author_name
+        FROM notices n
+        JOIN users u ON n.author_id::uuid = u.id::uuid
+        LEFT JOIN notice_reads nr ON n.id::uuid = nr.notice_id::uuid AND nr.user_id::uuid = $1::uuid
+        WHERE nr.id IS NULL
+        AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
+        ORDER BY n.created_at DESC
+      `;
+
+      const result = await db.query(query, [userId]);
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error('取得未讀公告失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   }

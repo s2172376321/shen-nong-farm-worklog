@@ -2,6 +2,13 @@
 const db = require('../config/database');
 const bcrypt = require('bcryptjs');
 
+// 用户名格式验证函数
+const validateUsername = (username) => {
+  // 允许字母、数字、下划线和连字符
+  const usernameRegex = /^[a-zA-Z0-9_.-]+$/;
+  return usernameRegex.test(username);
+};
+
 const UserController = {
   // 取得所有使用者
   async getAllUsers(req, res) {
@@ -43,6 +50,13 @@ const UserController = {
     } = req.body;
 
     try {
+      // 验证用户名格式
+      if (!validateUsername(username)) {
+        return res.status(400).json({ 
+          message: '用户名只能包含英文字母、数字、下划线和连字符' 
+        });
+      }
+
       // 檢查使用者帳號是否已存在
       const existUserQuery = await db.query(
         'SELECT * FROM users WHERE username = $1', 
@@ -112,6 +126,13 @@ const UserController = {
     } = req.body;
 
     try {
+      // 如果要更新 username，验证格式
+      if (username && !validateUsername(username)) {
+        return res.status(400).json({ 
+          message: '用户名只能包含英文字母、数字、下划线和连字符' 
+        });
+      }
+
       // 如果要更新 email，檢查是否與其他使用者重複
       if (email) {
         const existEmailQuery = await db.query(

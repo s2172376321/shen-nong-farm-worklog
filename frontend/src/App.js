@@ -1,6 +1,6 @@
 // 位置：frontend/src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { ApiStatusProvider } from './context/ApiStatusProvider';
 
@@ -17,6 +17,22 @@ import InventoryDashboard from './components/inventory/InventoryDashboard';
 import InventoryList from './components/inventory/InventoryList';
 import InventoryDetail from './components/inventory/InventoryDetail';
 
+// 首頁路由組件
+function HomeRoute() {
+  const { user } = useAuth();
+  
+  // 根據用戶角色重定向到相應的儀表板
+  if (!user) {
+    return <Navigate to="/login" />;
+  }
+  
+  if (user.role === 'admin') {
+    return <Navigate to="/admin" />;
+  }
+  
+  return <Navigate to="/dashboard" />;
+}
+
 function AppContent() {
   return (
     <Router>
@@ -27,8 +43,8 @@ function AppContent() {
         {/* Google 登入回調路由 */}
         <Route path="/auth/google/callback" element={<GoogleCallback />} />
         
-        {/* 首頁路由 - 直接導向儀表板 */}
-        <Route path="/" element={<UserDashboard />} />
+        {/* 首頁路由 - 根據用戶角色導向不同儀表板 */}
+        <Route path="/" element={<HomeRoute />} />
         
         {/* 使用者儀表板路由 */}
         <Route path="/dashboard" element={<UserDashboard />} />
@@ -50,8 +66,8 @@ function AppContent() {
         {/* 管理員路由 */}
         <Route path="/admin/*" element={<AdminDashboard />} />
         
-        {/* 預設路由 - 重定向到儀表板 */}
-        <Route path="*" element={<UserDashboard />} />
+        {/* 預設路由 - 重定向到首頁 */}
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>
   );

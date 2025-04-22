@@ -52,4 +52,20 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER tr_update_inventory_after_checkout
 AFTER INSERT ON inventory_checkouts
 FOR EACH ROW
-EXECUTE FUNCTION update_inventory_quantity_after_checkout(); 
+EXECUTE FUNCTION update_inventory_quantity_after_checkout();
+
+-- 創建庫存項目表
+CREATE TABLE IF NOT EXISTS inventory_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    code VARCHAR(100) NOT NULL UNIQUE,
+    quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
+    unit VARCHAR(50) NOT NULL DEFAULT 'piece',
+    location VARCHAR(255) NOT NULL DEFAULT 'default_warehouse',
+    category VARCHAR(100) NOT NULL DEFAULT 'other',
+    minimum_stock DECIMAL(10,2) NOT NULL DEFAULT 0,
+    description TEXT,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+); 

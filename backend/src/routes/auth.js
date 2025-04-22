@@ -13,7 +13,7 @@ const client = new OAuth2Client({
 });
 
 // Google OAuth 回調處理
-router.post('/google/callback', async (req, res) => {
+router.post('/api/auth/google/callback', async (req, res) => {
   try {
     const { code, state, nonce } = req.body;
     

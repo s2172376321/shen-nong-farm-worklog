@@ -11,7 +11,7 @@ const db = require('./config/database'); // 引入资料库连接
 const websocket = require('./websocket'); // 引入WebSocket模块
 
 const app = express();
-const PORT = process.env.PORT || 3002; // 确保使用正确端口
+const PORT = process.env.PORT || 5004; // 修改為5004端口
 
 // 创建HTTP服务器（不再让express隐式创建）
 const server = http.createServer(app);
@@ -31,7 +31,9 @@ const corsOptions = {
     'Authorization', 
     'X-Requested-With',
     'Accept',
-    'Origin'
+    'Origin',
+    'Cache-Control',
+    'Pragma'  // 添加 Pragma 請求頭
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
   credentials: true,
@@ -121,14 +123,7 @@ const userRoutes = require('./routes/userRoutes');
 const dataRoutes = require('./routes/dataRoutes');
 
 // 路由註冊
-app.use('/api/auth', authRoutes);
-app.use('/api/work-logs', workLogRoutes);
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/notices', noticeRoutes);
-app.use('/api/stats', statsRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/data', dataRoutes);
-app.use('/api/attachments', attachmentRoutes);
+app.use('/api', routes);
 
 // 健康檢查端點
 app.get('/api/health', (req, res) => {

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
+const { adminOnly } = require('../middleware/admin');
 
 // 使用內存存儲管理員信息
 const admins = new Map();
@@ -98,6 +99,28 @@ router.get('/stats', authenticateToken, isAdmin, (req, res) => {
   } catch (error) {
     console.error('獲取統計信息失敗:', error);
     res.status(500).json({ error: '獲取統計信息失敗' });
+  }
+});
+
+// 獲取儀表板統計數據
+router.get('/dash', authenticateToken, adminOnly, async (req, res) => {
+  try {
+    // 這裡先返回模擬數據
+    const dashboardStats = {
+      totalUsers: 1,
+      pendingWorkLogs: 0,
+      unreadNotices: 0,
+      recentActivities: []
+    };
+
+    res.json(dashboardStats);
+  } catch (error) {
+    console.error('獲取儀表板統計失敗:', error);
+    res.status(500).json({
+      success: false,
+      message: '獲取儀表板統計失敗',
+      error: error.message
+    });
   }
 });
 

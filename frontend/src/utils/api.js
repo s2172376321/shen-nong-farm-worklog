@@ -29,8 +29,10 @@ const apiCache = {
 };
 
 // 創建 axios 實例
-const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5004';
+const AUTH_URL = process.env.REACT_APP_AUTH_URL || 'http://localhost:5004';
 console.log('Initializing API with base URL:', BASE_URL);
+console.log('Initializing Auth with base URL:', AUTH_URL);
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -42,87 +44,110 @@ const api = axios.create({
   }
 });
 
+const authApi = axios.create({
+  baseURL: AUTH_URL,
+  timeout: 30000,
+  withCredentials: true,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  }
+});
+
 // 請求攔截器
-api.interceptors.request.use(
-  (config) => {
-    // 添加時間戳防止快取
-    if (config.method === 'get') {
-      config.params = {
-        ...config.params,
-        _t: Date.now()
-      };
+const setupInterceptors = (instance) => {
+  instance.interceptors.request.use(
+    (config) => {
+      // 添加時間戳防止快取
+      if (config.method === 'get') {
+        config.params = {
+          ...config.params,
+          _t: Date.now()
+        };
+      }
+  
+      // 從 localStorage 獲取 token
+      const token = localStorage.getItem('token');
+      console.log('Current token:', token);
+  
+      // 如果有 token，添加到請求頭
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+        console.log('Adding auth header:', config.headers.Authorization);
+      } else {
+        console.log('No token found in localStorage');
+      }
+  
+      // 根據請求類型設置正確的 Content-Type
+      if (config.data instanceof FormData) {
+        config.headers['Content-Type'] = 'multipart/form-data';
+      } else {
+        config.headers['Content-Type'] = 'application/json';
+      }
+  
+      // 確保每個請求都帶上 credentials
+      config.withCredentials = true;
+  
+      // 添加詳細的請求日誌
+      console.log('API Request:', {
+        url: config.url,
+        method: config.method,
+        baseURL: config.baseURL,
+        headers: config.headers,
+        params: config.params,
+        data: config.data,
+        withCredentials: config.withCredentials,
+        timestamp: new Date().toISOString()
+      });
+  
+      return config;
+    },
+    (error) => {
+      console.error('Request error:', error);
+      return Promise.reject(error);
     }
+  );
 
-    // 添加認證 token
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+  instance.interceptors.response.use(
+    (response) => {
+      const fullUrl = `${response.config.baseURL}${response.config.url}`;
+      console.log('Response success:', {
+        fullUrl,
+        url: response.config.url,
+        status: response.status,
+        data: response.data,
+        timestamp: new Date().toISOString()
+      });
+      return response;
+    },
+    (error) => {
+      const fullUrl = error.config ? `${error.config.baseURL}${error.config.url}` : 'unknown';
+      console.error('Response error:', {
+        fullUrl,
+        url: error.config?.url,
+        status: error.response?.status,
+        message: error.message,
+        data: error.response?.data,
+        baseURL: error.config?.baseURL,
+        timestamp: new Date().toISOString()
+      });
+  
+      // 如果是認證錯誤，清除認證信息並重新登入
+      if (error.response?.status === 401) {
+        console.log('認證失敗，重新登入...');
+        forceReauthenticate();
+      } else if (error.response?.status === 403) {
+        console.log('權限不足，重新登入...');
+      }
+  
+      return Promise.reject(error);
     }
+  );
+};
 
-    // 根據請求類型設置正確的 Content-Type
-    if (config.data instanceof FormData) {
-      config.headers['Content-Type'] = 'multipart/form-data';
-    } else {
-      config.headers['Content-Type'] = 'application/json';
-    }
-
-    // 確保每個請求都帶上 credentials
-    config.withCredentials = true;
-
-    // 添加詳細的請求日誌
-    console.log('API Request:', {
-      url: config.url,
-      method: config.method,
-      baseURL: config.baseURL,
-      headers: config.headers,
-      params: config.params,
-      data: config.data,
-      withCredentials: config.withCredentials,
-      timestamp: new Date().toISOString()
-    });
-
-    return config;
-  },
-  (error) => {
-    console.error('Request error:', error);
-    return Promise.reject(error);
-  }
-);
-
-// 響應攔截器
-api.interceptors.response.use(
-  (response) => {
-    const fullUrl = `${response.config.baseURL}${response.config.url}`;
-    console.log('Response success:', {
-      fullUrl,
-      url: response.config.url,
-      status: response.status,
-      data: response.data,
-      timestamp: new Date().toISOString()
-    });
-    return response;
-  },
-  (error) => {
-    const fullUrl = error.config ? `${error.config.baseURL}${error.config.url}` : 'unknown';
-    console.error('Response error:', {
-      fullUrl,
-      url: error.config?.url,
-      status: error.response?.status,
-      message: error.message,
-      data: error.response?.data,
-      baseURL: error.config?.baseURL,
-      timestamp: new Date().toISOString()
-    });
-
-    // 如果是認證錯誤，清除認證信息並重新登入
-    if (error.response?.status === 401) {
-      console.log('認證失敗，重新登入...');
-      forceReauthenticate();
-    }
-
-    return Promise.reject(error);
-  }
-);
+// 設置攔截器
+setupInterceptors(api);
+setupInterceptors(authApi);
 
 // ----- WebSocket API -----
 // WebSocket 連接類
@@ -336,6 +361,10 @@ export const loginUser = async (username, password) => {
         hasToken: !!response.data.token,
         timestamp: new Date().toISOString()
       });
+
+      // 保存 token 到 localStorage
+      localStorage.setItem('token', response.data.token);
+      console.log('Token saved to localStorage');
       
       return response.data;
     } catch (error) {
@@ -422,7 +451,7 @@ export const googleLogin = async (credential) => {
       throw new Error('未收到 Google 登入憑證');
     }
 
-    const response = await api.post('/api/auth/google-login', { 
+    const response = await api.post('/auth/google-login', { 
       credential: credential
     }, {
       timeout: 10000,
@@ -463,7 +492,6 @@ export const googleLogin = async (credential) => {
       timestamp: new Date().toISOString()
     });
 
-    // 根據錯誤類型返回適當的錯誤訊息
     let errorMessage = 'Google 登入失敗';
     if (error.response) {
       if (error.response.status === 400) {
@@ -477,8 +505,6 @@ export const googleLogin = async (credential) => {
       }
     } else if (error.request) {
       errorMessage = '無法連接到伺服器，請檢查網路連線';
-    } else if (!credential) {
-      errorMessage = '未收到 Google 登入憑證';
     }
 
     const enhancedError = new Error(errorMessage);
@@ -502,10 +528,11 @@ export const handleGoogleCallback = async (code, state, nonce) => {
       throw new Error('未收到 Google 授權碼');
     }
 
-    const response = await api.post('/api/auth/google/callback', {
+    const response = await api.post('/auth/google/callback', {
       code,
       state: state || '',
-      nonce: nonce || ''
+      nonce: nonce || '',
+      redirect_uri: `${window.location.origin}/auth/google/callback`
     }, {
       timeout: 15000,
       headers: {
@@ -545,7 +572,6 @@ export const handleGoogleCallback = async (code, state, nonce) => {
       timestamp: new Date().toISOString()
     });
 
-    // 根據錯誤類型返回適當的錯誤訊息
     let errorMessage = 'Google 登入處理失敗';
     if (error.response) {
       if (error.response.status === 400) {
@@ -569,12 +595,12 @@ export const handleGoogleCallback = async (code, state, nonce) => {
 };
 
 export const registerUser = async (userData) => {
-  const response = await api.post('/api/auth/register', userData);
+  const response = await api.post('/auth/register', userData);
   return response.data;
 };
 
 export const changePassword = async (oldPassword, newPassword) => {
-  const response = await api.post('/api/auth/change-password', { 
+  const response = await api.post('/auth/change-password', { 
     oldPassword, 
     newPassword 
   });
@@ -613,13 +639,37 @@ export const createWorkLog = async (workLogData) => {
   }
 };
 
-export const searchWorkLogs = async (filters) => {
+export const searchWorkLogs = async (params) => {
   try {
-    const response = await api.get('/work-logs/search', { params: filters });
+    console.log('發送工作日誌搜索請求:', params);
+    
+    const queryParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, value);
+      }
+    });
+
+    const response = await api.get(`/api/work-logs/search?${queryParams.toString()}`);
+    
+    console.log('工作日誌搜索響應:', response.data);
+    
+    if (!response.data || typeof response.data !== 'object') {
+      throw new Error('獲取數據格式錯誤');
+    }
+
     return response.data;
   } catch (error) {
-    console.error('搜尋工作日誌失敗:', error);
-    return { data: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0 } };
+    console.error('搜索工作日誌失敗:', error);
+    if (error.response) {
+      console.error('服務器響應:', {
+        status: error.response.status,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('無服務器響應:', error.request);
+    }
+    throw error;
   }
 };
 
@@ -951,7 +1001,7 @@ export const fetchLocationsByArea = async () => {
       console.log(`嘗試獲取位置資料 (${retryCount}/${maxRetries})`);
       
       // 直接發送請求，避免節流
-      const response = await api.get('/api/data/locations-by-area', {
+      const response = await api.get('/data/locations-by-area', {
         timeout: 10000 + (retryCount * 2000) // 隨著重試增加超時時間
       });
       
@@ -1244,7 +1294,7 @@ export const deleteAttachment = async (attachmentId) => {
 
 export const updateInventoryItems = async (items) => {
   try {
-    const response = await api.post('/api/inventory/batch-update', { items });
+    const response = await api.post('/inventory/batch-update', { items });
     return response.data;
   } catch (error) {
     console.error('批量更新庫存項目時出錯:', error);

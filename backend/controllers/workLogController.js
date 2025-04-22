@@ -207,7 +207,7 @@ const WorkLogController = {
       console.log(`獲取用戶 ${userId} 在 ${workDate} 的工作日誌`);
       
       // 檢查權限：只有管理員或本人可以查看
-      if (req.user.role !== 'admin' && req.user.id !== parseInt(userId)) {
+      if (req.user.role !== 'admin' && req.user.id !== userId) {
         return res.status(403).json({ message: '您沒有權限查看此用戶的工作日誌' });
       }
       
@@ -218,8 +218,8 @@ const WorkLogController = {
                wl.details, wl.position_name, wl.work_category_name,
                wl.status, wl.created_at, u.username
         FROM work_logs wl
-        JOIN users u ON wl.user_id = u.id
-        WHERE wl.user_id = $1
+        JOIN users u ON wl.user_id::uuid = u.id::uuid
+        WHERE wl.user_id::uuid = $1::uuid
         AND DATE(wl.created_at) = $2
         ORDER BY wl.start_time ASC
       `;
@@ -240,30 +240,21 @@ const WorkLogController = {
       }));
       
       // 獲取用戶資訊
-      const userQuery = await db.query('SELECT username FROM users WHERE id = $1', [userId]);
+      const userQuery = await db.query('SELECT username FROM users WHERE id::uuid = $1::uuid', [userId]);
       const username = userQuery.rows[0]?.username || '未知用戶';
       
       // 計算工時狀態
       const totalHoursFixed = parseFloat(totalHours.toFixed(2));
-      const isComplete = totalHoursFixed >= 8;
-      const remainingHours = Math.max(0, (8 - totalHoursFixed)).toFixed(2);
       
-      // 返回完整資料
       res.json({
-        userId,
+        workLogs,
+        totalHours: totalHoursFixed,
         username,
-        workDate,
-        totalHours: totalHoursFixed.toFixed(2),
-        isComplete,
-        remainingHours,
-        workLogs
+        date: workDate
       });
     } catch (error) {
-      console.error('獲取工作日誌詳情失敗:', error);
-      res.status(500).json({ 
-        message: '伺服器錯誤，請稍後再試',
-        error: process.env.NODE_ENV !== 'production' ? error.message : undefined
-      });
+      console.error('獲取用戶工作日誌失敗:', error);
+      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
   

@@ -29,16 +29,36 @@ const InventoryList = () => {
       const response = await api.get('/inventory');
       console.log('獲取到的庫存數據:', response.data);
       
-      if (Array.isArray(response.data)) {
-        setInventoryItems(response.data);
+      // 檢查並處理不同的數據格式
+      let items = [];
+      if (response.data && response.data.success && Array.isArray(response.data.data)) {
+        items = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        items = response.data;
+      } else if (response.data && Array.isArray(response.data.items)) {
+        items = response.data.items;
       } else {
-        console.error('返回的數據不是數組:', response.data);
-        setError('數據格式錯誤');
-        setInventoryItems([]);
+        console.error('返回的數據格式不正確:', response.data);
+        throw new Error('數據格式錯誤');
       }
+      
+      // 確保所有必要的字段都存在
+      items = items.map(item => ({
+        id: item.id,
+        product_id: item.product_id || '',
+        product_name: item.product_name || '',
+        category: item.category || '其他',
+        current_quantity: parseFloat(item.current_quantity || 0).toFixed(2),
+        min_quantity: parseFloat(item.min_quantity || 0).toFixed(2),
+        unit: item.unit || '個',
+        total_in: parseFloat(item.total_in || 0).toFixed(2),
+        total_out: parseFloat(item.total_out || 0).toFixed(2)
+      }));
+      
+      setInventoryItems(items);
     } catch (err) {
       console.error('載入庫存數據失敗:', err);
-      setError('載入庫存數據失敗，請稍後再試');
+      setError(err.message || '載入庫存數據失敗，請稍後再試');
       setInventoryItems([]);
     } finally {
       setIsLoading(false);
@@ -68,13 +88,30 @@ const InventoryList = () => {
     formData.append('file', file);
 
     try {
-      await importInventoryCSV(formData);
-      message.success('成功導入 CSV 數據');
-      loadInventoryItems(); // 重新加載數據
-      return true;
+      const response = await importInventoryCSV(formData);
+      if (response.success) {
+        message.success(response.message || '成功導入 CSV 數據');
+        // 如果響應中包含數據，直接更新狀態
+        if (Array.isArray(response.data)) {
+          const processedItems = response.data.map(item => ({
+            id: item.id || item['商品編號'],
+            product_id: item.product_id || item['商品編號'],
+            product_name: item.product_name || item['商品名稱'],
+            unit: item.unit || item['單位'],
+            current_quantity: parseFloat(item.current_quantity || item['數量']) || 0
+          }));
+          setInventoryItems(processedItems);
+        } else {
+          // 如果沒有數據，重新加載
+          await loadInventoryItems();
+        }
+      } else {
+        throw new Error(response.error || 'CSV 導入失敗');
+      }
+      return false; // 阻止 Upload 組件的默認上傳行為
     } catch (error) {
       console.error('CSV 導入失敗:', error);
-      message.error('CSV 導入失敗');
+      message.error(error.message || 'CSV 導入失敗');
       return false;
     } finally {
       setUploading(false);
@@ -102,8 +139,8 @@ const InventoryList = () => {
     if (!item) return false;
     
     const searchLower = searchText.toLowerCase();
-    const nameMatch = (item.name || '').toLowerCase().includes(searchLower);
-    const codeMatch = (item.code || '').toLowerCase().includes(searchLower);
+    const nameMatch = (item.product_name || '').toLowerCase().includes(searchLower);
+    const codeMatch = (item.product_id || '').toLowerCase().includes(searchLower);
     const categoryMatch = (item.category || '').toLowerCase().includes(searchLower);
     
     return nameMatch || codeMatch || categoryMatch;
@@ -113,15 +150,15 @@ const InventoryList = () => {
   const columns = [
     {
       title: '產品編號',
-      dataIndex: 'code',
-      key: 'code',
-      render: (code) => code || '-',
+      dataIndex: 'product_id',
+      key: 'product_id',
+      render: (product_id) => product_id || '-',
     },
     {
       title: '商品名稱',
-      dataIndex: 'name',
-      key: 'name',
-      render: (name) => name || '-',
+      dataIndex: 'product_name',
+      key: 'product_name',
+      render: (product_name) => product_name || '-',
     },
     {
       title: '類別',
@@ -133,20 +170,20 @@ const InventoryList = () => {
     },
     {
       title: '現有庫存',
-      dataIndex: 'quantity',
-      key: 'quantity',
-      render: (quantity, record) => (
-        <Text type={quantity <= (record.minimumStock || 0) ? 'danger' : 'success'}>
-          {parseFloat(quantity || 0).toFixed(2)} {record.unit || '個'}
+      dataIndex: 'current_quantity',
+      key: 'current_quantity',
+      render: (current_quantity, record) => (
+        <Text type={current_quantity <= (record.min_quantity || 0) ? 'danger' : 'success'}>
+          {parseFloat(current_quantity || 0).toFixed(2)} {record.unit || '個'}
         </Text>
       ),
     },
     {
       title: '最低庫存',
-      dataIndex: 'minimumStock',
-      key: 'minimumStock',
-      render: (minimumStock, record) => (
-        <Text>{parseFloat(minimumStock || 0).toFixed(2)} {record.unit || '個'}</Text>
+      dataIndex: 'min_quantity',
+      key: 'min_quantity',
+      render: (min_quantity, record) => (
+        <Text>{parseFloat(min_quantity || 0).toFixed(2)} {record.unit || '個'}</Text>
       ),
     },
     {
@@ -196,7 +233,7 @@ const InventoryList = () => {
             onChange={(e) => handleSearch(e.target.value)}
             style={{ width: 250 }}
           />
-          {user.role === 'admin' && (
+          {user?.role === 'admin' && (
             <>
               <Upload
                 accept=".csv"
