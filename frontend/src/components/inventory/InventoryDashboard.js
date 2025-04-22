@@ -65,15 +65,19 @@ const InventoryDashboard = () => {
         fetchLowStockItems()
       ]);
 
+      console.log('API返回的原始數據:', { itemsData, lowStockData });
+      console.log('低庫存數據:', lowStockData);
+
       if (!Array.isArray(itemsData)) {
+        console.error('數據格式不正確:', itemsData);
         throw new Error('返回的庫存數據格式不正確');
       }
       
       // 處理數據格式
       const processedItems = itemsData.map(item => ({
         id: item.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
+        product_id: item.code,
+        product_name: item.name,
         current_quantity: parseFloat(item.current_quantity),
         unit: item.unit,
         location: item.location,
@@ -86,7 +90,10 @@ const InventoryDashboard = () => {
       
       // 處理低庫存數據
       if (lowStockData && lowStockData.data && Array.isArray(lowStockData.data)) {
+        console.log('設置低庫存數據:', lowStockData.data);
         setLowStockItems(lowStockData.data);
+      } else {
+        console.error('低庫存數據格式不正確:', lowStockData);
       }
       
       setSyncStatus({ 

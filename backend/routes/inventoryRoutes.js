@@ -40,6 +40,12 @@ router.get('/export',
   InventoryController.exportToCSV
 );
 
+// 導入 CSV 數據
+router.post('/import',
+  authMiddleware.adminOnly,
+  InventoryController.importFromCSV
+);
+
 // 以下是帶有動態參數的路由，放在最後
 
 // 獲取單一庫存項目詳情

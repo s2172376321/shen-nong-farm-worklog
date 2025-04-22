@@ -110,9 +110,21 @@ export const updateInventoryItem = async (itemId, itemData) => {
 // 調整庫存數量
 export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
   try {
+    if (!itemId) {
+      throw new Error('缺少庫存項目 ID');
+    }
+
+    if (!adjustmentData || !adjustmentData.transaction_type || !adjustmentData.quantity) {
+      throw new Error('缺少必要的調整數據');
+    }
+
     console.log(`調整庫存項目 ${itemId} 的數量:`, adjustmentData);
+    
     const response = await api.post(`/inventory/${itemId}/adjust`, adjustmentData, {
-      timeout: 10000
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
     });
     
     console.log('庫存調整成功:', response.data);
@@ -124,6 +136,10 @@ export const adjustInventoryQuantity = async (itemId, adjustmentData) => {
     return response.data;
   } catch (error) {
     console.error('調整庫存失敗:', error);
+    if (error.response) {
+      console.error('錯誤響應:', error.response.data);
+      throw new Error(error.response.data.message || '調整庫存失敗');
+    }
     throw error;
   }
 };

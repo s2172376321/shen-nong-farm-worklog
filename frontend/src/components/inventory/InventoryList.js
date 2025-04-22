@@ -45,15 +45,18 @@ const InventoryList = () => {
       // 確保所有必要的字段都存在
       items = items.map(item => ({
         id: item.id,
-        product_id: item.product_id || '',
-        product_name: item.product_name || '',
-        category: item.category || '其他',
-        current_quantity: parseFloat(item.current_quantity || 0).toFixed(2),
-        min_quantity: parseFloat(item.min_quantity || 0).toFixed(2),
+        code: item.code || '',
+        name: item.name || '',
+        quantity: parseFloat(item.current_quantity || 0).toFixed(2),
         unit: item.unit || '個',
-        total_in: parseFloat(item.total_in || 0).toFixed(2),
-        total_out: parseFloat(item.total_out || 0).toFixed(2)
+        category: item.category || '其他',
+        minimum_stock: parseFloat(item.minimum_stock || 0).toFixed(2),
+        description: item.description || '',
+        created_at: item.created_at,
+        updated_at: item.updated_at
       }));
+      
+      console.log('處理後的數據:', items);
       
       setInventoryItems(items);
     } catch (err) {
@@ -72,6 +75,13 @@ const InventoryList = () => {
   // 處理搜索
   const handleSearch = (value) => {
     setSearchText(value);
+    const searchLower = value.toLowerCase();
+    const filtered = inventoryItems.filter(item => {
+      const nameMatch = (item.name || '').toLowerCase().includes(searchLower);
+      const codeMatch = (item.code || '').toLowerCase().includes(searchLower);
+      return nameMatch || codeMatch;
+    });
+    setInventoryItems(filtered);
   };
 
   // 處理調整完成
@@ -95,10 +105,15 @@ const InventoryList = () => {
         if (Array.isArray(response.data)) {
           const processedItems = response.data.map(item => ({
             id: item.id || item['商品編號'],
-            product_id: item.product_id || item['商品編號'],
-            product_name: item.product_name || item['商品名稱'],
+            code: item.code || item['商品編號'],
+            name: item.name || item['商品名稱'],
+            quantity: parseFloat(item.quantity || item['數量']) || 0,
             unit: item.unit || item['單位'],
-            current_quantity: parseFloat(item.current_quantity || item['數量']) || 0
+            category: item.category || item['類別'],
+            minimum_stock: parseFloat(item.minimum_stock || item['最低庫存']) || 0,
+            description: item.description || '',
+            created_at: item.created_at,
+            updated_at: item.updated_at
           }));
           setInventoryItems(processedItems);
         } else {
@@ -134,31 +149,19 @@ const InventoryList = () => {
     }
   };
 
-  // 過濾數據
-  const filteredData = inventoryItems.filter(item => {
-    if (!item) return false;
-    
-    const searchLower = searchText.toLowerCase();
-    const nameMatch = (item.product_name || '').toLowerCase().includes(searchLower);
-    const codeMatch = (item.product_id || '').toLowerCase().includes(searchLower);
-    const categoryMatch = (item.category || '').toLowerCase().includes(searchLower);
-    
-    return nameMatch || codeMatch || categoryMatch;
-  });
-
   // 表格列定義
   const columns = [
     {
       title: '產品編號',
-      dataIndex: 'product_id',
-      key: 'product_id',
-      render: (product_id) => product_id || '-',
+      dataIndex: 'code',
+      key: 'code',
+      render: (code) => code || '-',
     },
     {
-      title: '商品名稱',
-      dataIndex: 'product_name',
-      key: 'product_name',
-      render: (product_name) => product_name || '-',
+      title: '產品名稱',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name) => name || '-',
     },
     {
       title: '類別',
@@ -170,21 +173,36 @@ const InventoryList = () => {
     },
     {
       title: '現有庫存',
-      dataIndex: 'current_quantity',
-      key: 'current_quantity',
-      render: (current_quantity, record) => (
-        <Text type={current_quantity <= (record.min_quantity || 0) ? 'danger' : 'success'}>
-          {parseFloat(current_quantity || 0).toFixed(2)} {record.unit || '個'}
-        </Text>
-      ),
+      dataIndex: 'quantity',
+      key: 'quantity',
+      render: (quantity, record) => {
+        const quantityValue = parseFloat(quantity || 0);
+        const minStock = parseFloat(record.minimum_stock || 0);
+        let color = 'success';
+        if (minStock > 0 && quantityValue <= minStock) {
+          color = 'danger';
+        } else if (quantityValue === 0) {
+          color = 'warning';
+        }
+        return (
+          <Text type={color}>
+            {quantityValue.toFixed(2)} {record.unit || '個'}
+          </Text>
+        );
+      },
     },
     {
       title: '最低庫存',
-      dataIndex: 'min_quantity',
-      key: 'min_quantity',
-      render: (min_quantity, record) => (
-        <Text>{parseFloat(min_quantity || 0).toFixed(2)} {record.unit || '個'}</Text>
-      ),
+      dataIndex: 'minimum_stock',
+      key: 'minimum_stock',
+      render: (minimum_stock, record) => {
+        const quantity = parseFloat(minimum_stock || 0);
+        return quantity > 0 ? (
+          <Text>{quantity.toFixed(2)} {record.unit || '個'}</Text>
+        ) : (
+          <Text type="secondary">未設置</Text>
+        );
+      },
     },
     {
       title: '操作',
@@ -263,7 +281,7 @@ const InventoryList = () => {
       }
     >
       <Table 
-        dataSource={filteredData}
+        dataSource={inventoryItems}
         columns={columns}
         rowKey="id"
         loading={isLoading}

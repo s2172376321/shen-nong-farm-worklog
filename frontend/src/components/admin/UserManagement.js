@@ -164,7 +164,7 @@ const UserManagement = () => {
             <label className="block text-sm text-gray-400 mb-1">使用者帳號</label>
             <Input
               type="text"
-              placeholder="帳號 (4-20字元，僅數字)"
+              placeholder="帳號 (4-20字元，英文字母和數字)"
               value={selectedUser ? selectedUser.username : newUser.username}
               onChange={(e) => 
                 selectedUser
@@ -173,8 +173,8 @@ const UserManagement = () => {
               }
               required
               disabled={!!selectedUser}
-              pattern="\d{4,20}"
-              title="帳號必須是4-20位數字"
+              pattern="[a-zA-Z0-9]{4,20}"
+              title="帳號必須是4-20位英文字母和數字"
             />
             {!selectedUser && usernameAvailable !== null && (
               <p className={`text-sm mt-1 ${usernameAvailable ? 'text-green-500' : 'text-red-500'}`}>

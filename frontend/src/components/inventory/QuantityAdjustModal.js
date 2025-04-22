@@ -45,6 +45,8 @@ const QuantityAdjustModal = ({ item, onClose, onComplete }) => {
         ...formData,
         quantity: parseFloat(formData.quantity)
       };
+
+      console.log('提交的數據:', adjustmentData);
       
       // 驗證數量
       if (isNaN(adjustmentData.quantity) || adjustmentData.quantity <= 0) {
@@ -65,9 +67,21 @@ const QuantityAdjustModal = ({ item, onClose, onComplete }) => {
       if (adjustmentData.transaction_type === 'out' && adjustmentData.quantity > parseFloat(item.current_quantity)) {
         throw new Error(`庫存不足，目前庫存: ${item.current_quantity} ${item.unit}`);
       }
+
+      // 確保所有必要字段都存在
+      const payload = {
+        transaction_type: adjustmentData.transaction_type,
+        quantity: adjustmentData.quantity,
+        requester_name: adjustmentData.requester_name || null,
+        purpose: adjustmentData.purpose || null,
+        notes: adjustmentData.notes || null
+      };
+      
+      console.log('發送到後端的數據:', payload);
       
       // 呼叫 API
-      await adjustInventoryQuantity(item.id, adjustmentData);
+      const response = await adjustInventoryQuantity(item.id, payload);
+      console.log('API 響應:', response);
       
       // 成功後關閉彈窗並通知父組件
       onComplete && onComplete();

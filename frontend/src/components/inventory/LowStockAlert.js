@@ -15,8 +15,9 @@ const LowStockAlert = ({ items, className }) => {
           dataSource={items}
           renderItem={item => (
             <List.Item>
-              <span>{item.product_name}</span>
+              <span>{item.name}</span>
               <span>當前庫存: {item.current_quantity} {item.unit}</span>
+              <span>最低庫存: {item.minimum_stock} {item.unit}</span>
             </List.Item>
           )}
         />

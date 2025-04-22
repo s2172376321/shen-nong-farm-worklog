@@ -52,10 +52,10 @@ const RegisterPage = () => {
       return;
     }
     
-    // 驗證使用者名稱格式 (4-20位元的數字)
-    const usernameRegex = /^\d{4,20}$/;
+    // 驗證使用者名稱格式 (4-20位英文字母和數字)
+    const usernameRegex = /^[a-zA-Z0-9]{4,20}$/;
     if (!usernameRegex.test(formData.username)) {
-      setError('使用者名稱必須是4-20位元的數字');
+      setError('使用者名稱必須是4-20位英文字母和數字');
       return;
     }
     
@@ -140,13 +140,13 @@ const RegisterPage = () => {
           <div>
             <Input 
               type="text" 
-              placeholder="使用者帳號 (4-20位元數字)" 
+              placeholder="使用者帳號 (4-20位英文字母和數字)" 
               value={formData.username}
               onChange={(e) => setFormData({...formData, username: e.target.value})}
               disabled={isLoading}
               required
-              pattern="\d{4,20}"
-              title="請輸入4-20位元的數字"
+              pattern="[a-zA-Z0-9]{4,20}"
+              title="請輸入4-20位英文字母和數字"
             />
           </div>
           <div>

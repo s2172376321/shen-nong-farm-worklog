@@ -305,10 +305,10 @@ export const loginUser = async (username, password) => {
         throw new Error('請填寫使用者名稱和密碼');
       }
 
-      // 驗證使用者名稱格式 (4-20位元的數字)
-      const usernameRegex = /^\d{4,20}$/;
+      // 驗證使用者名稱格式 (4-20位英文字母和數字)
+      const usernameRegex = /^[a-zA-Z0-9]{4,20}$/;
       if (!usernameRegex.test(username)) {
-        throw new Error('使用者名稱必須是4-20位元的數字');
+        throw new Error('使用者名稱必須是4-20位英文字母和數字');
       }
       
       // 驗證密碼長度 (至少8個字元)

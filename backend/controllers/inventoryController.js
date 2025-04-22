@@ -158,45 +158,45 @@ const InventoryController = {
   // 創建新庫存項目
   async createItem(req, res) {
     const { 
-      product_id, 
-      product_name,
+      code, 
+      name,
       unit,
-      current_quantity
+      quantity
     } = req.body;
 
     try {
       logOperation('開始創建新庫存項目', {
-        產品編號: product_id,
-        產品名稱: product_name,
+        產品編號: code,
+        產品名稱: name,
         單位: unit,
-        初始數量: current_quantity
+        初始數量: quantity
       });
       
       // 檢查是否已存在相同產品ID的項目
-      const checkQuery = `SELECT id FROM inventory_items WHERE product_id = $1`;
-      const checkResult = await db.query(checkQuery, [product_id]);
+      const checkQuery = `SELECT id FROM inventory_items WHERE code = $1`;
+      const checkResult = await db.query(checkQuery, [code]);
       
       if (checkResult.rows.length > 0) {
         logOperation('創建失敗：產品編號重複', {
-          產品編號: product_id,
+          產品編號: code,
           已存在ID: checkResult.rows[0].id
         });
-        return res.status(400).json({ message: '已存在相同產品ID的庫存項目' });
+        return res.status(400).json({ message: '已存在相同產品編號的庫存項目' });
       }
       
       // 插入新項目
       const insertQuery = `
         INSERT INTO inventory_items 
-        (product_id, product_name, unit, current_quantity)
+        (code, name, unit, quantity)
         VALUES ($1, $2, $3, $4)
         RETURNING *
       `;
       
       const values = [
-        product_id,
-        product_name,
+        code,
+        name,
         unit || '個',
-        current_quantity || 0
+        quantity || 0
       ];
       
       logOperation('執行資料庫插入', { SQL參數: values });
@@ -206,8 +206,8 @@ const InventoryController = {
       
       logOperation('新項目創建成功', {
         項目ID: newItem.id,
-        產品編號: newItem.product_id,
-        產品名稱: newItem.product_name
+        產品編號: newItem.code,
+        產品名稱: newItem.name
       });
       
       res.status(201).json(newItem);
@@ -226,9 +226,9 @@ const InventoryController = {
   async updateItem(req, res) {
     const { itemId } = req.params;
     const { 
-      product_name,
+      name,
       unit,
-      current_quantity
+      quantity
     } = req.body;
 
     try {
@@ -244,17 +244,17 @@ const InventoryController = {
       const updateQuery = `
         UPDATE inventory_items 
         SET 
-          product_name = COALESCE($1, product_name),
+          name = COALESCE($1, name),
           unit = COALESCE($2, unit),
-          current_quantity = COALESCE($3, current_quantity)
+          quantity = COALESCE($3, quantity)
         WHERE id = $4
         RETURNING *
       `;
       
       const values = [
-        product_name,
+        name,
         unit,
-        current_quantity,
+        quantity,
         itemId
       ];
       
@@ -278,7 +278,16 @@ const InventoryController = {
       notes
     } = req.body;
 
-    const client = await db.connect();
+    console.log('調整庫存請求:', {
+      itemId,
+      transaction_type,
+      quantity,
+      requester_name,
+      purpose,
+      notes
+    });
+
+    const client = await db.getClient();
 
     try {
       logOperation('開始調整庫存數量', {
@@ -302,7 +311,20 @@ const InventoryController = {
       }
       
       // 檢查項目是否存在並獲取當前庫存
-      const itemQuery = `SELECT * FROM inventory_items WHERE id = $1 FOR UPDATE`;
+      const itemQuery = `
+        SELECT 
+          id,
+          quantity,
+          code,
+          name,
+          unit,
+          category,
+          minimum_stock,
+          description
+        FROM inventory_items 
+        WHERE id = $1 
+        FOR UPDATE
+      `;
       const itemResult = await client.query(itemQuery, [itemId]);
       
       if (itemResult.rows.length === 0) {
@@ -312,40 +334,60 @@ const InventoryController = {
       const item = itemResult.rows[0];
       
       logOperation('當前庫存狀態', {
-        產品編號: item.product_id,
-        產品名稱: item.product_name,
-        當前數量: item.current_quantity
+        產品編號: item.code,
+        產品名稱: item.name,
+        當前數量: item.quantity
       });
       
       // 檢查庫存操作的有效性
-      if (transaction_type === 'out' && item.current_quantity < quantity) {
-        throw new Error(`庫存不足 (現有: ${item.current_quantity}, 需要: ${quantity})`);
+      if (transaction_type === 'out' && item.quantity < quantity) {
+        throw new Error(`庫存不足 (現有: ${item.quantity}, 需要: ${quantity})`);
       }
       
-      if (transaction_type === 'adjust' && (item.current_quantity + quantity) < 0) {
-        throw new Error(`調整後庫存量不能為負數 (現有: ${item.current_quantity}, 調整: ${quantity})`);
+      // 計算新的庫存數量
+      let newQuantity;
+      switch (transaction_type) {
+        case 'in':
+          newQuantity = parseFloat(item.quantity) + parseFloat(quantity);
+          break;
+        case 'out':
+          newQuantity = parseFloat(item.quantity) - parseFloat(quantity);
+          break;
+        case 'adjust':
+          newQuantity = parseFloat(quantity);
+          break;
       }
+      
+      // 更新庫存數量
+      const updateQuery = `
+        UPDATE inventory_items 
+        SET quantity = $1, 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        RETURNING 
+          id, 
+          code, 
+          name, 
+          quantity,
+          unit, 
+          category, 
+          minimum_stock, 
+          description, 
+          created_at, 
+          updated_at
+      `;
+      
+      const updateResult = await client.query(updateQuery, [newQuantity, itemId]);
       
       // 新增交易記錄
       const transactionQuery = `
         INSERT INTO inventory_transactions
-        (inventory_id, transaction_type, quantity, user_id, requester_name, purpose, notes)
+        (inventory_item_id, transaction_type, quantity, user_id, requester_name, purpose, notes)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `;
       
-      logOperation('執行庫存交易', {
-        交易類型: transaction_type,
-        調整數量: quantity,
-        調整前數量: item.current_quantity,
-        調整後數量: transaction_type === 'in' 
-          ? item.current_quantity + quantity
-          : transaction_type === 'out'
-          ? item.current_quantity - quantity
-          : item.current_quantity + quantity
-      });
-      
-      const values = [
+      const transactionValues = [
         itemId,
         transaction_type,
         quantity,
@@ -355,22 +397,19 @@ const InventoryController = {
         notes || null
       ];
       
-      const result = await client.query(transactionQuery, values);
-      
-      // 獲取更新後的項目
-      const updatedItemQuery = `SELECT * FROM inventory_items WHERE id = $1`;
-      const updatedResult = await client.query(updatedItemQuery, [itemId]);
+      const transactionResult = await client.query(transactionQuery, transactionValues);
       
       await client.query('COMMIT');
       
       logOperation('庫存調整完成', {
-        交易記錄: result.rows[0],
-        更新後狀態: updatedResult.rows[0]
+        交易記錄: transactionResult.rows[0],
+        更新後狀態: updateResult.rows[0]
       });
       
       res.json({
-        transaction: result.rows[0],
-        item: updatedResult.rows[0]
+        success: true,
+        transaction: transactionResult.rows[0],
+        item: updateResult.rows[0]
       });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -382,7 +421,10 @@ const InventoryController = {
           ...req.body
         }
       });
-      res.status(400).json({ message: error.message || '伺服器錯誤，請稍後再試' });
+      res.status(400).json({ 
+        success: false,
+        message: error.message || '調整庫存失敗，請稍後再試'
+      });
     } finally {
       client.release();
     }
@@ -448,8 +490,16 @@ const InventoryController = {
           updated_at
         FROM inventory_items 
         WHERE quantity <= minimum_stock
-        ORDER BY name
+          AND minimum_stock > 0  -- 確保最低庫存有設置值
+          AND quantity IS NOT NULL  -- 確保庫存量不是 null
+        ORDER BY (minimum_stock - quantity) DESC  -- 優先顯示庫存差距較大的項目
       `);
+
+      // 添加調試日誌
+      console.log('低庫存查詢結果:', {
+        總數: result.rows.length,
+        數據: result.rows
+      });
 
       res.json({ success: true, data: result.rows });
     } catch (error) {
@@ -617,7 +667,7 @@ const InventoryController = {
         // 更新庫存數量
         const updateQuery = `
           UPDATE inventory_items 
-          SET current_quantity = current_quantity - $1,
+          SET quantity = quantity - $1,
               updated_at = CURRENT_TIMESTAMP
           WHERE id = $2
           RETURNING *
@@ -699,7 +749,7 @@ const InventoryController = {
           
           const insertQuery = `
             INSERT INTO inventory_items 
-            (product_id, product_name, category, unit, current_quantity, min_quantity)
+            (product_id, product_name, category, unit, quantity, min_quantity)
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id
           `;
@@ -825,7 +875,7 @@ const InventoryController = {
 
       // 檢查庫存是否足夠
       const inventoryResult = await client.query(
-        'SELECT current_quantity FROM inventory_items WHERE id = $1',
+        'SELECT quantity FROM inventory_items WHERE id = $1',
         [inventory_id]
       );
 
@@ -834,7 +884,7 @@ const InventoryController = {
         return res.status(404).json({ message: '找不到指定的庫存項目' });
       }
 
-      const currentQuantity = inventoryResult.rows[0].current_quantity;
+      const currentQuantity = inventoryResult.rows[0].quantity;
       if (currentQuantity < quantity) {
         await client.query('ROLLBACK');
         return res.status(400).json({ message: '庫存數量不足' });
@@ -1098,7 +1148,7 @@ const InventoryController = {
             const item = {
               product_id: data['商品編號'] || data['產品編號'] || data['編號'] || '',
               product_name: data['商品名稱'] || data['名稱'] || data['品名'] || '',
-              current_quantity: parseFloat(data['現有庫存'] || data['庫存'] || data['數量'] || '0') || 0,
+              quantity: parseFloat(data['現有庫存'] || data['庫存'] || data['數量'] || '0') || 0,
               unit: data['單位'] || data['計量單位'] || '個',
               category: data['類別'] || data['分類'] || data['種類'] || '其他',
               min_quantity: parseFloat(data['最低庫存'] || data['安全庫存'] || '0') || 0
@@ -1108,7 +1158,7 @@ const InventoryController = {
             const validationErrors = [];
             if (!item.product_id) validationErrors.push('商品編號為必填');
             if (!item.product_name) validationErrors.push('商品名稱為必填');
-            if (item.current_quantity < 0) validationErrors.push('庫存數量不能為負數');
+            if (item.quantity < 0) validationErrors.push('庫存數量不能為負數');
             if (item.min_quantity < 0) validationErrors.push('最低庫存不能為負數');
 
             if (validationErrors.length > 0) {
@@ -1165,11 +1215,11 @@ const InventoryController = {
       for (const item of results) {
         const query = `
           INSERT INTO inventory_items 
-          (product_id, product_name, current_quantity, unit, category, min_quantity)
+          (product_id, product_name, quantity, unit, category, min_quantity)
           VALUES ($1, $2, $3, $4, $5, $6)
           ON CONFLICT (product_id) DO UPDATE SET
           product_name = EXCLUDED.product_name,
-          current_quantity = EXCLUDED.current_quantity,
+          quantity = EXCLUDED.quantity,
           unit = EXCLUDED.unit,
           category = EXCLUDED.category,
           min_quantity = EXCLUDED.min_quantity,
@@ -1179,7 +1229,7 @@ const InventoryController = {
         const values = [
           item.product_id,
           item.product_name,
-          item.current_quantity,
+          item.quantity,
           item.unit,
           item.category,
           item.min_quantity
@@ -1213,6 +1263,120 @@ const InventoryController = {
       });
     } finally {
       client.release();
+    }
+  },
+
+  // 從 CSV 文件導入庫存數據
+  async importFromCSV(req, res) {
+    try {
+      if (!req.files || !req.files.file) {
+        return res.status(400).json({
+          success: false,
+          message: '請選擇要上傳的 CSV 文件'
+        });
+      }
+
+      const file = req.files.file;
+      const fileContent = file.data.toString('utf8');
+      
+      // 解析 CSV 數據
+      const rows = fileContent.split('\n').map(row => row.trim()).filter(Boolean);
+      const headers = rows[0].split(',').map(header => header.trim());
+      
+      const items = [];
+      const errors = [];
+      
+      // 從第二行開始處理數據
+      for (let i = 1; i < rows.length; i++) {
+        const values = rows[i].split(',').map(value => value.trim());
+        if (values.length !== headers.length) continue;
+        
+        const item = {};
+        headers.forEach((header, index) => {
+          item[header] = values[index];
+        });
+        
+        try {
+          // 驗證和轉換數據
+          const processedItem = {
+            product_id: item['商品編號'] || '',
+            product_name: item['商品名稱'] || '',
+            quantity: parseFloat(item['庫存量'] || '0'),
+            unit: item['單位'] || '個'
+          };
+          
+          // 驗證必填字段
+          if (!processedItem.product_id || !processedItem.product_name) {
+            errors.push({
+              line: i + 1,
+              message: '商品編號和商品名稱為必填項'
+            });
+            continue;
+          }
+          
+          items.push(processedItem);
+        } catch (error) {
+          errors.push({
+            line: i + 1,
+            message: error.message
+          });
+        }
+      }
+      
+      if (items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: '沒有有效的數據可以導入',
+          errors
+        });
+      }
+      
+      // 開始資料庫事務
+      const client = await db.connect();
+      try {
+        await client.query('BEGIN');
+        
+        // 批量更新或插入數據
+        for (const item of items) {
+          const query = `
+            INSERT INTO inventory_items 
+              (product_id, product_name, quantity, unit)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (product_id) DO UPDATE SET
+              product_name = EXCLUDED.product_name,
+              quantity = EXCLUDED.quantity,
+              unit = EXCLUDED.unit,
+              updated_at = CURRENT_TIMESTAMP
+          `;
+          
+          await client.query(query, [
+            item.product_id,
+            item.product_name,
+            item.quantity,
+            item.unit
+          ]);
+        }
+        
+        await client.query('COMMIT');
+        
+        res.json({
+          success: true,
+          message: `成功導入 ${items.length} 條記錄`,
+          errors: errors.length > 0 ? errors : undefined
+        });
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error('導入 CSV 失敗:', error);
+      res.status(500).json({
+        success: false,
+        message: '導入失敗',
+        error: error.message
+      });
     }
   }
 };
