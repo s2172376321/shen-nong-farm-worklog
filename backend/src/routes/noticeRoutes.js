@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { adminOnly } = require('../middleware/admin');
+const NoticeController = require('../controllers/noticeController');
+const { authenticate } = require('../middleware/authMiddleware');
 
 // 使用內存存儲通知信息
 const notices = new Map();
@@ -23,6 +25,17 @@ router.get('/', authenticateToken, (req, res) => {
   }
 });
 
+// 獲取未讀通知數量
+router.get('/unread/count', authenticateToken, (req, res) => {
+  try {
+    const unreadCount = Array.from(notices.values()).filter(notice => !notice.isRead).length;
+    res.json({ count: unreadCount });
+  } catch (error) {
+    console.error('獲取未讀通知數量失敗:', error);
+    res.status(500).json({ error: '獲取未讀通知數量失敗' });
+  }
+});
+
 // 創建通知
 router.post('/', authenticateToken, (req, res) => {
   try {
@@ -37,7 +50,8 @@ router.post('/', authenticateToken, (req, res) => {
       title,
       content,
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      isRead: false
     };
 
     notices.set(notice.id, notice);
@@ -92,19 +106,6 @@ router.delete('/:id', authenticateToken, (req, res) => {
   }
 });
 
-// 獲取未讀通知數量
-router.get('/unread/count', authenticateToken, (req, res) => {
-  try {
-    const count = Array.from(notices.values()).filter(notice => 
-      !notice.readBy || !notice.readBy.includes(req.user.username)
-    ).length;
-    res.json({ count });
-  } catch (error) {
-    console.error('獲取未讀通知數量失敗:', error);
-    res.status(500).json({ error: '獲取未讀通知數量失敗' });
-  }
-});
-
 // 標記通知為已讀
 router.post('/:id/read', authenticateToken, (req, res) => {
   try {
@@ -131,64 +132,44 @@ router.post('/:id/read', authenticateToken, (req, res) => {
 });
 
 // 獲取未讀公告數量
-router.get('/unread', authenticateToken, async (req, res) => {
-  try {
-    // 這裡先返回模擬數據
-    res.json({
-      unreadCount: 0,
-      notices: []
+router.get('/unread-count', authenticate, (req, res) => {
+    NoticeController.getUnreadCount(req, res).catch(error => {
+        console.error('處理未讀公告數量請求時發生錯誤:', error);
+        res.status(500).json({ message: '處理請求時發生錯誤' });
     });
-  } catch (error) {
-    console.error('獲取未讀公告數量失敗:', error);
-    res.status(500).json({
-      success: false,
-      message: '獲取未讀公告數量失敗',
-      error: error.message
-    });
-  }
 });
 
 // 獲取所有公告
-router.get('/', authenticateToken, async (req, res) => {
-  try {
-    // 這裡先返回模擬數據
-    res.json({
-      notices: [],
-      total: 0
+router.get('/', authenticate, (req, res) => {
+    NoticeController.getAllNotices(req, res).catch(error => {
+        console.error('處理獲取所有公告請求時發生錯誤:', error);
+        res.status(500).json({ message: '處理請求時發生錯誤' });
     });
-  } catch (error) {
-    console.error('獲取公告列表失敗:', error);
-    res.status(500).json({
-      success: false,
-      message: '獲取公告列表失敗',
-      error: error.message
+});
+
+// 獲取未讀公告
+router.get('/unread', authenticate, (req, res) => {
+    NoticeController.getUnreadNotices(req, res).catch(error => {
+        console.error('處理獲取未讀公告請求時發生錯誤:', error);
+        res.status(500).json({ message: '處理請求時發生錯誤' });
     });
-  }
 });
 
 // 創建公告
-router.post('/', authenticateToken, adminOnly, async (req, res) => {
-  try {
-    const { title, content } = req.body;
-    // 這裡先返回模擬數據
-    res.status(201).json({
-      success: true,
-      notice: {
-        id: Date.now(),
-        title,
-        content,
-        createdAt: new Date(),
-        createdBy: req.user.id
-      }
+router.post('/', NoticeController.createNotice);
+
+// 更新公告
+router.put('/:noticeId', NoticeController.updateNotice);
+
+// 刪除公告
+router.delete('/:noticeId', NoticeController.deleteNotice);
+
+// 標記公告為已讀
+router.post('/:noticeId/read', authenticate, (req, res) => {
+    NoticeController.markAsRead(req, res).catch(error => {
+        console.error('處理標記公告為已讀請求時發生錯誤:', error);
+        res.status(500).json({ message: '處理請求時發生錯誤' });
     });
-  } catch (error) {
-    console.error('創建公告失敗:', error);
-    res.status(500).json({
-      success: false,
-      message: '創建公告失敗',
-      error: error.message
-    });
-  }
 });
 
 module.exports = router; 

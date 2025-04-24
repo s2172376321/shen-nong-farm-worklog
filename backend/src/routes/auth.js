@@ -13,7 +13,7 @@ const client = new OAuth2Client({
 });
 
 // Google OAuth 回調處理
-router.post('/api/auth/google/callback', async (req, res) => {
+router.post('/google/callback', async (req, res) => {
   try {
     const { code, state, nonce } = req.body;
     
@@ -212,14 +212,43 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    const user = await User.findOne({ where: { username } });
+    // 記錄登入嘗試
+    console.log(`登入嘗試: ${username}`, {
+      timestamp: new Date().toISOString(),
+      ip: req.ip
+    });
+    
+    // 只用 username 查詢
+    const user = await User.findByUsername(username);
+    
     if (!user) {
-      return res.status(401).json({ error: '使用者不存在' });
+      // 使用通用錯誤訊息，避免洩露用戶存在與否
+      return res.status(401).json({ 
+        success: false,
+        message: '登入失敗，請檢查您的憑證'
+      });
+    }
+
+    // 檢查用戶是否被禁用
+    if (!user.is_active) {
+      return res.status(401).json({
+        success: false,
+        message: '帳號已被禁用，請聯繫管理員'
+      });
     }
 
     const isValid = await user.comparePassword(password);
     if (!isValid) {
-      return res.status(401).json({ error: '密碼錯誤' });
+      // 記錄失敗嘗試
+      console.log(`密碼驗證失敗: ${username}`, {
+        timestamp: new Date().toISOString(),
+        ip: req.ip
+      });
+      
+      return res.status(401).json({ 
+        success: false,
+        message: '登入失敗，請檢查您的憑證'
+      });
     }
 
     const token = jwt.sign(
@@ -232,10 +261,39 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    res.json({ token, user });
+    // 更新最後登入時間
+    await User.update(
+      { last_login: new Date() },
+      { where: { id: user.id } }
+    );
+
+    // 記錄成功登入
+    console.log(`登入成功: ${username}`, {
+      timestamp: new Date().toISOString(),
+      ip: req.ip
+    });
+
+    res.json({ 
+      success: true,
+      token, 
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        profile_image_url: user.profile_image_url
+      }
+    });
   } catch (error) {
-    console.error('登入錯誤:', error);
-    res.status(500).json({ error: '登入失敗，請稍後再試' });
+    console.error('登入錯誤:', {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    res.status(500).json({ 
+      success: false,
+      message: '登入過程中發生錯誤，請稍後再試'
+    });
   }
 });
 

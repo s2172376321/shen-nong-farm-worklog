@@ -28,8 +28,8 @@ const NotificationBadge = () => {
     
     loadUnreadCount();
     
-    // 定期更新未讀數量 (每2分鐘)
-    const interval = setInterval(loadUnreadCount, 2 * 60 * 1000);
+    // 定期更新未讀數量 (每5分鐘)
+    const interval = setInterval(loadUnreadCount, 5 * 60 * 1000);
     
     // 清理函數
     return () => clearInterval(interval);

@@ -3,7 +3,8 @@ const csv = require('csv-parser');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const Product = require('../models/Product');
-const db = require('../db/db');
+const db = require('../config/database');
+const { createLog } = require('../utils/logger');
 
 // 使用內存存儲庫存數據
 const inventory = new Map();
@@ -112,43 +113,16 @@ const InventoryController = {
   // 獲取所有庫存項目
   async getAllItems(req, res) {
     try {
-      const result = await db.query(`
-        SELECT 
-          id,
-          code as product_id,
-          name as product_name,
-          quantity as current_quantity,
-          unit,
-          location,
-          category,
-          minimum_stock,
-          description,
-          created_at,
-          updated_at
-        FROM inventory_items 
-        ORDER BY name
-      `);
-
-      // 格式化數據
-      const formattedData = result.rows.map(item => ({
-        id: item.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        current_quantity: parseFloat(item.current_quantity) || 0,
-        unit: item.unit || '個',
-        location: item.location || '預設倉庫',
-        category: item.category || '其他',
-        minimum_stock: parseFloat(item.minimum_stock) || 0,
-        description: item.description || '',
-        created_at: item.created_at,
-        updated_at: item.updated_at
-      }));
-
-      console.log('返回庫存數據:', formattedData);
-      res.json({ success: true, data: formattedData });
+      const query = `
+        SELECT * FROM inventory
+        ORDER BY name ASC
+      `;
+      
+      const result = await db.query(query);
+      res.json(result.rows);
     } catch (error) {
-      console.error('獲取庫存項目失敗:', error);
-      res.status(500).json({ success: false, error: error.message });
+      createLog('error', `獲取庫存列表失敗: ${error.message}`);
+      res.status(500).json({ message: '獲取庫存列表失敗' });
     }
   },
 
@@ -191,26 +165,26 @@ const InventoryController = {
   // 更新庫存項目
   async updateItem(req, res) {
     try {
-      const { name, code, quantity, unit, location, category, minimum_stock, description } = req.body;
+      const { id } = req.params;
+      const { quantity, min_quantity } = req.body;
+
+      const query = `
+        UPDATE inventory
+        SET quantity = $1, min_quantity = $2
+        WHERE id = $3
+        RETURNING *
+      `;
       
-      const result = await db.query(
-        `UPDATE inventory_items 
-         SET name = $1, code = $2, quantity = $3, unit = $4, 
-             location = $5, category = $6, minimum_stock = $7, 
-             description = $8, updated_at = CURRENT_TIMESTAMP
-         WHERE id = $9
-         RETURNING *`,
-        [name, code, quantity, unit, location, category, minimum_stock, description, req.params.id]
-      );
+      const result = await db.query(query, [quantity, min_quantity, id]);
       
       if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, error: '找不到該庫存項目' });
+        return res.status(404).json({ message: '庫存項目不存在' });
       }
-      
-      res.json({ success: true, data: result.rows[0] });
+
+      res.json(result.rows[0]);
     } catch (error) {
-      console.error('更新庫存項目失敗:', error);
-      res.status(500).json({ success: false, error: error.message });
+      createLog('error', `更新庫存項目失敗: ${error.message}`);
+      res.status(500).json({ message: '更新庫存項目失敗' });
     }
   },
 
@@ -328,19 +302,7 @@ const InventoryController = {
   async getLowStockAlerts(req, res) {
     try {
       const result = await db.query(`
-        SELECT 
-          id,
-          code as product_id,
-          name as product_name,
-          quantity as current_quantity,
-          unit,
-          location,
-          category,
-          minimum_stock,
-          description,
-          created_at,
-          updated_at
-        FROM inventory_items 
+        SELECT * FROM inventory_items 
         WHERE quantity <= minimum_stock
         ORDER BY name
       `);
@@ -445,6 +407,22 @@ const InventoryController = {
       res.send(csvString);
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
+    }
+  },
+
+  async getLowStockItems(req, res) {
+    try {
+      const query = `
+        SELECT * FROM inventory
+        WHERE quantity <= min_quantity
+        ORDER BY quantity ASC
+      `;
+      
+      const result = await db.query(query);
+      res.json(result.rows);
+    } catch (error) {
+      createLog('error', `獲取低庫存項目失敗: ${error.message}`);
+      res.status(500).json({ message: '獲取低庫存項目失敗' });
     }
   }
 };

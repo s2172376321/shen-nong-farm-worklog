@@ -11,7 +11,7 @@ const db = require('./config/database'); // 引入资料库连接
 const websocket = require('./websocket'); // 引入WebSocket模块
 
 const app = express();
-const PORT = process.env.PORT || 5004; // 修改為5004端口
+const PORT = process.env.PORT || 5005; // 修改為5005端口
 
 // 创建HTTP服务器（不再让express隐式创建）
 const server = http.createServer(app);
@@ -46,6 +46,11 @@ app.use(cors(corsOptions));
 // 回應 OPTIONS 請求
 app.options('*', cors(corsOptions));
 
+// 解析中間件
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+
+// 日誌中間件
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   if (req.method === 'POST' || req.method === 'PUT') {
@@ -54,11 +59,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// 中间件配置
-app.use(express.json({ limit: '5mb' })); // 增加限制大小
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
-
-// 安全中间件
+// 安全中間件
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
@@ -71,11 +72,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// 解析中间件
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// 文件上传中间件
+// 文件上傳中間件
 app.use(fileUpload({
   limits: { fileSize: 5 * 1024 * 1024 }, // 限制文件大小为5MB
   createParentPath: true, // 自动创建文件上传目录

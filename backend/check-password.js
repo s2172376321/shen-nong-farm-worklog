@@ -1,24 +1,24 @@
 const bcrypt = require('bcryptjs');
 
-// 測試密碼
-const password = 'Admin2024!';
+async function checkPassword() {
+    const password = '5ji6gj94';
+    const storedHash = '$2b$10$HneE4en3BJPt8cbqJAmtrOnTx7vcB6F4uMo0qHy3xFFlr0sbwc4ym';
+    
+    console.log('測試密碼:', password);
+    console.log('儲存的雜湊:', storedHash);
+    console.log('雜湊長度:', storedHash.length);
+    
+    const isMatch = await bcrypt.compare(password, storedHash);
+    console.log('密碼比對結果:', isMatch);
+    
+    // 生成新的雜湊來比較
+    const salt = await bcrypt.genSalt(10);
+    const newHash = await bcrypt.hash(password, salt);
+    console.log('新生成的雜湊:', newHash);
+    console.log('新雜湊長度:', newHash.length);
+    
+    const isNewMatch = await bcrypt.compare(password, newHash);
+    console.log('新雜湊比對結果:', isNewMatch);
+}
 
-// 生成新的哈希
-const salt = bcrypt.genSaltSync(10);
-const newPasswordHash = bcrypt.hashSync(password, salt);
-
-console.log('新生成的哈希值:', newPasswordHash);
-
-// 嘗試不同的雜湊方法
-const alternativeHash = bcrypt.hashSync(password);
-
-console.log('另一種方法生成的哈希值:', alternativeHash);
-
-// 驗證原始哈希
-const originalHash = '$2a$12$1tP3.hJB.ZiKR.8UHyVdW.YJwkwZZaCwxUp.LHXjJD5Pwbgk/hJ7O';
-console.log('原始哈希長度:', originalHash.length);
-
-// 多次嘗試比較
-console.log('使用新生成哈希比較:', bcrypt.compareSync(password, newPasswordHash));
-console.log('使用另一種方法生成的哈希比較:', bcrypt.compareSync(password, alternativeHash));
-console.log('使用原始哈希比較:', bcrypt.compareSync(password, originalHash));
+checkPassword().catch(console.error);

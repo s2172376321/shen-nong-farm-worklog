@@ -177,24 +177,26 @@ async createNotice(req, res) {
 
   // 獲取未讀公告數量
   async getUnreadCount(req, res) {
-    const userId = req.user.id;
-    
     try {
-      const query = `
-        SELECT COUNT(*) as unread_count
-        FROM notices n
-        LEFT JOIN notice_reads nr ON n.id::uuid = nr.notice_id::uuid AND nr.user_id::uuid = $1::uuid
-        WHERE nr.id IS NULL
-        AND (n.expires_at IS NULL OR n.expires_at > CURRENT_TIMESTAMP)
-      `;
+      const userId = req.user.id;
+      
+      // 驗證 userId 是否為有效的 UUID
+      if (!userId || typeof userId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+        console.error('無效的用戶 ID:', userId);
+        return res.status(400).json({ message: '無效的用戶 ID' });
+      }
 
-      const result = await db.query(query, [userId]);
+      const result = await db.query(
+        `SELECT COUNT(*) as unread_count
+         FROM notices n
+         LEFT JOIN notice_reads nr ON n.id = nr.notice_id AND nr.user_id = $1
+         WHERE nr.id IS NULL`,
+        [userId]
+      );
 
-      res.json({
-        unreadCount: parseInt(result.rows[0].unread_count, 10)
-      });
+      res.json({ unreadCount: parseInt(result.rows[0].unread_count) });
     } catch (error) {
-      console.error('取得未讀公告數量失敗:', error);
+      console.error('獲取未讀公告數量失敗:', error);
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },

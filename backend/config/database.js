@@ -62,6 +62,13 @@ class Database {
     this.pool.on('remove', () => {
       console.log('資料庫連線已從池中移除');
     });
+
+    // 綁定方法到實例
+    this.query = this.query.bind(this);
+    this.transaction = this.transaction.bind(this);
+    this.getClient = this.getClient.bind(this);
+    this.getPoolStats = this.getPoolStats.bind(this);
+    this.close = this.close.bind(this);
   }
 
   // 測試資料庫連接
@@ -98,45 +105,34 @@ class Database {
       const result = await this.pool.query(text, params);
       
       const duration = Date.now() - start;
-      console.log(`查詢完成: ${duration}ms, 影響的行數: ${result.rowCount}`);
+      console.log('查詢執行時間:', duration, 'ms');
       
       return result;
     } catch (error) {
-      console.error('查詢執行錯誤:', {
-        error: error.message,
+      console.error('查詢執行失敗:', {
+        message: error.message,
         code: error.code,
-        query: text.substring(0, 200),
-        params: params ? JSON.stringify(params).substring(0, 200) : 'none',
-        duration: Date.now() - start
+        stack: error.stack,
+        query: text,
+        params: params
       });
-
-      if (retryCount > 0 && 
-          (error.code === 'ECONNREFUSED' || 
-           error.code === '08006' || 
-           error.code === '08001' || 
-           error.code === '57014' || 
-           error.code === '57P01')) {
-        
-        console.log(`嘗試重新連接... 剩餘重試次數: ${retryCount - 1}`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      if (retryCount > 0) {
+        console.log(`重試查詢 (${retryCount} 次剩餘)`);
         return this.query(text, params, retryCount - 1);
       }
-
+      
       throw error;
     }
   }
 
-  // 使用事務
+  // 事務處理
   async transaction(callback) {
     const client = await this.pool.connect();
-    
     try {
       await client.query('BEGIN');
-      
       const result = await callback(client);
-      
       await client.query('COMMIT');
-      
       return result;
     } catch (error) {
       await client.query('ROLLBACK');
@@ -146,12 +142,12 @@ class Database {
     }
   }
 
-  // 取得客戶端連線
+  // 獲取客戶端
   async getClient() {
-    return this.pool.connect();
+    return await this.pool.connect();
   }
 
-  // 取得連線池統計
+  // 獲取連接池狀態
   getPoolStats() {
     return {
       totalCount: this.pool.totalCount,
@@ -160,27 +156,20 @@ class Database {
     };
   }
 
-  // 關閉連線池
+  // 關閉連接池
   async close() {
-    console.log('關閉資料庫連線池...');
     await this.pool.end();
-    console.log('資料庫連線池已關閉');
   }
 }
 
+// 創建並導出單例實例
 const db = new Database();
 
-// 應用程序關閉時關閉數據庫連接
-process.on('SIGINT', async () => {
-  console.log('應用程序關閉中...');
-  await db.close();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  console.log('應用程序被終止...');
-  await db.close();
-  process.exit(0);
-});
-
-module.exports = db;
+// 導出 query 方法
+module.exports = {
+  query: db.query.bind(db),
+  transaction: db.transaction.bind(db),
+  getClient: db.getClient.bind(db),
+  getPoolStats: db.getPoolStats.bind(db),
+  close: db.close.bind(db)
+};

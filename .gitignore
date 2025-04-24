@@ -52,3 +52,9 @@ Thumbs.db
 
 # Debug
 debug.log
+
+# 資料庫備份
+backend/backups/
+
+# 上傳檔案
+uploads/

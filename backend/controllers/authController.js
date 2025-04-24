@@ -3,6 +3,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 const googleAuthService = require('../config/googleAuth');
+const User = require('../models/User');
+const { OAuth2Client } = require('google-auth-library');
+const config = require('../config');
+
+const client = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  process.env.GOOGLE_REDIRECT_URI
+);
 
 // 確保所有方法都被導出
 const AuthController = {
@@ -12,22 +21,14 @@ const AuthController = {
 
     try {
       // 檢查使用者帳號是否已存在
-      const existUserByUsername = await db.query(
-        'SELECT * FROM users WHERE username = $1', 
-        [username]
-      );
-
-      if (existUserByUsername.rows.length > 0) {
+      const existUserByUsername = await User.findByUsername(username);
+      if (existUserByUsername) {
         return res.status(400).json({ message: '此帳號已被使用' });
       }
 
       // 檢查電子郵件是否已存在
-      const existUserByEmail = await db.query(
-        'SELECT * FROM users WHERE email = $1', 
-        [email]
-      );
-
-      if (existUserByEmail.rows.length > 0) {
+      const existUserByEmail = await User.findByEmail(email);
+      if (existUserByEmail) {
         return res.status(400).json({ message: '此電子郵件已被註冊' });
       }
 
@@ -35,114 +36,110 @@ const AuthController = {
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(password, salt);
 
-      // 插入新使用者
-      const insertQuery = `
-        INSERT INTO users 
-        (username, email, password_hash, name, department, position, role) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7) 
-        RETURNING id
-      `;
-      const values = [
-        username, 
-        email, 
-        passwordHash, 
-        name || null,
-        department || null, 
-        position || null,
-        'user'
-      ];
-
-      const result = await db.query(insertQuery, values);
+      // 創建新使用者
+      const newUser = await User.create(
+        username,
+        email,
+        passwordHash,
+        'user',
+        name,
+        department,
+        position
+      );
 
       res.status(201).json({ 
         message: '註冊成功',
-        userId: result.rows[0].id 
+        userId: newUser.id 
       });
     } catch (error) {
-      console.error('註冊失敗:', error);
+      console.error('註冊失敗:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
     }
   },
 
   // 使用者登入
   login: async (req, res) => {
-    const { username, password } = req.body;
-  
-    console.log('登入嘗試:', { 
-      username, 
-      passwordLength: password ? password.length : 'N/A'
-    });
-  
     try {
-      // 查找使用者 - 支援使用帳號或電子郵件登入
-      const userQuery = await db.query(
-        'SELECT * FROM users WHERE username = $1 OR email = $1', 
-        [username]
-      );
-  
-      const user = userQuery.rows[0];
-      
-      console.log('使用者查詢結果:', { 
-        userFound: !!user,
-        username: user ? user.username : null
+      console.log('Login request received:', {
+        body: req.body,
+        headers: req.headers
       });
-  
+
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        return res.status(400).json({
+          success: false,
+          message: '請提供用戶名和密碼'
+        });
+      }
+
+      // 查詢用戶
+      const user = await User.findByUsername(username);
+
       if (!user) {
-        console.log('使用者不存在');
-        return res.status(401).json({ message: '無效的帳號或密碼' });
+        return res.status(401).json({
+          success: false,
+          message: '用戶名或密碼錯誤'
+        });
       }
-  
+
       // 驗證密碼
-      const isMatch = await bcrypt.compare(password, user.password_hash);
-      
-      console.log('密碼比對結果:', {
-        isMatch,
-        storedHashLength: user.password_hash ? user.password_hash.length : 'N/A'
-      });
-  
-      if (!isMatch) {
-        return res.status(401).json({ message: '無效的帳號或密碼' });
+      const isValidPassword = await bcrypt.compare(password, user.password_hash);
+
+      if (!isValidPassword) {
+        return res.status(401).json({
+          success: false,
+          message: '用戶名或密碼錯誤'
+        });
       }
-  
-      // 生成 JWT
+
+      // 生成 JWT token
       const token = jwt.sign(
-        { 
-          id: user.id, 
-          username: user.username, 
-          role: user.role 
+        {
+          id: user.id,
+          role: user.role
         },
-        process.env.JWT_SECRET || 'fallback_secret', 
+        process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
-  
-      // 修改返回資訊，加入 google_id 和 google_email
+
+      // 更新最後登入時間
+      await User.updateLastLogin(user.id);
+
+      console.log('Login successful for user:', user.username);
+
+      // 返回用戶信息和 token
       res.json({
+        success: true,
         token,
         user: {
           id: user.id,
           username: user.username,
-          email: user.email,
-          name: user.name,
-          department: user.department,
-          position: user.position,
-          role: user.role,
-          google_id: user.google_id,
-          google_email: user.google_email
+          role: user.role
         }
       });
     } catch (error) {
-      console.error('登入失敗:', {
-        errorMessage: error.message,
-        errorStack: error.stack
+      console.error('Login error:', {
+        message: error.message,
+        stack: error.stack
       });
-      res.status(500).json({ message: '伺服器錯誤，請稍後再試' });
+
+      res.status(500).json({
+        success: false,
+        message: '登錄過程中發生錯誤',
+        error: error.message
+      });
     }
   },
   
-  // Google 登入 - 更新為支援 credential
+  // Google 登入
   googleLogin: async (req, res) => {
     try {
-      // 從請求中取得 credential 和 nonce
       const { credential, nonce } = req.body;
       
       if (!credential) {
@@ -158,79 +155,55 @@ const AuthController = {
       });
       
       // 檢查或創建使用者
-      let userQuery = await db.query(
-        'SELECT * FROM users WHERE google_id = $1 OR email = $2', 
-        [userInfo.googleId, userInfo.email]
-      );
-
-      let user = userQuery.rows[0];
+      let user = await User.findByGoogleId(userInfo.googleId);
+      if (!user) {
+        user = await User.findByEmail(userInfo.email);
+      }
 
       // 如果使用者不存在，創建新使用者
       if (!user) {
         console.log('創建新用戶');
-        const insertQuery = `
-          INSERT INTO users 
-          (username, email, google_id, role, profile_image_url, name, google_email) 
-          VALUES ($1, $2, $3, $4, $5, $6, $7) 
-          RETURNING *
-        `;
-        const values = [
-          userInfo.username || userInfo.email.split('@')[0], 
-          userInfo.email, 
-          userInfo.googleId, 
-          'user',
-          userInfo.profileImage,
-          userInfo.name || null,
-          userInfo.email
-        ];
-
-        const result = await db.query(insertQuery, values);
-        user = result.rows[0];
-      } else if (!user.google_id) {
-        console.log('更新現有用戶的 Google 資訊');
-        // 如果使用者存在但尚未綁定Google，更新Google資訊
-        await db.query(
-          'UPDATE users SET google_id = $1, google_email = $2, profile_image_url = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
-          [userInfo.googleId, userInfo.email, userInfo.profileImage, user.id]
-        );
-        
-        // 重新取得完整使用者資訊
-        const refreshQuery = await db.query('SELECT * FROM users WHERE id = $1', [user.id]);
-        user = refreshQuery.rows[0];
+        user = await User.createGoogleUser({
+          username: userInfo.username || userInfo.email.split('@')[0],
+          email: userInfo.email,
+          googleId: userInfo.googleId,
+          profileImage: userInfo.profileImage,
+          name: userInfo.name
+        });
       }
 
-      // 生成 JWT
+      // 生成 JWT token
       const token = jwt.sign(
-        { 
-          id: user.id, 
-          username: user.username, 
-          role: user.role 
+        {
+          id: user.id,
+          role: user.role
         },
-        process.env.JWT_SECRET || 'fallback_secret',
+        process.env.JWT_SECRET,
         { expiresIn: '24h' }
       );
 
+      // 更新最後登入時間
+      await User.updateLastLogin(user.id);
+
       res.json({
+        success: true,
         token,
         user: {
           id: user.id,
           username: user.username,
-          email: user.email,
-          name: user.name,
           role: user.role,
-          google_id: user.google_id,
-          google_email: user.google_email,
-          profile_image_url: user.profile_image_url
+          email: user.email,
+          name: user.name
         }
       });
     } catch (error) {
-      console.error('Google 登入失敗:', error);
-      res.status(400).json({ 
-        success: false, 
-        message: error.message || 'Google 登入失敗'
+      console.error('Google 登入失敗:', {
+        message: error.message,
+        stack: error.stack
       });
+      res.status(500).json({ message: 'Google 登入失敗，請稍後再試' });
     }
-  },  
+  },
 
   // 修改密碼
   changePassword: async (req, res) => {

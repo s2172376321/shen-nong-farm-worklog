@@ -1,15 +1,29 @@
 -- 確保 uuid-ossp 擴展已安裝
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 備份現有數據（如果有的話）
-CREATE TABLE IF NOT EXISTS users_backup AS SELECT * FROM users;
+-- 創建 user_role 類型
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('admin', 'user');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- 刪除相關的外鍵約束
+-- 刪除所有相關的外鍵約束
 ALTER TABLE IF EXISTS work_logs 
     DROP CONSTRAINT IF EXISTS work_logs_user_id_fkey;
 
--- 刪除現有表
-DROP TABLE IF EXISTS users;
+ALTER TABLE IF EXISTS notice_reads 
+    DROP CONSTRAINT IF EXISTS notice_reads_user_id_fkey;
+
+ALTER TABLE IF EXISTS notice_reads 
+    DROP CONSTRAINT IF EXISTS notice_reads_notice_id_fkey;
+
+-- 刪除所有相關的表
+DROP TABLE IF EXISTS notice_reads CASCADE;
+DROP TABLE IF EXISTS notices CASCADE;
+DROP TABLE IF EXISTS work_logs CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS users_backup CASCADE;
 
 -- 重新創建表
 CREATE TABLE users (
@@ -32,16 +46,9 @@ CREATE UNIQUE INDEX idx_users_username ON users(username);
 CREATE UNIQUE INDEX idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL;
 CREATE INDEX idx_users_role ON users(role);
 
--- 恢復外鍵約束
-ALTER TABLE IF EXISTS work_logs
-    ADD CONSTRAINT work_logs_user_id_fkey 
-    FOREIGN KEY (user_id) 
-    REFERENCES users(id) 
-    ON UPDATE CASCADE 
-    ON DELETE CASCADE;
-
 -- 創建測試用戶
 INSERT INTO users (
+    id,
     username,
     email,
     password_hash,
@@ -50,6 +57,7 @@ INSERT INTO users (
     created_at,
     updated_at
 ) VALUES (
+    '550e8400-e29b-41d4-a716-446655440000', -- 使用固定的 UUID
     '1224',
     'test@example.com',
     '$2a$10$jHkUV0nF8EPxqGl/KnFo0OzX4kULitoAfXQq9Uv3PNcJmjKYNJCIu',
@@ -61,6 +69,7 @@ INSERT INTO users (
 
 -- 插入預設管理員帳號
 INSERT INTO users (
+    id,
     username,
     email,
     password_hash,
@@ -69,6 +78,7 @@ INSERT INTO users (
     created_at,
     updated_at
 ) VALUES (
+    '550e8400-e29b-41d4-a716-446655440001', -- 使用固定的 UUID
     'admin',
     'admin@shennong.farm',
     '$2a$10$jHkUV0nF8EPxqGl/KnFo0OzX4kULitoAfXQq9Uv3PNcJmjKYNJCIu',

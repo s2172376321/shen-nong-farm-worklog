@@ -48,6 +48,33 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
+// 檢查管理員權限
+const isAdmin = (req, res, next) => {
+  try {
+    console.log('檢查管理員權限:', {
+      user: req.user,
+      role: req.user?.role
+    });
+
+    if (!req.user) {
+      return res.status(401).json({ error: '未經授權的訪問' });
+    }
+
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: '需要管理員權限' });
+    }
+
+    next();
+  } catch (error) {
+    console.error('檢查管理員權限時發生錯誤:', {
+      error: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ error: '檢查權限時發生錯誤' });
+  }
+};
+
 module.exports = {
-  authenticateToken
+  authenticateToken,
+  isAdmin
 }; 

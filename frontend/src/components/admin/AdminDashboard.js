@@ -94,20 +94,26 @@ const AdminDashboard = () => {
   useEffect(() => {
     const loadStats = async () => {
       try {
-        const statsData = await fetchDashboardStats();
-        setStats(statsData);
-        setError(null);  // 清除任何之前的錯誤
+        const [statsData, unreadCount] = await Promise.all([
+          fetchDashboardStats(),
+          getUnreadNoticeCount()
+        ]);
+        
+        setStats({
+          ...statsData,
+          unreadNotices: unreadCount.unreadCount
+        });
+        setError(null);
         setIsLoading(false);
       } catch (err) {
         console.error('載入統計資訊失敗:', err);
-        // 根據錯誤類型設置不同的錯誤訊息
         if (err.response) {
           if (err.response.status === 404) {
             setError('找不到統計資料，請確認 API 路徑是否正確');
           } else if (err.response.status === 401) {
             setError('您的登入已過期，請重新登入');
-            logout();  // 登出用戶
-            navigate('/login');  // 導向登入頁面
+            logout();
+            navigate('/login');
           } else {
             setError(`載入統計資訊失敗: ${err.response.data?.message || '未知錯誤'}`);
           }
@@ -116,7 +122,6 @@ const AdminDashboard = () => {
         } else {
           setError(`載入統計資訊失敗: ${err.message}`);
         }
-        // 設置預設值
         setStats({
           userCount: 0,
           todayUsers: 0,
@@ -128,30 +133,12 @@ const AdminDashboard = () => {
     };
 
     loadStats();
-  }, [navigate, logout]);  // 添加 navigate 和 logout 作為依賴
-
-  // 載入未讀公告數量
-  useEffect(() => {
-    const loadUnreadCount = async () => {
-      try {
-        const response = await getUnreadNoticeCount();
-        setStats(prev => ({
-          ...prev,
-          unreadNotices: response.unreadCount
-        }));
-      } catch (err) {
-        console.error('載入未讀公告數量失敗:', err);
-      }
-    };
     
-    loadUnreadCount();
+    // 每2分鐘更新一次
+    const interval = setInterval(loadStats, 2 * 60 * 1000);
     
-    // 定期更新未讀數量 (每5分鐘)
-    const interval = setInterval(loadUnreadCount, 5 * 60 * 1000);
-    
-    // 清理函數
     return () => clearInterval(interval);
-  }, []);
+  }, [navigate, logout]);
 
   // 當通知被閱讀時更新未讀數量
   function handleNoticeRead() {

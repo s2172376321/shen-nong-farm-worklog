@@ -1,24 +1,29 @@
 const express = require('express');
 const router = express.Router();
+
+// 引入各個路由模組
 const authRoutes = require('./authRoutes');
 const workLogRoutes = require('./workLogRoutes');
-const adminRoutes = require('./admin');
+const adminRoutes = require('./adminRoutes');
 const noticeRoutes = require('./noticeRoutes');
+const statsRoutes = require('./statsRoutes');
 const attachmentRoutes = require('./attachmentRoutes');
+const dashboardRoutes = require('./dashboardRoutes');
+const inventoryRoutes = require('./inventoryRoutes');
 
-// 認證相關路由
+// 註冊路由
 router.use('/auth', authRoutes);
-
-// 工作日誌相關路由
 router.use('/work-logs', workLogRoutes);
-
-// 管理員相關路由
 router.use('/admin', adminRoutes);
-
-// 公告相關路由
 router.use('/notices', noticeRoutes);
-
-// 附件相關路由
+router.use('/stats', statsRoutes);
 router.use('/attachments', attachmentRoutes);
+router.use('/dashboard', dashboardRoutes);
+router.use('/inventory', inventoryRoutes);
+
+// 404 處理
+router.use((req, res) => {
+    res.status(404).json({ message: '找不到請求的資源' });
+});
 
 module.exports = router; 

@@ -34,10 +34,10 @@ const LoginPage = () => {
       return;
     }
     
-    // 驗證使用者名稱格式 (4-20位英文字母和數字)
-    const usernameRegex = /^[a-zA-Z0-9]{4,20}$/;
+    // 驗證使用者名稱格式 (4-20位元的數字)
+    const usernameRegex = /^\d{4,20}$/;
     if (!usernameRegex.test(username)) {
-      setError('使用者名稱必須是4-20位英文字母和數字');
+      setError('使用者名稱必須是4-20位元的數字');
       return;
     }
     
